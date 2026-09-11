@@ -1,0 +1,1027 @@
+// Vybli — database schema.
+//
+// Shaped by the Flutter app's actual screens rather than by a generic social
+// template. Two rules from the product drive most of the modelling and are
+// worth stating up front, because several tables only make sense in their
+// light:
+//
+//   1. Only an **Earn Money** profile is discoverable and only it can receive
+//      a friend request. Everyone else browses and sends. So discovery filters
+//      on `isEarner`, and `FriendRequest.addressee` is always an earner.
+//   2. Messaging is unlocked by an **accepted friend request** and nothing
+//      else. A `Conversation` therefore cannot exist without a `Friendship`.
+//
+// Money is a single currency throughout: plain rupees, `Decimal`. Callers
+// spend rupees from their wallet balance and earners accrue rupees the same
+// way, withdrawn to a bank. `Wallet` holds both the spendable balance and the
+// earnings figures.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// The connection URL used to live here (`url = env("DATABASE_URL")`) — as of
+// Prisma 7 the CLI reads it from `prisma.config.js` at the project root
+// instead, and the running application supplies its own via the driver
+// adapter in `src/config/prismaClient.js`. `provider` is the only thing this
+// block still says.
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums ───────────────────────────────────────────────────────────────────
+
+enum Gender {
+  male
+  female
+}
+
+enum PresenceStatus {
+  online
+  offline
+  busy
+}
+
+enum UserGoal {
+  makeFriends
+  earnMoney
+}
+
+enum AccountStatus {
+  active
+  suspended
+  deleted
+}
+
+/// Resumable sign-up. The client asks for this and is sent to the matching
+/// step, so closing the app mid-onboarding never costs the answers already
+/// given. Order matches the screens: gender → age → languages → city → goal →
+/// (voice check, earners only) → done.
+enum OnboardingStatus {
+  PHONE_VERIFIED
+  GENDER_COMPLETED
+  AGE_COMPLETED
+  LANGUAGE_COMPLETED
+  LOCATION_COMPLETED
+  MODE_SELECTED
+  VERIFICATION_COMPLETED
+  ONBOARDING_COMPLETED
+}
+
+enum OtpPurpose {
+  login
+  deleteAccount
+}
+
+enum FriendRequestStatus {
+  pending
+  accepted
+  rejected
+  cancelled
+}
+
+enum MessageStatus {
+  sending
+  sent
+  delivered
+  read
+  failed
+}
+
+enum AttachmentKind {
+  image
+  video
+  document
+  audio
+  location
+  contact
+}
+
+enum CallType {
+  voice
+  video
+}
+
+enum CallStatus {
+  ringing
+  connected
+  ended
+  missed
+  rejected
+  cancelled
+  failed
+}
+
+/// Why a call finished. `insufficientBalance` is the one the summary screen
+/// treats specially — it leads with "Add Money" instead of a plain recap.
+enum CallEndReason {
+  hungUp
+  insufficientBalance
+  rejected
+  cancelled
+  missed
+  networkError
+}
+
+enum TransactionKind {
+  purchase
+  call
+  earning
+  withdrawal
+  bonus
+}
+
+enum TransactionStatus {
+  completed
+  pending
+  failed
+}
+
+enum EarningStatus {
+  pending
+  available
+  withdrawn
+}
+
+enum VerificationKind {
+  /// The only kind anything submits. A short spoken clip, actually recorded
+  /// and stored — earlier rows carry this same value but never had real audio
+  /// behind it (the client only sent a self-reported language and length).
+  voice
+
+  /// Unused — added and then reverted in the same short-lived experiment
+  /// before anything shipped with it. Left in the enum rather than dropped:
+  /// removing a Postgres enum value means recreating the whole type, for a
+  /// value nothing has ever written.
+  video
+}
+
+enum VerificationStatus {
+  pending
+
+  /// An administrator has opened it but not decided. Distinct from `pending`
+  /// so a queue of untouched submissions does not mix with ones already
+  /// being looked at.
+  under_review
+
+  approved
+  rejected
+
+  /// Approved once, but the account has to submit again — a disputed report,
+  /// or a sample that no longer matches.
+  reverification_required
+
+  /// Aged out without a decision.
+  expired
+}
+
+enum NotificationKind {
+  friendRequest
+  friendRequestAccepted
+  message
+  incomingCall
+  missedCall
+  wallet
+  transaction
+  earning
+  system
+}
+
+enum ReportStatus {
+  open
+  reviewing
+  resolved
+  dismissed
+}
+
+// ── Identity ────────────────────────────────────────────────────────────────
+
+/// Auth identity only. Everything a person *is* lives on [UserProfile], so a
+/// public profile lookup never touches the row holding their phone number.
+model User {
+  id       String        @id @default(cuid())
+  dialCode String        @default("+91")
+  phone    String
+  status   AccountStatus @default(active)
+
+  /// Set when the account is deleted. The row is retained so foreign keys in
+  /// call history and transactions stay intact; the phone number is scrubbed
+  /// so it can be reused for a fresh sign-up.
+  deletedAt DateTime?
+
+  /// When and why the account was suspended. A status with no reason is one
+  /// nobody can review later, or explain to the person it happened to.
+  suspendedAt     DateTime?
+  suspendedReason String?
+
+  /// The Firebase UID of the account that last proved this phone number.
+  ///
+  /// Recorded, never authoritative. Identity stays keyed on the phone number,
+  /// because that is the one fact both sign-in paths produce — welding the
+  /// account to a Firebase UID would make leaving Firebase a rewrite rather
+  /// than a config change, and would strand every user created through OTP.
+  ///
+  /// What it is good for: telling support and the admin timeline which
+  /// Firebase identity a session came from, and spotting a number that has
+  /// changed hands (same phone, different UID than last time).
+  ///
+  /// Indexed, deliberately not unique. A person who deletes and recreates
+  /// their Firebase account gets a fresh UID, and a recycled Indian mobile
+  /// number can legitimately reach two accounts over time — a unique
+  /// constraint would turn either into a failed sign-in.
+  firebaseUid String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile              UserProfile?
+  wallet               Wallet?
+  privacySettings      PrivacySettings?
+  notificationSettings NotificationSettings?
+  discoverySettings    DiscoverySettings?
+
+  sessions      UserSession[]
+  languages     UserLanguage[]
+  verifications Verification[]
+  notifications Notification[]
+
+  sentRequests     FriendRequest[] @relation("RequestsSent")
+  receivedRequests FriendRequest[] @relation("RequestsReceived")
+  friendshipsA     Friendship[]    @relation("FriendshipUserA")
+  friendshipsB     Friendship[]    @relation("FriendshipUserB")
+
+  conversationsA Conversation[] @relation("ConversationUserA")
+  conversationsB Conversation[] @relation("ConversationUserB")
+  messages       Message[]
+
+  callsMade     Call[]    @relation("CallCaller")
+  callsReceived Call[]    @relation("CallCallee")
+  earnings      Earning[]
+
+  blocksMade     Block[]  @relation("Blocker")
+  blocksReceived Block[]  @relation("Blocked")
+  reportsMade    Report[] @relation("Reporter")
+  reportsAgainst Report[] @relation("Reported")
+
+  favoritesMade     Favorite[] @relation("FavoritedBy")
+  favoritedByOthers Favorite[] @relation("FavoriteUser")
+
+  activities        UserActivity[] @relation("ActivityUser")
+  relatedActivities UserActivity[] @relation("ActivityRelatedUser")
+
+  // Phone is unique only among live accounts — a deleted account keeps its row
+  // (history references it) but frees the number, which a plain @unique cannot
+  // express. Enforced by a partial index in migration `phone_unique_active`.
+  @@index([phone, dialCode])
+  @@index([status])
+  @@index([createdAt])
+  @@index([firebaseUid])
+  @@map("users")
+}
+
+model UserProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  name      String
+  age       Int
+  gender    Gender
+  bio       String  @default("")
+  avatarUrl String?
+
+  cityId String?
+
+  goal     UserGoal @default(makeFriends)
+  /// Mirrors `goal == earnMoney`, denormalised because discovery filters on it
+  /// on every feed query and joining to check the goal would be wasteful.
+  isEarner Boolean  @default(false)
+
+  isVerified Boolean @default(false)
+
+  /// Which call types this person accepts. Distinct from the *privacy* toggles
+  /// of the same name: these describe the profile others see, the privacy ones
+  /// are the switches the user flips. They are kept in step by the service.
+  voiceEnabled Boolean @default(true)
+  videoEnabled Boolean @default(true)
+
+  /// What a caller pays this person, per minute, in rupees. Only meaningful
+  /// for earners.
+  voiceRatePerMinute Decimal @default(12) @db.Decimal(10, 2)
+  videoRatePerMinute Decimal @default(20) @db.Decimal(10, 2)
+
+  /// Average of the ratings left on this person's calls. Recomputed on each
+  /// new rating rather than stored as a running sum, so it cannot drift.
+  rating     Float @default(0)
+  ratedCalls Int   @default(0)
+  totalCalls Int   @default(0)
+
+  presence PresenceStatus @default(offline)
+  lastSeen DateTime?
+
+  onboardingStatus OnboardingStatus @default(PHONE_VERIFIED)
+
+  /// A seeded demo profile.
+  ///
+  /// Nobody is on the other end of one, so with `DEMO_AUTO_RESPOND` on these
+  /// accounts answer for themselves — accepting requests, picking up calls,
+  /// replying to messages. Without that a request to a seeded account hangs
+  /// for ever and the half of the product past the friend gate is unreachable
+  /// on a single device. Inert in production, where the flag is off.
+  isDemo Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  city City? @relation(fields: [cityId], references: [id], onDelete: SetNull)
+
+  @@index([isEarner, cityId, presence])
+  @@index([presence])
+  @@index([isDemo])
+  @@map("user_profiles")
+}
+
+/// One row per issued refresh token, so a logout can revoke exactly one device
+/// and "log out everywhere" is a single update.
+model UserSession {
+  id               String    @id @default(cuid())
+  userId           String
+  refreshTokenHash String    @unique
+  device           String?
+  ip               String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("user_sessions")
+}
+
+/// Codes are stored hashed — a leaked table must not let anyone sign in as
+/// somebody else, and an OTP is a password for the duration of its life.
+model OtpCode {
+  id         String     @id @default(cuid())
+  dialCode   String
+  phone      String
+  codeHash   String
+  purpose    OtpPurpose @default(login)
+  expiresAt  DateTime
+  attempts   Int        @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+
+  @@index([phone, dialCode, purpose, consumedAt])
+  @@index([expiresAt])
+  @@map("otp_codes")
+}
+
+// ── Reference data ──────────────────────────────────────────────────────────
+
+/// Seeded, not hard-coded in the client. `aliases` is what makes search find
+/// "Bangla" for Bengali and "Oriya" for Odia — a language you cannot find
+/// reads as a language the app does not support.
+model Language {
+  code       String   @id
+  name       String   @unique
+  nativeName String
+  isPopular  Boolean  @default(false)
+  aliases    String[] @default([])
+  sortOrder  Int      @default(0)
+
+  /// Disabled rather than deleted. A language somebody already selected
+  /// cannot be removed without orphaning their profile, but it can stop being
+  /// offered to the next person.
+  isActive Boolean @default(true)
+
+  users UserLanguage[]
+
+  @@index([isPopular])
+  @@map("languages")
+}
+
+model UserLanguage {
+  userId       String
+  languageCode String
+  createdAt    DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  language Language @relation(fields: [languageCode], references: [code], onDelete: Cascade)
+
+  @@id([userId, languageCode])
+  @@index([languageCode])
+  @@map("user_languages")
+}
+
+/// Slug id (`chennai`, `bangalore`) rather than a generated one — the Flutter
+/// app already uses these as `city_id` and they are stable and readable.
+model City {
+  id        String  @id
+  name      String
+  state     String
+  country   String  @default("India")
+  isPopular Boolean @default(false)
+
+  /// Optional grouping above the state — "South India", "NCR". Null where the
+  /// distinction does not matter.
+  region String?
+
+  /// City centre, WGS84. What `GET /cities/nearest` measures against.
+  ///
+  /// Nullable because a city added through the admin panel may not have them
+  /// yet, and a city with no coordinates should still be pickable by hand — it
+  /// simply cannot be the answer to "where am I". Precision is deliberately
+  /// coarse: the question is which of twenty cities is closest, not where in
+  /// one the user is standing.
+  latitude  Float?
+  longitude Float?
+
+  /// Same reasoning as [Language.isActive]: retire it from the picker without
+  /// orphaning the profiles that already point at it.
+  isActive Boolean @default(true)
+
+  profiles UserProfile[]
+
+  @@index([isPopular])
+  @@index([isActive])
+  @@map("cities")
+}
+
+// ── Social graph ────────────────────────────────────────────────────────────
+
+model FriendRequest {
+  id          String              @id @default(cuid())
+  requesterId String
+  addresseeId String
+  status      FriendRequestStatus @default(pending)
+  message     String?
+  respondedAt DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  requester User @relation("RequestsSent", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("RequestsReceived", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  // One request row per direction per pair. Re-requesting after a rejection
+  // reuses this row rather than stacking duplicates.
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId, status])
+  @@index([requesterId, status])
+  @@map("friend_requests")
+}
+
+/// Undirected: `userAId` is always the lexicographically smaller id, which is
+/// what lets the unique constraint stop a duplicate friendship being created
+/// from the other side.
+model Friendship {
+  id        String   @id @default(cuid())
+  userAId   String
+  userBId   String
+  createdAt DateTime @default(now())
+
+  userA User @relation("FriendshipUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB User @relation("FriendshipUserB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId])
+  @@index([userBId])
+  @@map("friendships")
+}
+
+model Block {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+/// A private bookmark, not a relationship the other person is ever told
+/// about. One-directional like a block, but the opposite in effect: it
+/// grants nothing and forbids nothing, it only changes what the favoriting
+/// account sees first.
+model Favorite {
+  id             String   @id @default(cuid())
+  favoritedById  String
+  favoriteUserId String
+  createdAt      DateTime @default(now())
+
+  favoritedBy  User @relation("FavoritedBy", fields: [favoritedById], references: [id], onDelete: Cascade)
+  favoriteUser User @relation("FavoriteUser", fields: [favoriteUserId], references: [id], onDelete: Cascade)
+
+  @@unique([favoritedById, favoriteUserId])
+  @@index([favoriteUserId])
+  @@map("favorites")
+}
+
+model Report {
+  id         String       @id @default(cuid())
+  reporterId String
+  reportedId String
+  reason     String
+  details    String?
+  status     ReportStatus @default(open)
+  createdAt  DateTime     @default(now())
+
+  /// What was decided, and the administrator's working notes. Kept apart:
+  /// the resolution is the outcome, the notes are the reasoning.
+  resolution  String?
+  reviewNotes String?
+  resolvedAt  DateTime?
+  resolvedBy  String?
+
+  reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported User @relation("Reported", fields: [reportedId], references: [id], onDelete: Cascade)
+
+  @@index([reportedId, status])
+  @@index([reporterId])
+  @@index([status, createdAt])
+  @@map("reports")
+}
+
+// ── Messaging ───────────────────────────────────────────────────────────────
+
+/// Exists only once a friendship does. Same normalised-ordering trick as
+/// [Friendship], so two people can never end up with two conversations.
+model Conversation {
+  id      String @id @default(cuid())
+  userAId String
+  userBId String
+
+  lastMessageAt DateTime?
+
+  /// Per-side unread counters and mute flags. Denormalised because the chat
+  /// list needs them for every row and counting messages per open would be a
+  /// query per conversation.
+  unreadForA Int     @default(0)
+  unreadForB Int     @default(0)
+  mutedByA   Boolean @default(false)
+  mutedByB   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userA    User      @relation("ConversationUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB    User      @relation("ConversationUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@unique([userAId, userBId])
+  @@index([userBId])
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  conversationId String
+  senderId       String
+  text           String        @default("")
+  status         MessageStatus @default(sent)
+
+  /// Attachments are flattened onto the message rather than given their own
+  /// table: a message has at most one, and every field is display-only.
+  attachmentKind     AttachmentKind?
+  attachmentTitle    String?
+  attachmentSubtitle String?
+  attachmentUrl      String?
+  attachmentDuration String?
+
+  readAt    DateTime?
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  // Paging a thread is always "newest first within this conversation".
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@map("messages")
+}
+
+// ── Calls ───────────────────────────────────────────────────────────────────
+
+model Call {
+  id       String     @id @default(cuid())
+  callerId String
+  calleeId String
+  type     CallType
+  status   CallStatus @default(ringing)
+
+  isRandom Boolean @default(false)
+
+  startedAt   DateTime  @default(now())
+  connectedAt DateTime?
+  endedAt     DateTime?
+
+  /// Derived from `connectedAt`..`endedAt` on the server. Never accepted from
+  /// the client — it decides what the caller pays and what the earner earns.
+  durationSeconds Int @default(0)
+
+  /// What the caller was actually charged, and the rate it was charged at,
+  /// both in rupees. The rate is snapshotted because a profile's price can
+  /// change later and the history has to keep saying what this call cost.
+  amountSpent   Decimal @default(0) @db.Decimal(12, 2)
+  ratePerMinute Decimal @default(0) @db.Decimal(10, 2)
+
+  endReason CallEndReason?
+  rating    Int?
+
+  createdAt DateTime @default(now())
+
+  caller  User     @relation("CallCaller", fields: [callerId], references: [id], onDelete: Cascade)
+  callee  User     @relation("CallCallee", fields: [calleeId], references: [id], onDelete: Cascade)
+  earning Earning?
+
+  // The Recent tab is "my calls, newest first" — both directions, one index
+  // each.
+  @@index([callerId, createdAt])
+  @@index([calleeId, createdAt])
+  @@index([status])
+  @@map("calls")
+}
+
+// ── Money ───────────────────────────────────────────────────────────────────
+
+/// Everything about one person's money in one row, so a spend and an earning
+/// credit can be applied inside a single transaction.
+model Wallet {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  /// Spendable rupees — what a call is billed against.
+  balance Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Rupees, earners only. `available` can be withdrawn now; `pending` clears
+  /// 48h after the call, which is what the earning screens promise.
+  totalEarnings    Decimal @default(0) @db.Decimal(12, 2)
+  availableBalance Decimal @default(0) @db.Decimal(12, 2)
+  pendingBalance   Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Null until the first VIP purchase. A past date reads the same as null —
+  /// membership lapsed rather than a separate "expired" state — so whether
+  /// `vipExpiresAt` is in the future is the one thing worth checking.
+  vipExpiresAt DateTime?
+
+  /// The UPI ID a withdrawal pays out to. Null until the earner links one.
+  payoutUpiId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+/// Append-only ledger. Every balance change writes one, so a balance can
+/// always be explained by the rows behind it.
+model WalletTransaction {
+  id       String @id @default(cuid())
+  walletId String
+
+  kind     TransactionKind
+  status   TransactionStatus @default(completed)
+  title    String
+  subtitle String            @default("")
+
+  /// How much this row moved, in rupees. Positive for a credit (a purchase,
+  /// an earning), negative for a debit (a call spend, a withdrawal).
+  rupeeDelta Decimal? @db.Decimal(12, 2)
+
+  /// The call or purchase that caused this row.
+  referenceId String?
+
+  /// Google Play's purchase token for a Play Billing-backed purchase — the
+  /// one thing the client, the server and Google's own records all agree on
+  /// before any credit happens. The unique constraint *is* the double-credit
+  /// guard: verifying the same token twice (a retried request, a re-delivered
+  /// purchase from Play's own queue) hits it on the second attempt instead of
+  /// crediting the wallet again, the same pattern `Earning.callId` already
+  /// uses to guard a retried call-billing event. Null for dev-mode rows and
+  /// for rows that never involved a payment provider.
+  purchaseToken String? @unique
+
+  createdAt DateTime @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt])
+  @@index([walletId, kind])
+  @@map("wallet_transactions")
+}
+
+/// One per call, enforced by the unique `callId` — the constraint *is* the
+/// duplicate-earning guard, rather than a check that could be raced.
+model Earning {
+  id     String @id @default(cuid())
+  userId String
+  callId String @unique
+
+  amount        Decimal       @db.Decimal(12, 2)
+  ratePerMinute Decimal       @db.Decimal(12, 2)
+  minutes       Int
+  status        EarningStatus @default(pending)
+
+  /// When `pending` becomes `available` — 48h after the call ends.
+  clearsAt DateTime
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, clearsAt])
+  @@map("earnings")
+}
+
+/// Priced server-side. The client renders whatever this table says, so a price
+/// change is a row update rather than an app release.
+///
+/// `priceInr` is what the caller pays; `bonusInr` is extra credited on top for
+/// free. The wallet balance is credited `priceInr + bonusInr` — there is no
+/// separate "quantity" any more, since the rupee paid and the rupee credited
+/// are the same unit.
+model RechargePackage {
+  id          String  @id
+  priceInr    Decimal @db.Decimal(10, 2)
+  bonusInr    Decimal @default(0) @db.Decimal(10, 2)
+  isPopular   Boolean @default(false)
+  isBestValue Boolean @default(false)
+  tagline     String?
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+
+  @@map("recharge_packages")
+}
+
+/// A VIP membership term: how long it lasts, what it costs, and the rupee
+/// bonus it grants on top of the membership itself. Priced server-side, like
+/// [RechargePackage] — the client renders whatever this table says.
+model VipPlan {
+  id        String  @id
+  /// Membership length. Not months — a month has no fixed day count, and
+  /// `vipExpiresAt` is computed by adding this many days to `now()`.
+  days      Int
+  priceInr  Decimal @db.Decimal(10, 2)
+  bonusInr  Decimal @default(0) @db.Decimal(10, 2)
+  /// The plan editorially called out as the best deal — at most one should
+  /// carry this at a time.
+  isBest    Boolean @default(false)
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  @@map("vip_plans")
+}
+
+// ── Verification ────────────────────────────────────────────────────────────
+
+/// The identity check that gates the Earn Money role. Kept private — it is
+/// never exposed on a public profile, only the resulting `isVerified` flag is.
+model Verification {
+  id     String @id @default(cuid())
+  userId String
+
+  kind            VerificationKind   @default(video)
+  status          VerificationStatus @default(pending)
+  languageCode    String?
+  sampleUrl       String?
+  durationSeconds Int                @default(0)
+  rejectionReason String?
+  reviewedAt      DateTime?
+  createdAt       DateTime           @default(now())
+
+  /// Which try this is for the account, starting at 1. Lets the admin see
+  /// "rejected three times" without counting rows.
+  attempt Int @default(1)
+
+  /// Who decided. A single-admin system, so this is the admin username rather
+  /// than a foreign key — but recorded, because "who approved this" is the
+  /// first question asked about a bad approval.
+  reviewedBy String?
+
+  /// The administrator's own note. Separate from [rejectionReason], which is
+  /// the sentence the *user* is shown.
+  reviewNotes String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@map("verifications")
+}
+
+// ── Settings ────────────────────────────────────────────────────────────────
+
+/// Enforced server-side on every read and write path, not just rendered by the
+/// client. Defaults match the app's defaults exactly.
+model PrivacySettings {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  profileVisibleToEveryone Boolean @default(true)
+  showOnlineStatus         Boolean @default(true)
+  showCityOnProfile        Boolean @default(true)
+  allowVoiceCalls          Boolean @default(true)
+  allowVideoCalls          Boolean @default(true)
+
+  /// Full opt-out from messaging: no conversations, no friend requests (they
+  /// exist only to unlock messaging), nothing sent or received. Calls are
+  /// unaffected.
+  allowMessages Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("privacy_settings")
+}
+
+model NotificationSettings {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  incomingCalls Boolean @default(true)
+  missedCalls   Boolean @default(true)
+  messages      Boolean @default(true)
+  newMatches    Boolean @default(true)
+  earnings      Boolean @default(true)
+  promotions    Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_settings")
+}
+
+model DiscoverySettings {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  minAge     Int      @default(18)
+  maxAge     Int      @default(45)
+  genders    Gender[] @default([male, female])
+  languages  String[] @default([])
+  voiceCalls Boolean  @default(true)
+  videoCalls Boolean  @default(true)
+
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("discovery_settings")
+}
+
+// ── Notifications ───────────────────────────────────────────────────────────
+
+model Notification {
+  id     String           @id @default(cuid())
+  userId String
+  kind   NotificationKind
+
+  title String
+  body  String @default("")
+
+  /// Ids the client needs to act on the tap — thread id, call id, user id.
+  data Json?
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ── Admin monitoring ────────────────────────────────────────────────────────
+
+/// Every activity type the platform records.
+///
+/// A closed enum rather than free text: the admin timeline filters on it, and
+/// a typo'd string would silently create a category nobody can find.
+enum ActivityType {
+  registration
+  login
+  logout
+  otp_verified
+  profile_updated
+  language_updated
+  location_updated
+  onboarding_step
+  friend_request
+  friend_request_accepted
+  friend_request_rejected
+  friend_request_cancelled
+  friendship_created
+  friendship_removed
+  message_sent
+  message_read
+  conversation_started
+  call_started
+  call_accepted
+  call_rejected
+  call_ended
+  call_missed
+  verification_requested
+  verification_approved
+  verification_rejected
+  reverification_requested
+  wallet_activity
+  earning
+  transaction
+  block
+  unblock
+  report
+  notification
+  account_status_changed
+  account_deleted
+}
+
+/// What a user did, when, and to whom.
+///
+/// Written by the **services**, at the point the operation actually happens —
+/// never from a client event. A timeline assembled from what the app chose to
+/// report would be missing exactly the events that matter: the ones from a
+/// client that crashed, was offline, or was lying.
+///
+/// Append-only in practice. Nothing in the product updates a row here.
+model UserActivity {
+  id     String       @id @default(cuid())
+  userId String
+  type   ActivityType
+
+  /// The other person, where the activity involves one — the friend who was
+  /// asked, the peer on the call, the account that was blocked.
+  relatedUserId String?
+
+  /// The row this is about: a call id, a message id, a transaction id. Not a
+  /// foreign key, because it points at a different table depending on [type]
+  /// and the timeline must survive that row being deleted.
+  relatedEntityId String?
+
+  /// One line, already written for a human. Composed at write time so the
+  /// admin UI renders a timeline without needing to know every type.
+  description String
+
+  /// Whatever else is worth keeping — duration, amount, reason, old and new
+  /// values on an update.
+  metadata Json?
+
+  /// Free-form outcome: `completed`, `missed`, `failed`, `pending`.
+  status String?
+
+  createdAt DateTime @default(now())
+
+  user        User  @relation("ActivityUser", fields: [userId], references: [id], onDelete: Cascade)
+  relatedUser User? @relation("ActivityRelatedUser", fields: [relatedUserId], references: [id], onDelete: SetNull)
+
+  // The timeline is always "this user, newest first", and the global feed is
+  // "everyone, newest first" — one index each.
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+  @@index([createdAt])
+  @@index([relatedUserId])
+  @@map("user_activities")
+}
+
+/// What the administrator did.
+///
+/// Append-only, and deliberately not exposed for editing anywhere in the admin
+/// UI: a log the subject can rewrite is not a log. It exists mostly for the
+/// reads — opening somebody's private conversation is an action that should
+/// leave a trace, whoever performs it.
+model AdminAuditLog {
+  id     String @id @default(cuid())
+  action String
+
+  /// `user`, `conversation`, `verification`, `report`, `wallet`, `session`…
+  targetType String?
+  targetId   String?
+
+  /// The account the action concerned, when there is one. Lets the admin see
+  /// "everything ever done to this user" from their profile.
+  userId String?
+
+  description String
+  metadata    Json?
+
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([userId, createdAt])
+  @@map("admin_audit_logs")
+}

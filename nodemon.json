@@ -1,0 +1,8 @@
+{
+  "watch": ["src"],
+  "ext": "js,json",
+  "ignore": ["uploads/**", "tests/**", "prisma/**"],
+  "env": {
+    "__NODEMON_RUNNING": "1"
+  }
+}

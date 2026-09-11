@@ -1,0 +1,64 @@
+{
+  "name": "vybli-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend for the Vybli social calling app — REST + Socket.IO, PostgreSQL via Prisma.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "prisma:validate": "prisma validate",
+    "seed": "node prisma/seed.js",
+    "test:e2e": "node tests/e2e.js",
+    "test:sockets": "node tests/sockets.js",
+    "test": "node tests/e2e.js && node tests/sockets.js && node tests/admin.js",
+    "db:reset": "prisma migrate reset --force",
+    "seed:demo": "node prisma/seed-demo.js",
+    "seed:all": "node prisma/seed.js && node prisma/seed-demo.js",
+    "test:admin": "node tests/admin.js",
+    "lint": "eslint .",
+    "check:livekit": "node scripts/check-livekit.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1116.0",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "firebase-admin": "^13.10.0",
+    "google-auth-library": "^10.9.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "libphonenumber-js": "^1.13.11",
+    "livekit-server-sdk": "^2.17.0",
+    "morgan": "^1.10.0",
+    "multer": "^2.2.0",
+    "pg": "^8.23.0",
+    "socket.io": "^4.8.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "globals": "^17.11.0",
+    "nodemon": "^3.1.7",
+    "prisma": "^7.10.0",
+    "socket.io-client": "^4.8.1"
+  },
+  "engines": {
+    "node": "^20.19 || ^22.12 || >=24.0"
+  },
+  "overrides": {
+    "qs": "^6.16.0",
+    "deepmerge-ts": "^8.0.2",
+    "mysql2": "^3.24.4"
+  }
+}

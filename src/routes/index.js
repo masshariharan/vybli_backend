@@ -1,0 +1,565 @@
+'use strict';
+
+const express = require('express');
+
+const { authenticate, requireOnboarded, requireEarner } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { asyncHandler } = require('../middleware/error');
+const {
+  otpRequestLimiter,
+  otpVerifyLimiter,
+  writeLimiter,
+  paymentLimiter,
+} = require('../middleware/rateLimit');
+const S = require('../validators/schemas');
+const prisma = require('../config/prisma');
+const { avatarUpload, verificationUpload } = require('../middleware/upload');
+
+const authController = require('../controllers/auth.controller');
+const onboardingController = require('../controllers/onboarding.controller');
+const profileController = require('../controllers/profile.controller');
+const discoveryController = require('../controllers/discovery.controller');
+const friendController = require('../controllers/friend.controller');
+const favoriteController = require('../controllers/favorite.controller');
+const chatController = require('../controllers/chat.controller');
+const callController = require('../controllers/call.controller');
+const walletController = require('../controllers/wallet.controller');
+const { notifications, moderation, verification } = require('../controllers/misc.controller');
+const livekitController = require('../controllers/livekit.controller');
+const adminRoutes = require('./admin');
+
+/**
+ * The whole HTTP surface, in the order a user meets it: sign in, finish
+ * onboarding, browse, connect, talk, pay.
+ *
+ * Three middleware tiers, applied deliberately:
+ *
+ *   `authenticate`     — who are you
+ *   `requireOnboarded` — you have a usable profile
+ *   `requireEarner`    — this feature only exists for Earn Money accounts
+ *
+ * Onboarding routes take the first and not the second: they are how you leave
+ * the incomplete state, so gating them on being complete would lock everyone
+ * out of finishing.
+ */
+const router = express.Router();
+const h = asyncHandler;
+
+// ── Health ──────────────────────────────────────────────────────────────────
+
+// Health, and it actually checks.
+//
+// This used to answer `ok` as long as the process was running, which is the
+// one thing a health check does not need to establish — if the process were
+// down, nothing would answer at all. A server whose database has gone away
+// still accepts connections and still returns 200 here, so a load balancer
+// keeps it in rotation and every real request 500s behind a green light.
+//
+// `SELECT 1` is the cheapest question that distinguishes the two. The timeout
+// matters as much as the query: a pool that is exhausted or a database that is
+// wedged will hang rather than refuse, and a health check that hangs reads as
+// a timeout to some probes and as success to others.
+router.get('/health', async (_req, res) => {
+  const started = Date.now();
+  try {
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('database did not answer in 2s')), 2000)
+      ),
+    ]);
+  } catch (error) {
+    return res.status(503).json({
+      success: false,
+      message: 'Vybli API is up but the database is not reachable',
+      error: 'DATABASE_UNAVAILABLE',
+      data: { status: 'degraded', database: error.message },
+    });
+  }
+
+  return res.json({
+    success: true,
+    message: 'Vybli API is up',
+    data: { status: 'ok', database: 'ok', latency_ms: Date.now() - started },
+  });
+});
+
+// ── LiveKit ─────────────────────────────────────────────────────────────────
+
+// Public by design: LiveKit posts here from its own infrastructure with no
+// user session. The request is authenticated by its signature instead, which
+// needs the body byte-for-byte as it was signed — hence `express.raw` rather
+// than the global JSON parser. LiveKit sends `application/webhook+json`.
+router.post(
+  '/livekit/webhook',
+  express.raw({ type: ['application/webhook+json', 'application/json'], limit: '256kb' }),
+  h(livekitController.webhook)
+);
+
+// Lets the app find out at startup whether calling is available on this
+// deployment, without having to place a call to discover it is not.
+router.get('/livekit/status', authenticate, livekitController.status);
+
+// ── Admin ───────────────────────────────────────────────────────────────────
+//
+// Mounted before the user routes so `/admin/users` can never be shadowed by a
+// `/users/:id` pattern. Its own auth middleware lives inside — the user
+// `authenticate` never runs on an admin request, and the two token types are
+// signed with different secrets so neither can be replayed as the other.
+
+router.use('/admin', adminRoutes);
+
+// ── Auth ────────────────────────────────────────────────────────────────────
+
+const auth = express.Router();
+
+auth.post(
+  '/otp/request',
+  otpRequestLimiter,
+  validate({ body: S.auth.requestOtp }),
+  h(authController.requestOtp)
+);
+auth.post(
+  '/otp/verify',
+  otpVerifyLimiter,
+  validate({ body: S.auth.verifyOtp }),
+  h(authController.verifyOtp)
+);
+// Firebase does the phone verification; this trades its token for one of
+// ours. Rate-limited like the OTP verify it replaces — the Firebase token is
+// already proof of a verified number, but the endpoint still creates accounts.
+auth.post(
+  '/firebase/verify',
+  otpVerifyLimiter,
+  validate({ body: S.auth.firebaseSignIn }),
+  h(authController.firebaseSignIn)
+);
+
+auth.post('/refresh', validate({ body: S.auth.refresh }), h(authController.refresh));
+
+auth.use(authenticate);
+auth.get('/me', h(authController.me));
+auth.post('/logout', validate({ body: S.auth.logout }), h(authController.logout));
+// Irreversible, so it is rate-limited like the other destructive paths — but
+// not re-confirmed by SMS. The client owns the confirmation; a valid access
+// token is the authority.
+auth.delete(
+  '/account',
+  writeLimiter,
+  validate({ body: S.auth.deleteAccount }),
+  h(authController.deleteAccount)
+);
+
+router.use('/auth', auth);
+
+// ── Reference data ──────────────────────────────────────────────────────────
+// Public: the app needs the language and city lists on the onboarding screens,
+// before anyone is signed in.
+
+router.get(
+  '/languages',
+  validate({ query: S.reference.languageQuery }),
+  h(discoveryController.languages)
+);
+router.get(
+  '/cities',
+  validate({ query: S.reference.cityQuery }),
+  h(discoveryController.cities)
+);
+// Public for the same reason as the list: the city step runs before the
+// account is finished. The coordinate is resolved and discarded — nothing
+// stores it.
+router.get(
+  '/cities/nearest',
+  validate({ query: S.reference.nearestQuery }),
+  h(discoveryController.nearestCity)
+);
+
+// ── Onboarding ──────────────────────────────────────────────────────────────
+
+const onboarding = express.Router();
+onboarding.use(authenticate);
+
+onboarding.get('/status', h(onboardingController.getStatus));
+onboarding.post(
+  '/gender',
+  validate({ body: S.onboarding.gender }),
+  h(onboardingController.setGender)
+);
+onboarding.post(
+  '/age',
+  validate({ body: S.onboarding.age }),
+  h(onboardingController.setAge)
+);
+onboarding.post(
+  '/languages',
+  validate({ body: S.onboarding.languages }),
+  h(onboardingController.setLanguages)
+);
+onboarding.post(
+  '/location',
+  validate({ body: S.onboarding.location }),
+  h(onboardingController.setLocation)
+);
+onboarding.post(
+  '/profile',
+  validate({ body: S.onboarding.profile }),
+  h(onboardingController.setProfileBasics)
+);
+onboarding.post('/complete', h(onboardingController.complete));
+
+router.use('/onboarding', onboarding);
+
+// ── Verification ────────────────────────────────────────────────────────────
+// Also pre-onboarding: the voice check is a step inside it.
+
+const verify = express.Router();
+verify.use(authenticate);
+
+verify.get('/status', h(verification.status));
+// Multipart: a recorded clip plus its language and length as ordinary form
+// fields on the same request. `verificationUpload` runs first so multer has
+// parsed the text fields into `req.body` before the zod schema reads them.
+verify.post(
+  '/voice',
+  writeLimiter,
+  verificationUpload,
+  validate({ body: S.verification.submit }),
+  h(verification.submit)
+);
+verify.get('/history', validate({ query: S.pagination }), h(verification.history));
+
+router.use('/verification', verify);
+
+// ── Everything past this point needs a finished profile ─────────────────────
+
+// ── Me ──────────────────────────────────────────────────────────────────────
+
+const me = express.Router();
+me.use(authenticate);
+
+// Readable while onboarding — the client shows the profile it is building.
+me.get('/', h(profileController.getMe));
+me.patch('/', validate({ body: S.profile.update }), h(profileController.updateMe));
+me.put(
+  '/presence',
+  validate({ body: S.profile.presence }),
+  h(profileController.setPresence)
+);
+// The photo. Multipart rather than JSON, and the only way an avatar is set —
+// `avatar_url` is not a writable field on PATCH, so a client cannot point a
+// profile at an image this server has never seen.
+//
+// Available during onboarding: it sits above `requireOnboarded` deliberately,
+// because adding a photo is part of setting the account up.
+me.post('/avatar', writeLimiter, avatarUpload, h(profileController.uploadAvatar));
+me.delete('/avatar', writeLimiter, h(profileController.deleteAvatar));
+
+me.get('/languages', h(profileController.getMyLanguages));
+me.put(
+  '/languages',
+  validate({ body: S.reference.setLanguages }),
+  h(profileController.setMyLanguages)
+);
+
+me.get('/settings/privacy', h(profileController.getPrivacy));
+me.patch(
+  '/settings/privacy',
+  validate({ body: S.settings.privacy }),
+  h(profileController.updatePrivacy)
+);
+me.get('/settings/notifications', h(profileController.getNotificationSettings));
+me.patch(
+  '/settings/notifications',
+  validate({ body: S.settings.notifications }),
+  h(profileController.updateNotificationSettings)
+);
+me.get('/settings/discovery', h(profileController.getDiscoverySettings));
+me.patch(
+  '/settings/discovery',
+  validate({ body: S.settings.discovery }),
+  h(profileController.updateDiscoverySettings)
+);
+me.post('/settings/discovery/reset', h(profileController.resetDiscoverySettings));
+
+router.use('/me', me);
+
+// ── Users & discovery ───────────────────────────────────────────────────────
+
+const users = express.Router();
+users.use(authenticate, requireOnboarded);
+
+users.get(
+  '/discover',
+  validate({ query: S.discovery.feed }),
+  h(discoveryController.feed)
+);
+users.post(
+  '/random-match',
+  validate({ body: S.discovery.randomMatch }),
+  h(discoveryController.randomMatch)
+);
+users.get(
+  '/:id',
+  validate({ params: S.friends.userParam }),
+  h(profileController.getPublic)
+);
+users.get(
+  '/:id/connection',
+  validate({ params: S.friends.userParam }),
+  h(friendController.status)
+);
+users.get(
+  '/:id/conversation',
+  validate({ params: S.friends.userParam }),
+  h(chatController.findWithUser)
+);
+
+router.use('/users', users);
+
+// ── Friends ─────────────────────────────────────────────────────────────────
+
+const friends = express.Router();
+friends.use(authenticate, requireOnboarded);
+
+friends.get('/', validate({ query: S.pagination }), h(friendController.listFriends));
+friends.get(
+  '/requests',
+  validate({ query: S.friends.list }),
+  h(friendController.listRequests)
+);
+friends.post(
+  '/requests',
+  writeLimiter,
+  validate({ body: S.friends.send }),
+  h(friendController.send)
+);
+friends.post(
+  '/requests/:id/accept',
+  validate({ params: S.friends.requestParam }),
+  h(friendController.accept)
+);
+friends.post(
+  '/requests/:id/reject',
+  validate({ params: S.friends.requestParam }),
+  h(friendController.reject)
+);
+friends.delete(
+  '/requests/:id',
+  validate({ params: S.friends.requestParam }),
+  h(friendController.cancel)
+);
+friends.delete(
+  '/:id',
+  validate({ params: S.friends.userParam }),
+  h(friendController.unfriend)
+);
+
+router.use('/friends', friends);
+
+// ── Favourites ──────────────────────────────────────────────────────────────
+
+const favorites = express.Router();
+favorites.use(authenticate, requireOnboarded);
+
+favorites.get('/', validate({ query: S.pagination }), h(favoriteController.list));
+favorites.post(
+  '/:id',
+  writeLimiter,
+  validate({ params: S.favorites.userParam }),
+  h(favoriteController.add)
+);
+favorites.delete(
+  '/:id',
+  validate({ params: S.favorites.userParam }),
+  h(favoriteController.remove)
+);
+
+router.use('/favorites', favorites);
+
+// ── Chat ────────────────────────────────────────────────────────────────────
+
+const chat = express.Router();
+chat.use(authenticate, requireOnboarded);
+
+chat.get('/', validate({ query: S.chat.list }), h(chatController.listThreads));
+chat.get('/unread', h(chatController.unreadSummary));
+chat.get(
+  '/:id',
+  validate({ params: S.chat.conversationParam, query: S.chat.history }),
+  h(chatController.getThread)
+);
+chat.post(
+  '/:id/messages',
+  writeLimiter,
+  validate({ params: S.chat.conversationParam, body: S.chat.send }),
+  h(chatController.sendMessage)
+);
+chat.post(
+  '/:id/read',
+  validate({ params: S.chat.conversationParam }),
+  h(chatController.markRead)
+);
+chat.patch(
+  '/:id/mute',
+  validate({ params: S.chat.conversationParam, body: S.chat.mute }),
+  h(chatController.setMuted)
+);
+chat.delete(
+  '/messages/:id',
+  validate({ params: S.chat.conversationParam }),
+  h(chatController.deleteMessage)
+);
+
+router.use('/conversations', chat);
+
+// ── Calls ───────────────────────────────────────────────────────────────────
+
+const calls = express.Router();
+calls.use(authenticate, requireOnboarded);
+
+calls.get('/active', h(callController.getActive));
+calls.get('/history', validate({ query: S.calls.history }), h(callController.history));
+calls.delete('/history', h(callController.clearHistory));
+calls.post(
+  '/',
+  writeLimiter,
+  validate({ body: S.calls.start }),
+  h(callController.start)
+);
+calls.post(
+  '/:id/accept',
+  validate({ params: S.calls.callParam }),
+  h(callController.accept)
+);
+calls.post(
+  '/:id/reject',
+  validate({ params: S.calls.callParam }),
+  h(callController.reject)
+);
+calls.post(
+  '/:id/cancel',
+  validate({ params: S.calls.callParam }),
+  h(callController.cancel)
+);
+calls.post(
+  '/:id/end',
+  validate({ params: S.calls.callParam, body: S.calls.end }),
+  h(callController.end)
+);
+calls.post(
+  '/:id/rate',
+  validate({ params: S.calls.callParam, body: S.calls.rate }),
+  h(callController.rate)
+);
+// A fresh LiveKit join token for a call already in progress — for a client
+// reconnecting after the original short-lived one expired.
+calls.post(
+  '/:id/token',
+  validate({ params: S.calls.callParam }),
+  h(callController.token)
+);
+calls.delete(
+  '/:id',
+  validate({ params: S.calls.callParam }),
+  h(callController.remove)
+);
+
+router.use('/calls', calls);
+
+// ── Wallet ──────────────────────────────────────────────────────────────────
+
+const wallet = express.Router();
+wallet.use(authenticate, requireOnboarded);
+
+wallet.get('/', h(walletController.summary));
+wallet.get('/packages', h(walletController.packages));
+wallet.get('/payments/status', h(walletController.paymentsStatus));
+wallet.get(
+  '/transactions',
+  validate({ query: S.wallet.transactions }),
+  h(walletController.transactions)
+);
+wallet.post(
+  '/purchase',
+  paymentLimiter,
+  validate({ body: S.wallet.purchase }),
+  h(walletController.purchase)
+);
+
+wallet.get('/vip/plans', h(walletController.vipPlans));
+wallet.post(
+  '/vip/purchase',
+  paymentLimiter,
+  validate({ body: S.wallet.vipPurchase }),
+  h(walletController.purchaseVip)
+);
+
+// Earnings and withdrawals exist only for Earn Money accounts. For anyone else
+// the answer is not an empty list, it is that the feature does not apply.
+wallet.get(
+  '/earnings',
+  requireEarner,
+  validate({ query: S.pagination }),
+  h(walletController.earnings)
+);
+wallet.post(
+  '/withdraw',
+  paymentLimiter,
+  requireEarner,
+  validate({ body: S.wallet.withdraw }),
+  h(walletController.withdraw)
+);
+wallet.get('/upi-account', requireEarner, h(walletController.getUpiAccount));
+wallet.put(
+  '/upi-account',
+  requireEarner,
+  validate({ body: S.wallet.upiAccount }),
+  h(walletController.setUpiAccount)
+);
+
+router.use('/wallet', wallet);
+
+// ── Notifications ───────────────────────────────────────────────────────────
+
+const notifs = express.Router();
+notifs.use(authenticate);
+
+notifs.get('/', validate({ query: S.notifications.list }), h(notifications.list));
+notifs.get('/unread-count', h(notifications.unreadCount));
+notifs.post('/read-all', h(notifications.markAllRead));
+notifs.post(
+  '/:id/read',
+  validate({ params: S.notifications.param }),
+  h(notifications.markRead)
+);
+
+router.use('/notifications', notifs);
+
+// ── Moderation ──────────────────────────────────────────────────────────────
+
+const mod = express.Router();
+mod.use(authenticate);
+
+mod.get('/blocked', validate({ query: S.pagination }), h(moderation.listBlocked));
+mod.post(
+  '/block',
+  writeLimiter,
+  validate({ body: S.moderation.block }),
+  h(moderation.block)
+);
+mod.delete(
+  '/block/:id',
+  validate({ params: S.moderation.userParam }),
+  h(moderation.unblock)
+);
+mod.post(
+  '/report',
+  writeLimiter,
+  validate({ body: S.moderation.report }),
+  h(moderation.report)
+);
+
+router.use('/moderation', mod);
+
+module.exports = router;

@@ -1,0 +1,2730 @@
+{
+  "langs": [
+    {
+      "code": "hi",
+      "name": "Hindi",
+      "nativeName": "हिन्दी",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "en",
+      "name": "English",
+      "nativeName": "English",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "bn",
+      "name": "Bengali",
+      "nativeName": "বাংলা",
+      "isPopular": true,
+      "aliases": [
+        "Bangla"
+      ]
+    },
+    {
+      "code": "te",
+      "name": "Telugu",
+      "nativeName": "తెలుగు",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "mr",
+      "name": "Marathi",
+      "nativeName": "मराठी",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "ta",
+      "name": "Tamil",
+      "nativeName": "தமிழ்",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "ur",
+      "name": "Urdu",
+      "nativeName": "اردو",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "gu",
+      "name": "Gujarati",
+      "nativeName": "ગુજરાતી",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "kn",
+      "name": "Kannada",
+      "nativeName": "ಕನ್ನಡ",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "ml",
+      "name": "Malayalam",
+      "nativeName": "മലയാളം",
+      "isPopular": true,
+      "aliases": []
+    },
+    {
+      "code": "pa",
+      "name": "Punjabi",
+      "nativeName": "ਪੰਜਾਬੀ",
+      "isPopular": true,
+      "aliases": [
+        "Panjabi"
+      ]
+    },
+    {
+      "code": "or",
+      "name": "Odia",
+      "nativeName": "ଓଡ଼ିଆ",
+      "isPopular": true,
+      "aliases": [
+        "Oriya"
+      ]
+    },
+    {
+      "code": "as",
+      "name": "Assamese",
+      "nativeName": "অসমীয়া",
+      "isPopular": false,
+      "aliases": [
+        "Asamiya",
+        "Oxomiya"
+      ]
+    },
+    {
+      "code": "mai",
+      "name": "Maithili",
+      "nativeName": "मैथिली",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "sat",
+      "name": "Santali",
+      "nativeName": "ᱥᱟᱱᱛᱟᱲᱤ",
+      "isPopular": false,
+      "aliases": [
+        "Santhali",
+        "Sandal"
+      ]
+    },
+    {
+      "code": "ks",
+      "name": "Kashmiri",
+      "nativeName": "کٲشُر",
+      "isPopular": false,
+      "aliases": [
+        "Koshur"
+      ]
+    },
+    {
+      "code": "mni",
+      "name": "Manipuri",
+      "nativeName": "ꯃꯤꯇꯩꯂꯣꯟ",
+      "isPopular": false,
+      "aliases": [
+        "Meitei",
+        "Meiteilon"
+      ]
+    },
+    {
+      "code": "kok",
+      "name": "Konkani",
+      "nativeName": "कोंकणी",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "doi",
+      "name": "Dogri",
+      "nativeName": "डोगरी",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "brx",
+      "name": "Bodo",
+      "nativeName": "Bodo",
+      "isPopular": false,
+      "aliases": [
+        "Boro"
+      ]
+    },
+    {
+      "code": "ne",
+      "name": "Nepali",
+      "nativeName": "नेपाली",
+      "isPopular": false,
+      "aliases": [
+        "Gorkhali",
+        "Khas Kura"
+      ]
+    },
+    {
+      "code": "sd",
+      "name": "Sindhi",
+      "nativeName": "سنڌي",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "sa",
+      "name": "Sanskrit",
+      "nativeName": "संस्कृतम्",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "bho",
+      "name": "Bhojpuri",
+      "nativeName": "भोजपुरी",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "raj",
+      "name": "Rajasthani",
+      "nativeName": "राजस्थानी",
+      "isPopular": false,
+      "aliases": [
+        "Marwari"
+      ]
+    },
+    {
+      "code": "hne",
+      "name": "Chhattisgarhi",
+      "nativeName": "छत्तीसगढ़ी",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "bgc",
+      "name": "Haryanvi",
+      "nativeName": "हरियाणवी",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "mag",
+      "name": "Magahi",
+      "nativeName": "मगही",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "awa",
+      "name": "Awadhi",
+      "nativeName": "अवधी",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "tcy",
+      "name": "Tulu",
+      "nativeName": "ತುಳು",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "kfa",
+      "name": "Kodava",
+      "nativeName": "ಕೊಡವ",
+      "isPopular": false,
+      "aliases": [
+        "Coorgi"
+      ]
+    },
+    {
+      "code": "gbm",
+      "name": "Garhwali",
+      "nativeName": "गढ़वळि",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "kfy",
+      "name": "Kumaoni",
+      "nativeName": "कुमाऊँनी",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "lus",
+      "name": "Mizo",
+      "nativeName": "Mizo ṭawng",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "kha",
+      "name": "Khasi",
+      "nativeName": "Ka Ktien Khasi",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "grt",
+      "name": "Garo",
+      "nativeName": "A·chik",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "nag",
+      "name": "Nagamese",
+      "nativeName": "Nagamese",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "trp",
+      "name": "Kokborok",
+      "nativeName": "ককবরক",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "bpy",
+      "name": "Bishnupriya",
+      "nativeName": "ইমার ঠার",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "gom",
+      "name": "Goan Konkani",
+      "nativeName": "गोंयची कोंकणी",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "bo",
+      "name": "Tibetan",
+      "nativeName": "བོད་སྐད་",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "sit",
+      "name": "Sikkimese",
+      "nativeName": "འབྲས་ལྗོངས་སྐད་",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "si",
+      "name": "Sinhala",
+      "nativeName": "සිංහල",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "dv",
+      "name": "Dhivehi",
+      "nativeName": "ދިވެހި",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "my",
+      "name": "Burmese",
+      "nativeName": "မြန်မာ",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "ar",
+      "name": "Arabic",
+      "nativeName": "العربية",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "fa",
+      "name": "Persian",
+      "nativeName": "فارسی",
+      "isPopular": false,
+      "aliases": [
+        "Farsi"
+      ]
+    },
+    {
+      "code": "ps",
+      "name": "Pashto",
+      "nativeName": "پښتو",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "tr",
+      "name": "Turkish",
+      "nativeName": "Türkçe",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "ru",
+      "name": "Russian",
+      "nativeName": "Русский",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "es",
+      "name": "Spanish",
+      "nativeName": "Español",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "fr",
+      "name": "French",
+      "nativeName": "Français",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "de",
+      "name": "German",
+      "nativeName": "Deutsch",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "pt",
+      "name": "Portuguese",
+      "nativeName": "Português",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "it",
+      "name": "Italian",
+      "nativeName": "Italiano",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "nl",
+      "name": "Dutch",
+      "nativeName": "Nederlands",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "zh",
+      "name": "Chinese",
+      "nativeName": "中文",
+      "isPopular": false,
+      "aliases": [
+        "Mandarin",
+        "Putonghua"
+      ]
+    },
+    {
+      "code": "ja",
+      "name": "Japanese",
+      "nativeName": "日本語",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "ko",
+      "name": "Korean",
+      "nativeName": "한국어",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "th",
+      "name": "Thai",
+      "nativeName": "ไทย",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "vi",
+      "name": "Vietnamese",
+      "nativeName": "Tiếng Việt",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "id",
+      "name": "Indonesian",
+      "nativeName": "Bahasa Indonesia",
+      "isPopular": false,
+      "aliases": [
+        "Bahasa"
+      ]
+    },
+    {
+      "code": "ms",
+      "name": "Malay",
+      "nativeName": "Bahasa Melayu",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "tl",
+      "name": "Filipino",
+      "nativeName": "Tagalog",
+      "isPopular": false,
+      "aliases": [
+        "Tagalog"
+      ]
+    },
+    {
+      "code": "sw",
+      "name": "Swahili",
+      "nativeName": "Kiswahili",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "am",
+      "name": "Amharic",
+      "nativeName": "አማርኛ",
+      "isPopular": false,
+      "aliases": []
+    },
+    {
+      "code": "he",
+      "name": "Hebrew",
+      "nativeName": "עברית",
+      "isPopular": false,
+      "aliases": []
+    }
+  ],
+  "cities": [
+    {
+      "id": "chennai",
+      "name": "Chennai",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": true,
+      "latitude": 13.0827,
+      "longitude": 80.2707
+    },
+    {
+      "id": "bangalore",
+      "name": "Bangalore",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": true,
+      "latitude": 12.9716,
+      "longitude": 77.5946
+    },
+    {
+      "id": "hyderabad",
+      "name": "Hyderabad",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": true,
+      "latitude": 17.385,
+      "longitude": 78.4867
+    },
+    {
+      "id": "mumbai",
+      "name": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": true,
+      "latitude": 19.076,
+      "longitude": 72.8777
+    },
+    {
+      "id": "delhi",
+      "name": "Delhi",
+      "state": "Delhi",
+      "country": "India",
+      "isPopular": true,
+      "latitude": 28.6139,
+      "longitude": 77.209
+    },
+    {
+      "id": "coimbatore",
+      "name": "Coimbatore",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": true,
+      "latitude": 11.0168,
+      "longitude": 76.9558
+    },
+    {
+      "id": "madurai",
+      "name": "Madurai",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": true,
+      "latitude": 9.9252,
+      "longitude": 78.1198
+    },
+    {
+      "id": "kochi",
+      "name": "Kochi",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": true,
+      "latitude": 9.9312,
+      "longitude": 76.2673
+    },
+    {
+      "id": "pune",
+      "name": "Pune",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 18.5204,
+      "longitude": 73.8567
+    },
+    {
+      "id": "kolkata",
+      "name": "Kolkata",
+      "state": "West Bengal",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 22.5726,
+      "longitude": 88.3639
+    },
+    {
+      "id": "ahmedabad",
+      "name": "Ahmedabad",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 23.0225,
+      "longitude": 72.5714
+    },
+    {
+      "id": "jaipur",
+      "name": "Jaipur",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 26.9124,
+      "longitude": 75.7873
+    },
+    {
+      "id": "lucknow",
+      "name": "Lucknow",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 26.8467,
+      "longitude": 80.9462
+    },
+    {
+      "id": "trichy",
+      "name": "Tiruchirappalli",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 10.7905,
+      "longitude": 78.7047
+    },
+    {
+      "id": "salem",
+      "name": "Salem",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 11.6643,
+      "longitude": 78.146
+    },
+    {
+      "id": "vizag",
+      "name": "Visakhapatnam",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 17.6868,
+      "longitude": 83.2185
+    },
+    {
+      "id": "trivandrum",
+      "name": "Thiruvananthapuram",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 8.5241,
+      "longitude": 76.9366
+    },
+    {
+      "id": "mysore",
+      "name": "Mysore",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 12.2958,
+      "longitude": 76.6394
+    },
+    {
+      "id": "nagpur",
+      "name": "Nagpur",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 21.1458,
+      "longitude": 79.0882
+    },
+    {
+      "id": "indore",
+      "name": "Indore",
+      "state": "Madhya Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "latitude": 22.7196,
+      "longitude": 75.8577
+    },
+    {
+      "id": "ariyalur",
+      "name": "Ariyalur",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.1401,
+      "longitude": 79.0782
+    },
+    {
+      "id": "chengalpattu",
+      "name": "Chengalpattu",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.6819,
+      "longitude": 79.9888
+    },
+    {
+      "id": "cuddalore",
+      "name": "Cuddalore",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.748,
+      "longitude": 79.7714
+    },
+    {
+      "id": "dharmapuri",
+      "name": "Dharmapuri",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.1211,
+      "longitude": 78.1583
+    },
+    {
+      "id": "dindigul",
+      "name": "Dindigul",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.3624,
+      "longitude": 77.9695
+    },
+    {
+      "id": "erode",
+      "name": "Erode",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.341,
+      "longitude": 77.7172
+    },
+    {
+      "id": "kallakurichi",
+      "name": "Kallakurichi",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.7383,
+      "longitude": 78.9597
+    },
+    {
+      "id": "kanchipuram",
+      "name": "Kanchipuram",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.8342,
+      "longitude": 79.7036
+    },
+    {
+      "id": "kanyakumari",
+      "name": "Nagercoil",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 8.178,
+      "longitude": 77.4344
+    },
+    {
+      "id": "karur",
+      "name": "Karur",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.9601,
+      "longitude": 78.0766
+    },
+    {
+      "id": "krishnagiri",
+      "name": "Krishnagiri",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.5186,
+      "longitude": 78.2137
+    },
+    {
+      "id": "mayiladuthurai",
+      "name": "Mayiladuthurai",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.1018,
+      "longitude": 79.6552
+    },
+    {
+      "id": "nagapattinam",
+      "name": "Nagapattinam",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.766,
+      "longitude": 79.842
+    },
+    {
+      "id": "namakkal",
+      "name": "Namakkal",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.2189,
+      "longitude": 78.1674
+    },
+    {
+      "id": "nilgiris",
+      "name": "Udhagamandalam",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.4102,
+      "longitude": 76.695
+    },
+    {
+      "id": "perambalur",
+      "name": "Perambalur",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.2342,
+      "longitude": 78.8808
+    },
+    {
+      "id": "pudukkottai",
+      "name": "Pudukkottai",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.3833,
+      "longitude": 78.8001
+    },
+    {
+      "id": "ramanathapuram",
+      "name": "Ramanathapuram",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 9.3639,
+      "longitude": 78.8395
+    },
+    {
+      "id": "ranipet",
+      "name": "Ranipet",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.9249,
+      "longitude": 79.3308
+    },
+    {
+      "id": "sivaganga",
+      "name": "Sivaganga",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 9.8433,
+      "longitude": 78.4809
+    },
+    {
+      "id": "tenkasi",
+      "name": "Tenkasi",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 8.9594,
+      "longitude": 77.3152
+    },
+    {
+      "id": "thanjavur",
+      "name": "Thanjavur",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.787,
+      "longitude": 79.1378
+    },
+    {
+      "id": "theni",
+      "name": "Theni",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.0104,
+      "longitude": 77.4768
+    },
+    {
+      "id": "thoothukudi",
+      "name": "Thoothukudi",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 8.7642,
+      "longitude": 78.1348
+    },
+    {
+      "id": "tirunelveli",
+      "name": "Tirunelveli",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 8.7139,
+      "longitude": 77.7567
+    },
+    {
+      "id": "tirupathur",
+      "name": "Tirupathur",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.4954,
+      "longitude": 78.5679
+    },
+    {
+      "id": "tiruppur",
+      "name": "Tiruppur",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.1085,
+      "longitude": 77.3411
+    },
+    {
+      "id": "tiruvallur",
+      "name": "Tiruvallur",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.1439,
+      "longitude": 79.912
+    },
+    {
+      "id": "tiruvannamalai",
+      "name": "Tiruvannamalai",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.2253,
+      "longitude": 79.0747
+    },
+    {
+      "id": "tiruvarur",
+      "name": "Tiruvarur",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.7726,
+      "longitude": 79.6368
+    },
+    {
+      "id": "vellore",
+      "name": "Vellore",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.9165,
+      "longitude": 79.1325
+    },
+    {
+      "id": "viluppuram",
+      "name": "Viluppuram",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.9401,
+      "longitude": 79.4861
+    },
+    {
+      "id": "virudhunagar",
+      "name": "Virudhunagar",
+      "state": "Tamil Nadu",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 9.581,
+      "longitude": 77.9624
+    },
+    {
+      "id": "alappuzha",
+      "name": "Alappuzha",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 9.4981,
+      "longitude": 76.3388
+    },
+    {
+      "id": "idukki",
+      "name": "Painavu",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 9.8497,
+      "longitude": 76.97
+    },
+    {
+      "id": "kannur",
+      "name": "Kannur",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.8745,
+      "longitude": 75.3704
+    },
+    {
+      "id": "kasaragod",
+      "name": "Kasaragod",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.4996,
+      "longitude": 74.9869
+    },
+    {
+      "id": "kollam",
+      "name": "Kollam",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 8.8932,
+      "longitude": 76.6141
+    },
+    {
+      "id": "kottayam",
+      "name": "Kottayam",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 9.5916,
+      "longitude": 76.5222
+    },
+    {
+      "id": "kozhikode",
+      "name": "Kozhikode",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.2588,
+      "longitude": 75.7804
+    },
+    {
+      "id": "malappuram",
+      "name": "Malappuram",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.051,
+      "longitude": 76.0711
+    },
+    {
+      "id": "palakkad",
+      "name": "Palakkad",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.7867,
+      "longitude": 76.6548
+    },
+    {
+      "id": "pathanamthitta",
+      "name": "Pathanamthitta",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 9.2648,
+      "longitude": 76.787
+    },
+    {
+      "id": "thrissur",
+      "name": "Thrissur",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 10.5276,
+      "longitude": 76.2144
+    },
+    {
+      "id": "wayanad",
+      "name": "Kalpetta",
+      "state": "Kerala",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.6054,
+      "longitude": 76.0862
+    },
+    {
+      "id": "bagalkot",
+      "name": "Bagalkot",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.1691,
+      "longitude": 75.6615
+    },
+    {
+      "id": "ballari",
+      "name": "Ballari",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.1394,
+      "longitude": 76.9214
+    },
+    {
+      "id": "belagavi",
+      "name": "Belagavi",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.8497,
+      "longitude": 74.4977
+    },
+    {
+      "id": "bidar",
+      "name": "Bidar",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.9104,
+      "longitude": 77.5199
+    },
+    {
+      "id": "chamarajanagar",
+      "name": "Chamarajanagar",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.9261,
+      "longitude": 76.9438
+    },
+    {
+      "id": "chikkaballapur",
+      "name": "Chikkaballapur",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.4355,
+      "longitude": 77.7315
+    },
+    {
+      "id": "chikkamagaluru",
+      "name": "Chikkamagaluru",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.3161,
+      "longitude": 75.772
+    },
+    {
+      "id": "chitradurga",
+      "name": "Chitradurga",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 14.2251,
+      "longitude": 76.398
+    },
+    {
+      "id": "davanagere",
+      "name": "Davanagere",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 14.4644,
+      "longitude": 75.9218
+    },
+    {
+      "id": "dharwad",
+      "name": "Dharwad",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.4589,
+      "longitude": 75.0078
+    },
+    {
+      "id": "gadag",
+      "name": "Gadag",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.4315,
+      "longitude": 75.6355
+    },
+    {
+      "id": "hassan",
+      "name": "Hassan",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.0072,
+      "longitude": 76.0962
+    },
+    {
+      "id": "haveri",
+      "name": "Haveri",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 14.7935,
+      "longitude": 75.4044
+    },
+    {
+      "id": "hubballi",
+      "name": "Hubballi",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.3647,
+      "longitude": 75.124
+    },
+    {
+      "id": "kalaburagi",
+      "name": "Kalaburagi",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.3297,
+      "longitude": 76.8343
+    },
+    {
+      "id": "kodagu",
+      "name": "Madikeri",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.4244,
+      "longitude": 75.7382
+    },
+    {
+      "id": "kolar",
+      "name": "Kolar",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.1367,
+      "longitude": 78.1292
+    },
+    {
+      "id": "koppal",
+      "name": "Koppal",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.3547,
+      "longitude": 76.1546
+    },
+    {
+      "id": "mandya",
+      "name": "Mandya",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.5223,
+      "longitude": 76.8955
+    },
+    {
+      "id": "mangaluru",
+      "name": "Mangaluru",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.9141,
+      "longitude": 74.856
+    },
+    {
+      "id": "raichur",
+      "name": "Raichur",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.2076,
+      "longitude": 77.3463
+    },
+    {
+      "id": "ramanagara",
+      "name": "Ramanagara",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 12.7209,
+      "longitude": 77.28
+    },
+    {
+      "id": "shivamogga",
+      "name": "Shivamogga",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.9299,
+      "longitude": 75.5681
+    },
+    {
+      "id": "tumakuru",
+      "name": "Tumakuru",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.3379,
+      "longitude": 77.1173
+    },
+    {
+      "id": "udupi",
+      "name": "Udupi",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.3409,
+      "longitude": 74.7421
+    },
+    {
+      "id": "uttara-kannada",
+      "name": "Karwar",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 14.8137,
+      "longitude": 74.1297
+    },
+    {
+      "id": "vijayapura",
+      "name": "Vijayapura",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.8302,
+      "longitude": 75.71
+    },
+    {
+      "id": "yadgir",
+      "name": "Yadgir",
+      "state": "Karnataka",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.77,
+      "longitude": 77.1373
+    },
+    {
+      "id": "anantapur",
+      "name": "Anantapur",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 14.6819,
+      "longitude": 77.6006
+    },
+    {
+      "id": "chittoor",
+      "name": "Chittoor",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.2172,
+      "longitude": 79.1003
+    },
+    {
+      "id": "eluru",
+      "name": "Eluru",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.7107,
+      "longitude": 81.0952
+    },
+    {
+      "id": "guntur",
+      "name": "Guntur",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.3067,
+      "longitude": 80.4365
+    },
+    {
+      "id": "kadapa",
+      "name": "Kadapa",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 14.4674,
+      "longitude": 78.8241
+    },
+    {
+      "id": "kakinada",
+      "name": "Kakinada",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.9891,
+      "longitude": 82.2475
+    },
+    {
+      "id": "kurnool",
+      "name": "Kurnool",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.8281,
+      "longitude": 78.0373
+    },
+    {
+      "id": "machilipatnam",
+      "name": "Machilipatnam",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.1875,
+      "longitude": 81.1389
+    },
+    {
+      "id": "nandyal",
+      "name": "Nandyal",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.4777,
+      "longitude": 78.4873
+    },
+    {
+      "id": "nellore",
+      "name": "Nellore",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 14.4426,
+      "longitude": 79.9865
+    },
+    {
+      "id": "ongole",
+      "name": "Ongole",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 15.5057,
+      "longitude": 80.0499
+    },
+    {
+      "id": "rajahmundry",
+      "name": "Rajahmundry",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.0005,
+      "longitude": 81.804
+    },
+    {
+      "id": "srikakulam",
+      "name": "Srikakulam",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.2949,
+      "longitude": 83.8938
+    },
+    {
+      "id": "tirupati",
+      "name": "Tirupati",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 13.6288,
+      "longitude": 79.4192
+    },
+    {
+      "id": "vijayawada",
+      "name": "Vijayawada",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.5062,
+      "longitude": 80.648
+    },
+    {
+      "id": "vizianagaram",
+      "name": "Vizianagaram",
+      "state": "Andhra Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.1067,
+      "longitude": 83.3956
+    },
+    {
+      "id": "adilabad",
+      "name": "Adilabad",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 19.664,
+      "longitude": 78.532
+    },
+    {
+      "id": "bhadradri",
+      "name": "Kothagudem",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.5495,
+      "longitude": 80.6197
+    },
+    {
+      "id": "jagtial",
+      "name": "Jagtial",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.7895,
+      "longitude": 78.9126
+    },
+    {
+      "id": "karimnagar",
+      "name": "Karimnagar",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.4386,
+      "longitude": 79.1288
+    },
+    {
+      "id": "khammam",
+      "name": "Khammam",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.2473,
+      "longitude": 80.1514
+    },
+    {
+      "id": "mahbubnagar",
+      "name": "Mahbubnagar",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 16.7488,
+      "longitude": 77.9853
+    },
+    {
+      "id": "mancherial",
+      "name": "Mancherial",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.8714,
+      "longitude": 79.4441
+    },
+    {
+      "id": "medak",
+      "name": "Medak",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.0457,
+      "longitude": 78.2635
+    },
+    {
+      "id": "nalgonda",
+      "name": "Nalgonda",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.0575,
+      "longitude": 79.2684
+    },
+    {
+      "id": "nizamabad",
+      "name": "Nizamabad",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.6725,
+      "longitude": 78.0941
+    },
+    {
+      "id": "ramagundam",
+      "name": "Ramagundam",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.7599,
+      "longitude": 79.474
+    },
+    {
+      "id": "sangareddy",
+      "name": "Sangareddy",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.6248,
+      "longitude": 78.087
+    },
+    {
+      "id": "siddipet",
+      "name": "Siddipet",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 18.1019,
+      "longitude": 78.852
+    },
+    {
+      "id": "suryapet",
+      "name": "Suryapet",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.1353,
+      "longitude": 79.6242
+    },
+    {
+      "id": "warangal",
+      "name": "Warangal",
+      "state": "Telangana",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 17.9689,
+      "longitude": 79.5941
+    },
+    {
+      "id": "nashik",
+      "name": "Nashik",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 19.9975,
+      "longitude": 73.7898
+    },
+    {
+      "id": "aurangabad",
+      "name": "Chhatrapati Sambhajinagar",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 19.8762,
+      "longitude": 75.3433
+    },
+    {
+      "id": "solapur",
+      "name": "Solapur",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 17.6599,
+      "longitude": 75.9064
+    },
+    {
+      "id": "kolhapur",
+      "name": "Kolhapur",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 16.705,
+      "longitude": 74.2433
+    },
+    {
+      "id": "amravati",
+      "name": "Amravati",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 20.9374,
+      "longitude": 77.7796
+    },
+    {
+      "id": "nanded",
+      "name": "Nanded",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 19.1383,
+      "longitude": 77.321
+    },
+    {
+      "id": "sangli",
+      "name": "Sangli",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 16.8524,
+      "longitude": 74.5815
+    },
+    {
+      "id": "jalgaon",
+      "name": "Jalgaon",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 21.0077,
+      "longitude": 75.5626
+    },
+    {
+      "id": "akola",
+      "name": "Akola",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 20.7002,
+      "longitude": 77.0082
+    },
+    {
+      "id": "latur",
+      "name": "Latur",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 18.4088,
+      "longitude": 76.5604
+    },
+    {
+      "id": "ahmednagar",
+      "name": "Ahilyanagar",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 19.0948,
+      "longitude": 74.748
+    },
+    {
+      "id": "chandrapur",
+      "name": "Chandrapur",
+      "state": "Maharashtra",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 19.9615,
+      "longitude": 79.2961
+    },
+    {
+      "id": "surat",
+      "name": "Surat",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 21.1702,
+      "longitude": 72.8311
+    },
+    {
+      "id": "vadodara",
+      "name": "Vadodara",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 22.3072,
+      "longitude": 73.1812
+    },
+    {
+      "id": "rajkot",
+      "name": "Rajkot",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 22.3039,
+      "longitude": 70.8022
+    },
+    {
+      "id": "bhavnagar",
+      "name": "Bhavnagar",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 21.7645,
+      "longitude": 72.1519
+    },
+    {
+      "id": "jamnagar",
+      "name": "Jamnagar",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 22.4707,
+      "longitude": 70.0577
+    },
+    {
+      "id": "junagadh",
+      "name": "Junagadh",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 21.5222,
+      "longitude": 70.4579
+    },
+    {
+      "id": "gandhinagar",
+      "name": "Gandhinagar",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 23.2156,
+      "longitude": 72.6369
+    },
+    {
+      "id": "anand",
+      "name": "Anand",
+      "state": "Gujarat",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 22.5645,
+      "longitude": 72.9289
+    },
+    {
+      "id": "jodhpur",
+      "name": "Jodhpur",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 26.2389,
+      "longitude": 73.0243
+    },
+    {
+      "id": "udaipur",
+      "name": "Udaipur",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 24.5854,
+      "longitude": 73.7125
+    },
+    {
+      "id": "kota",
+      "name": "Kota",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 25.2138,
+      "longitude": 75.8648
+    },
+    {
+      "id": "ajmer",
+      "name": "Ajmer",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 26.4499,
+      "longitude": 74.6399
+    },
+    {
+      "id": "bikaner",
+      "name": "Bikaner",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 28.0229,
+      "longitude": 73.3119
+    },
+    {
+      "id": "alwar",
+      "name": "Alwar",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 27.553,
+      "longitude": 76.6346
+    },
+    {
+      "id": "bhilwara",
+      "name": "Bhilwara",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 25.3407,
+      "longitude": 74.6313
+    },
+    {
+      "id": "sikar",
+      "name": "Sikar",
+      "state": "Rajasthan",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 27.6094,
+      "longitude": 75.1399
+    },
+    {
+      "id": "kanpur",
+      "name": "Kanpur",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 26.4499,
+      "longitude": 80.3319
+    },
+    {
+      "id": "varanasi",
+      "name": "Varanasi",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 25.3176,
+      "longitude": 82.9739
+    },
+    {
+      "id": "agra",
+      "name": "Agra",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 27.1767,
+      "longitude": 78.0081
+    },
+    {
+      "id": "prayagraj",
+      "name": "Prayagraj",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 25.4358,
+      "longitude": 81.8463
+    },
+    {
+      "id": "meerut",
+      "name": "Meerut",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 28.9845,
+      "longitude": 77.7064
+    },
+    {
+      "id": "bareilly",
+      "name": "Bareilly",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 28.367,
+      "longitude": 79.4304
+    },
+    {
+      "id": "gorakhpur",
+      "name": "Gorakhpur",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 26.7606,
+      "longitude": 83.3732
+    },
+    {
+      "id": "aligarh",
+      "name": "Aligarh",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 27.8974,
+      "longitude": 78.088
+    },
+    {
+      "id": "moradabad",
+      "name": "Moradabad",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 28.8386,
+      "longitude": 78.7733
+    },
+    {
+      "id": "jhansi",
+      "name": "Jhansi",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 25.4484,
+      "longitude": 78.5685
+    },
+    {
+      "id": "ayodhya",
+      "name": "Ayodhya",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 26.7922,
+      "longitude": 82.1998
+    },
+    {
+      "id": "noida",
+      "name": "Noida",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 28.5355,
+      "longitude": 77.391
+    },
+    {
+      "id": "ghaziabad",
+      "name": "Ghaziabad",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 28.6692,
+      "longitude": 77.4538
+    },
+    {
+      "id": "mathura",
+      "name": "Mathura",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 27.4924,
+      "longitude": 77.6737
+    },
+    {
+      "id": "saharanpur",
+      "name": "Saharanpur",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 29.968,
+      "longitude": 77.5552
+    },
+    {
+      "id": "bhopal",
+      "name": "Bhopal",
+      "state": "Madhya Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 23.2599,
+      "longitude": 77.4126
+    },
+    {
+      "id": "jabalpur",
+      "name": "Jabalpur",
+      "state": "Madhya Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 23.1815,
+      "longitude": 79.9864
+    },
+    {
+      "id": "gwalior",
+      "name": "Gwalior",
+      "state": "Madhya Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 26.2183,
+      "longitude": 78.1828
+    },
+    {
+      "id": "ujjain",
+      "name": "Ujjain",
+      "state": "Madhya Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 23.1765,
+      "longitude": 75.7885
+    },
+    {
+      "id": "sagar",
+      "name": "Sagar",
+      "state": "Madhya Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 23.8388,
+      "longitude": 78.7378
+    },
+    {
+      "id": "satna",
+      "name": "Satna",
+      "state": "Madhya Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 24.5854,
+      "longitude": 80.8322
+    },
+    {
+      "id": "rewa",
+      "name": "Rewa",
+      "state": "Madhya Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 24.5362,
+      "longitude": 81.2961
+    },
+    {
+      "id": "patna",
+      "name": "Patna",
+      "state": "Bihar",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 25.5941,
+      "longitude": 85.1376
+    },
+    {
+      "id": "gaya",
+      "name": "Gaya",
+      "state": "Bihar",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 24.7914,
+      "longitude": 84.9994
+    },
+    {
+      "id": "bhagalpur",
+      "name": "Bhagalpur",
+      "state": "Bihar",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 25.2425,
+      "longitude": 86.9842
+    },
+    {
+      "id": "muzaffarpur",
+      "name": "Muzaffarpur",
+      "state": "Bihar",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 26.1209,
+      "longitude": 85.3647
+    },
+    {
+      "id": "darbhanga",
+      "name": "Darbhanga",
+      "state": "Bihar",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 26.1542,
+      "longitude": 85.8918
+    },
+    {
+      "id": "purnia",
+      "name": "Purnia",
+      "state": "Bihar",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 25.7771,
+      "longitude": 87.4753
+    },
+    {
+      "id": "ranchi",
+      "name": "Ranchi",
+      "state": "Jharkhand",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 23.3441,
+      "longitude": 85.3096
+    },
+    {
+      "id": "jamshedpur",
+      "name": "Jamshedpur",
+      "state": "Jharkhand",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 22.8046,
+      "longitude": 86.2029
+    },
+    {
+      "id": "dhanbad",
+      "name": "Dhanbad",
+      "state": "Jharkhand",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 23.7957,
+      "longitude": 86.4304
+    },
+    {
+      "id": "bokaro",
+      "name": "Bokaro",
+      "state": "Jharkhand",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 23.6693,
+      "longitude": 86.1511
+    },
+    {
+      "id": "siliguri",
+      "name": "Siliguri",
+      "state": "West Bengal",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 26.7271,
+      "longitude": 88.3953
+    },
+    {
+      "id": "asansol",
+      "name": "Asansol",
+      "state": "West Bengal",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 23.6739,
+      "longitude": 86.9524
+    },
+    {
+      "id": "durgapur",
+      "name": "Durgapur",
+      "state": "West Bengal",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 23.5204,
+      "longitude": 87.3119
+    },
+    {
+      "id": "kharagpur",
+      "name": "Kharagpur",
+      "state": "West Bengal",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 22.346,
+      "longitude": 87.232
+    },
+    {
+      "id": "malda",
+      "name": "Malda",
+      "state": "West Bengal",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 25.0108,
+      "longitude": 88.1411
+    },
+    {
+      "id": "bhubaneswar",
+      "name": "Bhubaneswar",
+      "state": "Odisha",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 20.2961,
+      "longitude": 85.8245
+    },
+    {
+      "id": "cuttack",
+      "name": "Cuttack",
+      "state": "Odisha",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 20.4625,
+      "longitude": 85.883
+    },
+    {
+      "id": "rourkela",
+      "name": "Rourkela",
+      "state": "Odisha",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 22.2604,
+      "longitude": 84.8536
+    },
+    {
+      "id": "berhampur",
+      "name": "Berhampur",
+      "state": "Odisha",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 19.315,
+      "longitude": 84.7941
+    },
+    {
+      "id": "sambalpur",
+      "name": "Sambalpur",
+      "state": "Odisha",
+      "country": "India",
+      "isPopular": false,
+      "region": "East India",
+      "latitude": 21.4669,
+      "longitude": 83.9812
+    },
+    {
+      "id": "chandigarh",
+      "name": "Chandigarh",
+      "state": "Chandigarh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 30.7333,
+      "longitude": 76.7794
+    },
+    {
+      "id": "ludhiana",
+      "name": "Ludhiana",
+      "state": "Punjab",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 30.901,
+      "longitude": 75.8573
+    },
+    {
+      "id": "amritsar",
+      "name": "Amritsar",
+      "state": "Punjab",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 31.634,
+      "longitude": 74.8723
+    },
+    {
+      "id": "jalandhar",
+      "name": "Jalandhar",
+      "state": "Punjab",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 31.326,
+      "longitude": 75.5762
+    },
+    {
+      "id": "patiala",
+      "name": "Patiala",
+      "state": "Punjab",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 30.3398,
+      "longitude": 76.3869
+    },
+    {
+      "id": "gurugram",
+      "name": "Gurugram",
+      "state": "Haryana",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 28.4595,
+      "longitude": 77.0266
+    },
+    {
+      "id": "faridabad",
+      "name": "Faridabad",
+      "state": "Haryana",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 28.4089,
+      "longitude": 77.3178
+    },
+    {
+      "id": "hisar",
+      "name": "Hisar",
+      "state": "Haryana",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 29.1492,
+      "longitude": 75.7217
+    },
+    {
+      "id": "karnal",
+      "name": "Karnal",
+      "state": "Haryana",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 29.6857,
+      "longitude": 76.9905
+    },
+    {
+      "id": "dehradun",
+      "name": "Dehradun",
+      "state": "Uttarakhand",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 30.3165,
+      "longitude": 78.0322
+    },
+    {
+      "id": "haridwar",
+      "name": "Haridwar",
+      "state": "Uttarakhand",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 29.9457,
+      "longitude": 78.1642
+    },
+    {
+      "id": "shimla",
+      "name": "Shimla",
+      "state": "Himachal Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 31.1048,
+      "longitude": 77.1734
+    },
+    {
+      "id": "jammu",
+      "name": "Jammu",
+      "state": "Jammu and Kashmir",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 32.7266,
+      "longitude": 74.857
+    },
+    {
+      "id": "srinagar",
+      "name": "Srinagar",
+      "state": "Jammu and Kashmir",
+      "country": "India",
+      "isPopular": false,
+      "region": "North India",
+      "latitude": 34.0837,
+      "longitude": 74.7973
+    },
+    {
+      "id": "raipur",
+      "name": "Raipur",
+      "state": "Chhattisgarh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 21.2514,
+      "longitude": 81.6296
+    },
+    {
+      "id": "bhilai",
+      "name": "Bhilai",
+      "state": "Chhattisgarh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 21.1938,
+      "longitude": 81.3509
+    },
+    {
+      "id": "bilaspur-cg",
+      "name": "Bilaspur",
+      "state": "Chhattisgarh",
+      "country": "India",
+      "isPopular": false,
+      "region": "Central India",
+      "latitude": 22.0797,
+      "longitude": 82.1409
+    },
+    {
+      "id": "guwahati",
+      "name": "Guwahati",
+      "state": "Assam",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 26.1445,
+      "longitude": 91.7362
+    },
+    {
+      "id": "dibrugarh",
+      "name": "Dibrugarh",
+      "state": "Assam",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 27.4728,
+      "longitude": 94.912
+    },
+    {
+      "id": "silchar",
+      "name": "Silchar",
+      "state": "Assam",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 24.8333,
+      "longitude": 92.7789
+    },
+    {
+      "id": "agartala",
+      "name": "Agartala",
+      "state": "Tripura",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 23.8315,
+      "longitude": 91.2868
+    },
+    {
+      "id": "imphal",
+      "name": "Imphal",
+      "state": "Manipur",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 24.817,
+      "longitude": 93.9368
+    },
+    {
+      "id": "shillong",
+      "name": "Shillong",
+      "state": "Meghalaya",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 25.5788,
+      "longitude": 91.8933
+    },
+    {
+      "id": "aizawl",
+      "name": "Aizawl",
+      "state": "Mizoram",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 23.7271,
+      "longitude": 92.7176
+    },
+    {
+      "id": "kohima",
+      "name": "Kohima",
+      "state": "Nagaland",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 25.6751,
+      "longitude": 94.1086
+    },
+    {
+      "id": "itanagar",
+      "name": "Itanagar",
+      "state": "Arunachal Pradesh",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 27.0844,
+      "longitude": 93.6053
+    },
+    {
+      "id": "gangtok",
+      "name": "Gangtok",
+      "state": "Sikkim",
+      "country": "India",
+      "isPopular": false,
+      "region": "North East",
+      "latitude": 27.3389,
+      "longitude": 88.6065
+    },
+    {
+      "id": "panaji",
+      "name": "Panaji",
+      "state": "Goa",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 15.4909,
+      "longitude": 73.8278
+    },
+    {
+      "id": "margao",
+      "name": "Margao",
+      "state": "Goa",
+      "country": "India",
+      "isPopular": false,
+      "region": "West India",
+      "latitude": 15.2832,
+      "longitude": 73.9862
+    },
+    {
+      "id": "puducherry",
+      "name": "Puducherry",
+      "state": "Puducherry",
+      "country": "India",
+      "isPopular": false,
+      "region": "South India",
+      "latitude": 11.9416,
+      "longitude": 79.8083
+    }
+  ]
+}

@@ -1,0 +1,597 @@
+[
+  {
+    "id": "u_arun",
+    "name": "Arun",
+    "age": 24,
+    "gender": "male",
+    "cityId": "chennai",
+    "languages": [
+      "English",
+      "Tamil"
+    ],
+    "bio": "Love meeting new people. Cricket, filter coffee and long talks.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=12",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.9,
+    "totalCalls": 312,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Cricket",
+      "Music",
+      "Travel"
+    ]
+  },
+  {
+    "id": "u_meera",
+    "name": "Meera",
+    "age": 22,
+    "gender": "female",
+    "cityId": "chennai",
+    "languages": [
+      "Tamil",
+      "English",
+      "Malayalam"
+    ],
+    "bio": "Bharatanatyam dancer. Ask me for the best food spots in the city.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=45",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.8,
+    "totalCalls": 208,
+    "voiceRatePerMinute": 15,
+    "videoRatePerMinute": 25,
+    "interests": [
+      "Dance",
+      "Food",
+      "Movies"
+    ]
+  },
+  {
+    "id": "u_karthik",
+    "name": "Karthik",
+    "age": 27,
+    "gender": "male",
+    "cityId": "chennai",
+    "languages": [
+      "Tamil",
+      "English",
+      "Hindi"
+    ],
+    "bio": "Startup guy by day, guitarist by night.",
+    "presence": "busy",
+    "avatarUrl": "https://i.pravatar.cc/400?img=33",
+    "isVerified": false,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": false,
+    "rating": 4.6,
+    "totalCalls": 96,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Music",
+      "Startups"
+    ]
+  },
+  {
+    "id": "u_divya",
+    "name": "Divya",
+    "age": 25,
+    "gender": "female",
+    "cityId": "chennai",
+    "languages": [
+      "Tamil",
+      "Telugu",
+      "English"
+    ],
+    "bio": "New here! Looking for genuine friendships and good conversations.",
+    "presence": "offline",
+    "avatarUrl": "https://i.pravatar.cc/400?img=47",
+    "isVerified": false,
+    "isEarner": false,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 5,
+    "totalCalls": 4,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Books",
+      "Photography"
+    ]
+  },
+  {
+    "id": "u_nithya",
+    "name": "Nithya",
+    "age": 26,
+    "gender": "female",
+    "cityId": "bangalore",
+    "languages": [
+      "Kannada",
+      "English",
+      "Hindi"
+    ],
+    "bio": "Product designer. Trekking every other weekend.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=26",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.9,
+    "totalCalls": 421,
+    "voiceRatePerMinute": 18,
+    "videoRatePerMinute": 30,
+    "interests": [
+      "Design",
+      "Trekking",
+      "Coffee"
+    ]
+  },
+  {
+    "id": "u_rohan",
+    "name": "Rohan",
+    "age": 29,
+    "gender": "male",
+    "cityId": "bangalore",
+    "languages": [
+      "English",
+      "Hindi",
+      "Kannada"
+    ],
+    "bio": "Football, F1 and everything tech. Always up for a chat.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=59",
+    "isVerified": false,
+    "isEarner": false,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.5,
+    "totalCalls": 154,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Football",
+      "F1",
+      "Gaming"
+    ]
+  },
+  {
+    "id": "u_aisha",
+    "name": "Aisha",
+    "age": 23,
+    "gender": "female",
+    "cityId": "bangalore",
+    "languages": [
+      "English",
+      "Urdu",
+      "Hindi"
+    ],
+    "bio": "Med student. Tell me your weirdest travel story.",
+    "presence": "offline",
+    "avatarUrl": "https://i.pravatar.cc/400?img=20",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.7,
+    "totalCalls": 88,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Travel",
+      "Medicine",
+      "Poetry"
+    ]
+  },
+  {
+    "id": "u_sruthi",
+    "name": "Sruthi",
+    "age": 24,
+    "gender": "female",
+    "cityId": "hyderabad",
+    "languages": [
+      "Telugu",
+      "Hindi",
+      "English"
+    ],
+    "bio": "Biryani expert. Will happily argue about which place is best.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=31",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.8,
+    "totalCalls": 267,
+    "voiceRatePerMinute": 15,
+    "videoRatePerMinute": 25,
+    "interests": [
+      "Food",
+      "Movies",
+      "Music"
+    ]
+  },
+  {
+    "id": "u_vikram",
+    "name": "Vikram",
+    "age": 31,
+    "gender": "male",
+    "cityId": "hyderabad",
+    "languages": [
+      "Telugu",
+      "English"
+    ],
+    "bio": "Photographer. Golden hour is the only hour.",
+    "presence": "busy",
+    "avatarUrl": "https://i.pravatar.cc/400?img=51",
+    "isVerified": false,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.4,
+    "totalCalls": 73,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Photography",
+      "Bikes"
+    ]
+  },
+  {
+    "id": "u_pooja",
+    "name": "Pooja",
+    "age": 21,
+    "gender": "female",
+    "cityId": "hyderabad",
+    "languages": [
+      "Hindi",
+      "Telugu",
+      "English"
+    ],
+    "bio": "Just joined Vybli — say hi!",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=9",
+    "isVerified": false,
+    "isEarner": false,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 5,
+    "totalCalls": 2,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Art",
+      "K-drama"
+    ]
+  },
+  {
+    "id": "u_zara",
+    "name": "Zara",
+    "age": 27,
+    "gender": "female",
+    "cityId": "mumbai",
+    "languages": [
+      "English",
+      "Hindi",
+      "Marathi"
+    ],
+    "bio": "Stand-up comic. I promise at least one bad pun per call.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=44",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.9,
+    "totalCalls": 512,
+    "voiceRatePerMinute": 20,
+    "videoRatePerMinute": 33,
+    "interests": [
+      "Comedy",
+      "Theatre",
+      "Cats"
+    ]
+  },
+  {
+    "id": "u_dev",
+    "name": "Dev",
+    "age": 30,
+    "gender": "male",
+    "cityId": "mumbai",
+    "languages": [
+      "Hindi",
+      "English",
+      "Gujarati"
+    ],
+    "bio": "Local train survivor. Foodie. Cricket fanatic.",
+    "presence": "offline",
+    "avatarUrl": "https://i.pravatar.cc/400?img=52",
+    "isVerified": false,
+    "isEarner": false,
+    "voiceEnabled": true,
+    "videoEnabled": false,
+    "rating": 4.3,
+    "totalCalls": 61,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Cricket",
+      "Food"
+    ]
+  },
+  {
+    "id": "u_ananya",
+    "name": "Ananya",
+    "age": 25,
+    "gender": "female",
+    "cityId": "mumbai",
+    "languages": [
+      "English",
+      "Hindi",
+      "Bengali"
+    ],
+    "bio": "Marine drive walks and endless playlists.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=24",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.7,
+    "totalCalls": 189,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Music",
+      "Fitness"
+    ]
+  },
+  {
+    "id": "u_ishaan",
+    "name": "Ishaan",
+    "age": 26,
+    "gender": "male",
+    "cityId": "delhi",
+    "languages": [
+      "Hindi",
+      "English",
+      "Punjabi"
+    ],
+    "bio": "History nerd. Ask me about anything in Old Delhi.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=15",
+    "isVerified": false,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.6,
+    "totalCalls": 143,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "History",
+      "Street food"
+    ]
+  },
+  {
+    "id": "u_simran",
+    "name": "Simran",
+    "age": 23,
+    "gender": "female",
+    "cityId": "delhi",
+    "languages": [
+      "Punjabi",
+      "Hindi",
+      "English"
+    ],
+    "bio": "Fashion student. Big fan of chai, bigger fan of gossip.",
+    "presence": "busy",
+    "avatarUrl": "https://i.pravatar.cc/400?img=49",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.8,
+    "totalCalls": 231,
+    "voiceRatePerMinute": 16,
+    "videoRatePerMinute": 26,
+    "interests": [
+      "Fashion",
+      "Dance"
+    ]
+  },
+  {
+    "id": "u_rahul",
+    "name": "Rahul",
+    "age": 28,
+    "gender": "male",
+    "cityId": "delhi",
+    "languages": [
+      "Hindi",
+      "English"
+    ],
+    "bio": "Runner. Currently training for my third half marathon.",
+    "presence": "offline",
+    "avatarUrl": "https://i.pravatar.cc/400?img=60",
+    "isVerified": false,
+    "isEarner": false,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.5,
+    "totalCalls": 77,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Running",
+      "Podcasts"
+    ]
+  },
+  {
+    "id": "u_prakash",
+    "name": "Prakash",
+    "age": 25,
+    "gender": "male",
+    "cityId": "coimbatore",
+    "languages": [
+      "Tamil",
+      "English"
+    ],
+    "bio": "Textile business. Weekend biker on the Ooty road.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=13",
+    "isVerified": false,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.4,
+    "totalCalls": 54,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Bikes",
+      "Nature"
+    ]
+  },
+  {
+    "id": "u_lakshmi",
+    "name": "Lakshmi",
+    "age": 22,
+    "gender": "female",
+    "cityId": "coimbatore",
+    "languages": [
+      "Tamil",
+      "English",
+      "Malayalam"
+    ],
+    "bio": "Engineering final year. Loves rain and old Ilaiyaraaja songs.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=41",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.9,
+    "totalCalls": 176,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Music",
+      "Coding"
+    ]
+  },
+  {
+    "id": "u_selva",
+    "name": "Selva",
+    "age": 33,
+    "gender": "male",
+    "cityId": "madurai",
+    "languages": [
+      "Tamil"
+    ],
+    "bio": "Jigarthanda and temple town stories.",
+    "presence": "offline",
+    "avatarUrl": "https://i.pravatar.cc/400?img=53",
+    "isVerified": false,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": false,
+    "rating": 4.2,
+    "totalCalls": 39,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Food",
+      "Culture"
+    ]
+  },
+  {
+    "id": "u_kavya",
+    "name": "Kavya",
+    "age": 24,
+    "gender": "female",
+    "cityId": "madurai",
+    "languages": [
+      "Tamil",
+      "English"
+    ],
+    "bio": "Teacher. I collect postcards from everyone I talk to.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=32",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.8,
+    "totalCalls": 198,
+    "voiceRatePerMinute": 14,
+    "videoRatePerMinute": 23,
+    "interests": [
+      "Teaching",
+      "Travel"
+    ]
+  },
+  {
+    "id": "u_aravind",
+    "name": "Aravind",
+    "age": 28,
+    "gender": "male",
+    "cityId": "kochi",
+    "languages": [
+      "Malayalam",
+      "English",
+      "Tamil"
+    ],
+    "bio": "Backwaters, boat rides and beef fry. In that order.",
+    "presence": "online",
+    "avatarUrl": "https://i.pravatar.cc/400?img=56",
+    "isVerified": false,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.6,
+    "totalCalls": 121,
+    "voiceRatePerMinute": 12,
+    "videoRatePerMinute": 20,
+    "interests": [
+      "Travel",
+      "Food"
+    ]
+  },
+  {
+    "id": "u_anjali",
+    "name": "Anjali",
+    "age": 26,
+    "gender": "female",
+    "cityId": "kochi",
+    "languages": [
+      "Malayalam",
+      "English",
+      "Hindi"
+    ],
+    "bio": "Architect. Sketching cities one call at a time.",
+    "presence": "busy",
+    "avatarUrl": "https://i.pravatar.cc/400?img=28",
+    "isVerified": true,
+    "isEarner": true,
+    "voiceEnabled": true,
+    "videoEnabled": true,
+    "rating": 4.9,
+    "totalCalls": 302,
+    "voiceRatePerMinute": 17,
+    "videoRatePerMinute": 28,
+    "interests": [
+      "Architecture",
+      "Art",
+      "Rain"
+    ]
+  }
+]

@@ -1,0 +1,1971 @@
+{
+  "info": {
+    "name": "Vybli API",
+    "_postman_id": "7c1f4a20-9b3e-4d6a-8f21-vybli000001",
+    "description": "Vybli backend — REST + Socket.IO.\n\nRequests are ordered as a **walkthrough**, not an index: run them top to bottom and the collection signs you up, onboards you, finds someone, connects, chats, calls and pays.\n\nThe scripts do the token wrangling for you. `Request OTP` stores the dev code, `Verify OTP` stores the tokens, and later requests capture the ids they create — so you never paste a cuid by hand.\n\nSet `base_url` if the server is not on localhost:4000.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:4000/api/v1"
+    },
+    {
+      "key": "dial_code",
+      "value": "+91"
+    },
+    {
+      "key": "phone",
+      "value": "9876543210"
+    },
+    {
+      "key": "otp_code",
+      "value": ""
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "user_id",
+      "value": ""
+    },
+    {
+      "key": "peer_id",
+      "value": ""
+    },
+    {
+      "key": "request_id",
+      "value": ""
+    },
+    {
+      "key": "conversation_id",
+      "value": ""
+    },
+    {
+      "key": "call_id",
+      "value": ""
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Applies to every request in the collection.",
+          "pm.test('responds with the standard envelope', function () {",
+          "  const body = pm.response.json();",
+          "  pm.expect(body).to.have.property('success');",
+          "  pm.expect(body).to.have.property('message');",
+          "  if (body.success === false) pm.expect(body).to.have.property('error');",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "00 · Health",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 · Reference data",
+      "description": "Public — the onboarding screens need these before anyone is signed in.",
+      "item": [
+        {
+          "name": "Languages",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/languages",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "languages"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Languages — alias search",
+          "description": "\"bangla\" must find Bengali. A language you cannot find by the name you grew up with reads as one the app does not have.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/languages?q=bangla",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "languages"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "bangla"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cities",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/cities",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "cities"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 · Auth",
+      "item": [
+        {
+          "name": "Request OTP",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fresh number each run, so the collection can be replayed.",
+                  "if (!pm.collectionVariables.get('phone_fixed')) {",
+                  "  pm.collectionVariables.set('phone', String(9000000000 + Math.floor(Math.random() * 899999999)));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data.dev_code) {",
+                  "  pm.collectionVariables.set('otp_code', body.data.dev_code);",
+                  "  console.log('OTP captured:', body.data.dev_code);",
+                  "}",
+                  "pm.test('a code was issued', () => pm.expect(body.success).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dial_code\": \"{{dial_code}}\",\n  \"phone\": \"{{phone}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/otp/request",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "otp",
+                "request"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Verify OTP → sign in",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success) {",
+                  "  pm.collectionVariables.set('access_token', body.data.access_token);",
+                  "  pm.collectionVariables.set('refresh_token', body.data.refresh_token);",
+                  "  pm.collectionVariables.set('user_id', body.data.user.id);",
+                  "}",
+                  "pm.test('signed in', () => pm.expect(body.success).to.be.true);",
+                  "pm.test('onboarding starts at PHONE_VERIFIED', function () {",
+                  "  if (body.data.is_new_user) pm.expect(body.data.onboarding_status).to.eql('PHONE_VERIFIED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dial_code\": \"{{dial_code}}\",\n  \"phone\": \"{{phone}}\",\n  \"code\": \"{{otp_code}}\",\n  \"device\": \"Postman\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/otp/verify",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "otp",
+                "verify"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Who am I",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Refresh session",
+          "description": "Rotates: the old refresh token dies here, so a stolen one is good only until the owner next refreshes.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success) {",
+                  "  pm.collectionVariables.set('access_token', body.data.access_token);",
+                  "  pm.collectionVariables.set('refresh_token', body.data.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"all_devices\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 · Onboarding",
+      "description": "Resumable. Ask /status and go where it says — closing the app halfway costs nothing.",
+      "item": [
+        {
+          "name": "Status",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/onboarding/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "onboarding",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "1 · Gender",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gender\": \"female\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/onboarding/gender",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "onboarding",
+                "gender"
+              ]
+            }
+          }
+        },
+        {
+          "name": "2 · Age",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"age\": 24\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/onboarding/age",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "onboarding",
+                "age"
+              ]
+            }
+          }
+        },
+        {
+          "name": "3 · Languages",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"language_codes\": [\"en\", \"ta\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/onboarding/languages",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "onboarding",
+                "languages"
+              ]
+            }
+          }
+        },
+        {
+          "name": "4 · Location",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"city_id\": \"chennai\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/onboarding/location",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "onboarding",
+                "location"
+              ]
+            }
+          },
+          "description": "Also derives the role: gender decides earnMoney vs makeFriends the moment this lands, and isEarner is set here — there is no separate mode step."
+        },
+        {
+          "name": "6 · Name and bio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Meera\",\n  \"bio\": \"Love talking about films and food.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/onboarding/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "onboarding",
+                "profile"
+              ]
+            }
+          }
+        },
+        {
+          "name": "7 · Voice verification (earners only)",
+          "description": "Under 4 seconds is rejected — the stand-in for a real voice-ID provider.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"language_code\": \"en\",\n  \"duration_seconds\": 8\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/verification/voice",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "verification",
+                "voice"
+              ]
+            }
+          }
+        },
+        {
+          "name": "8 · Complete",
+          "description": "Re-checks everything rather than trusting the status column, and names the first gap if any.",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/onboarding/complete",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "onboarding",
+                "complete"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 · Me and settings",
+      "item": [
+        {
+          "name": "My profile",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"Updated from Postman.\",\n  \"language_codes\": [\"en\", \"ta\", \"hi\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Go online",
+          "description": "Normally driven by the socket connecting; here so REST-only testing can be reached by a caller.",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"online\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/me/presence",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "presence"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Privacy settings",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/me/settings/privacy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "settings",
+                "privacy"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Turn messaging off",
+          "description": "A full opt-out: the chat list empties with messaging_disabled: true, requests are refused, calls are unaffected.",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"allow_messages\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/me/settings/privacy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "settings",
+                "privacy"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Hide from discovery",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"profile_visible_to_everyone\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/me/settings/privacy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "settings",
+                "privacy"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Notification settings",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/me/settings/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "settings",
+                "notifications"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Discovery filters",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"min_age\": 21,\n  \"max_age\": 35,\n  \"genders\": [\"female\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/me/settings/discovery",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "settings",
+                "discovery"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reset filters",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/me/settings/discovery/reset",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "me",
+                "settings",
+                "discovery",
+                "reset"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 · Discovery",
+      "item": [
+        {
+          "name": "Feed — my city",
+          "description": "Captures the first result as {{peer_id}} for the requests below.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data.items && body.data.items.length) {",
+                  "  pm.collectionVariables.set('peer_id', body.data.items[0].id);",
+                  "  console.log('peer_id →', body.data.items[0].name);",
+                  "}",
+                  "pm.test('only earners are discoverable', function () {",
+                  "  (body.data.items || []).forEach((u) => pm.expect(u.is_earner).to.be.true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/users/discover?scope=myCity&page=1&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "discover"
+              ],
+              "query": [
+                {
+                  "key": "scope",
+                  "value": "myCity"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Feed — all cities, online only",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/users/discover?scope=allCities&online_only=true",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "discover"
+              ],
+              "query": [
+                {
+                  "key": "scope",
+                  "value": "allCities"
+                },
+                {
+                  "key": "online_only",
+                  "value": "true"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Random match",
+          "description": "Returns the match only — placing the call is a separate step, so Skip costs nothing.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success) pm.collectionVariables.set('peer_id', body.data.user.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scope\": \"allCities\",\n  \"type\": \"voice\",\n  \"exclude_ids\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/users/random-match",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "random-match"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Public profile",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/users/{{peer_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "{{peer_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Connection status",
+          "description": "none | requestSent | requestReceived | friends — the four states the profile button renders.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/users/{{peer_id}}/connection",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "{{peer_id}}",
+                "connection"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 · Friends",
+      "item": [
+        {
+          "name": "Send request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data.request) pm.collectionVariables.set('request_id', body.data.request.id);",
+                  "if (body.success && body.data.conversation_id) pm.collectionVariables.set('conversation_id', body.data.conversation_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{peer_id}}\",\n  \"message\": \"Hi! Would love to connect on Vybli.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/friends/requests",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "friends",
+                "requests"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Incoming requests",
+          "description": "Always empty for a Make Friends account — only earners can receive one.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/friends/requests?direction=incoming",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "friends",
+                "requests"
+              ],
+              "query": [
+                {
+                  "key": "direction",
+                  "value": "incoming"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Sent requests",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/friends/requests?direction=outgoing",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "friends",
+                "requests"
+              ],
+              "query": [
+                {
+                  "key": "direction",
+                  "value": "outgoing"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Accept request",
+          "description": "Run this as the *recipient*. Creates the friendship and the conversation together.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data.conversation_id) pm.collectionVariables.set('conversation_id', body.data.conversation_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/friends/requests/{{request_id}}/accept",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "friends",
+                "requests",
+                "{{request_id}}",
+                "accept"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reject request",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/friends/requests/{{request_id}}/reject",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "friends",
+                "requests",
+                "{{request_id}}",
+                "reject"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cancel request",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/friends/requests/{{request_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "friends",
+                "requests",
+                "{{request_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "My friends",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/friends",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "friends"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unfriend",
+          "description": "Deletes the conversation too — a thread you cannot reply to is a dead end.",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/friends/{{peer_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "friends",
+                "{{peer_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 · Conversations",
+      "item": [
+        {
+          "name": "Chats — Messages tab",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data.items && body.data.items.length) {",
+                  "  pm.collectionVariables.set('conversation_id', body.data.items[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/conversations?filter=accepted",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conversations"
+              ],
+              "query": [
+                {
+                  "key": "filter",
+                  "value": "accepted"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Chats — Requests tab",
+          "description": "Pending requests shaped as threads: the app models them as a conversation at an earlier status.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/conversations?filter=requests",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conversations"
+              ],
+              "query": [
+                {
+                  "key": "filter",
+                  "value": "requests"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unread badge",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/conversations/unread",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conversations",
+                "unread"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Open thread",
+          "description": "Reading it is what marks it read.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/conversations/{{conversation_id}}?limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conversations",
+                "{{conversation_id}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Send message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hey! How are you?\",\n  \"client_id\": \"local_1\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/conversations/{{conversation_id}}/messages",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conversations",
+                "{{conversation_id}}",
+                "messages"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Send an attachment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Look at this\",\n  \"attachment\": {\n    \"kind\": \"image\",\n    \"title\": \"beach.jpg\",\n    \"image_url\": \"https://example.com/beach.jpg\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/conversations/{{conversation_id}}/messages",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conversations",
+                "{{conversation_id}}",
+                "messages"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mark read",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/conversations/{{conversation_id}}/read",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conversations",
+                "{{conversation_id}}",
+                "read"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mute",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"muted\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/conversations/{{conversation_id}}/mute",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "conversations",
+                "{{conversation_id}}",
+                "mute"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 · Calls",
+      "item": [
+        {
+          "name": "Start a call",
+          "description": "The balance must cover the first minute before it rings.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success) pm.collectionVariables.set('call_id', body.data.call.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{peer_id}}\",\n  \"type\": \"voice\",\n  \"is_random\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/calls",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Accept (as the callee)",
+          "description": "Minute one is charged here.",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/calls/{{call_id}}/accept",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "{{call_id}}",
+                "accept"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reject (as the callee)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/calls/{{call_id}}/reject",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "{{call_id}}",
+                "reject"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cancel (as the caller)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/calls/{{call_id}}/cancel",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "{{call_id}}",
+                "cancel"
+              ]
+            }
+          }
+        },
+        {
+          "name": "End call",
+          "description": "The summary in the reply is what the Call Ended screen renders.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"hungUp\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/calls/{{call_id}}/end",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "{{call_id}}",
+                "end"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Rate the call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/calls/{{call_id}}/rate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "{{call_id}}",
+                "rate"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Refresh the LiveKit token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "A fresh join token for a call already in progress. Tokens are short-lived on purpose — a leaked long one is a way into somebody's conversation — so a long call that has to reconnect asks for another instead.",
+            "url": {
+              "raw": "{{base_url}}/calls/{{call_id}}/token",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "{{call_id}}",
+                "token"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Active call",
+          "description": "How a client that restarted mid-call rejoins instead of losing it.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/calls/active",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "active"
+              ]
+            }
+          }
+        },
+        {
+          "name": "History — Recent tab",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/calls/history?direction=all",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "direction",
+                  "value": "all"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "History — missed",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/calls/history?direction=missed",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "direction",
+                  "value": "missed"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Clear history",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/calls/history",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "calls",
+                "history"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 · Wallet",
+      "item": [
+        {
+          "name": "Wallet",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/wallet",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "wallet"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Coin packages",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/wallet/packages",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "packages"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Buy coins",
+          "description": "Names a package; the server prices it. An endpoint accepting an amount would be a free-money endpoint.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"package_id\": \"pkg_1000\",\n  \"method\": \"upi\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/wallet/purchase",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "purchase"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Buy coins — declined",
+          "description": "pkg_2500 always fails, so the payment-failure screen is reachable without editing code.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"package_id\": \"pkg_2500\",\n  \"method\": \"card\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/wallet/purchase",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "purchase"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Transactions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/wallet/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "transactions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Transactions — coins only",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/wallet/transactions?kind=coinPurchase",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "coinPurchase"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Earnings (earners only)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/wallet/earnings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "earnings"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Withdraw (earners only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{base_url}}/wallet/withdraw",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "wallet",
+                "withdraw"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 · Notifications",
+      "item": [
+        {
+          "name": "List",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unread count",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/notifications/unread-count",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "notifications",
+                "unread-count"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mark all read",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/notifications/read-all",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "notifications",
+                "read-all"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 · Moderation",
+      "item": [
+        {
+          "name": "Block",
+          "description": "A full severance: friendship and conversation deleted, live call ended, messages and calls refused.",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{peer_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/moderation/block",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "moderation",
+                "block"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Blocked list",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/moderation/blocked",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "moderation",
+                "blocked"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unblock",
+          "description": "Restores nothing — send a fresh request like anyone else.",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/moderation/block/{{peer_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "moderation",
+                "block",
+                "{{peer_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Report (and block)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{peer_id}}\",\n  \"reason\": \"Spam\",\n  \"details\": \"Sent advertising links.\",\n  \"also_block\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/moderation/report",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "moderation",
+                "report"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 · Account deletion",
+      "item": [
+        {
+          "name": "Request deletion code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data.dev_code) pm.collectionVariables.set('otp_code', body.data.dev_code);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/auth/delete/request-code",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "delete",
+                "request-code"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete account",
+          "description": "Irreversible. The row is kept and scrubbed so history stays intact; the phone number is released for reuse.",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{otp_code}}\",\n  \"reason\": \"Testing\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/account",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "account"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 · LiveKit",
+      "description": "The media path. This server issues room-scoped tokens and tears the room down when a call ends; LiveKit carries the audio and video.",
+      "item": [
+        {
+          "name": "Is media available on this deployment?",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "The app reads this at startup so it can disable calling with a reason rather than ringing into silence.",
+            "url": {
+              "raw": "{{base_url}}/livekit/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "livekit",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Webhook (signed by LiveKit — expect 401 here)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/webhook+json"
+              }
+            ],
+            "description": "LiveKit posts here when a room finishes or a participant drops, which is how a call ends when a phone dies mid-conversation instead of billing into a dead handset. It arrives with no user session, so the signature is the only thing guarding it — sending this by hand should be refused.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"room_finished\",\n  \"room\": {\n    \"name\": \"call_{{call_id}}\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/livekit/webhook",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "livekit",
+                "webhook"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
