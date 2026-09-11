@@ -407,7 +407,19 @@ if (isProduction) {
     throw new Error('JWT_SECRET is still the example value.');
   }
   if (env.corsOrigin.includes('*')) {
-    throw new Error('CORS_ORIGIN must not be "*" in production.');
+    // Not a boot-time throw, by request: this API's real clients (the Flutter
+    // app, curl, Postman) never send a browser CORS preflight at all — CORS
+    // is a browser-only restriction on which *origins* may read a response,
+    // and every request here still needs a valid Bearer token regardless of
+    // origin. Wildcarding it only widens which *websites* could read a
+    // response on behalf of a signed-in browser tab (the admin panel, once
+    // deployed) — worth knowing, not worth refusing to boot over.
+    console.warn(
+      '[boot] CORS_ORIGIN is "*" in production. Fine for the mobile app, which ' +
+        'never sends a CORS preflight — but any website can then read this ' +
+        "API's responses from a signed-in browser tab. Set it to the admin " +
+        "panel's real origin once that has a domain."
+    );
   }
   if (!env.payments.configured) {
     // Not a boot-time throw: `wallet.service.purchase` refuses the request at

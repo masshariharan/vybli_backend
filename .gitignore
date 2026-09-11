@@ -5,7 +5,8 @@ npm-debug.log*
 
 # Secrets and local config — never commit real values.
 .env
-.env.example
+.env.*
+!.env.example
 
 # Photos written by the local storage driver. User data, and development-only —
 # production runs the s3 driver.
