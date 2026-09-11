@@ -81,11 +81,15 @@ const onboarding = {
 // ── Profile & settings ──────────────────────────────────────────────────────
 
 const profile = {
+  // No `gender` — it decides caller/earner status (see
+  // `onboarding.service.setGender`), so letting it change here would let an
+  // account switch roles — skip earner verification, or drop out of it —
+  // without going through either flow. Once set at `/onboarding/gender` it
+  // is fixed for the life of the account.
   update: z
     .object({
       name: name.optional(),
       age: age.optional(),
-      gender: gender.optional(),
       bio: bio.optional(),
       city_id: z.string().trim().min(1).optional(),
       language_codes: languageCodes.optional(),

@@ -410,10 +410,15 @@ if (isProduction) {
     throw new Error('CORS_ORIGIN must not be "*" in production.');
   }
   if (!env.payments.configured) {
-    throw new Error(
-      'PAYMENT_PROVIDER is not set. Without a payment service provider the ' +
-        'recharge endpoint would credit wallets for free, so production ' +
-        'refuses to start rather than give money away.'
+    // Not a boot-time throw: `wallet.service.purchase` refuses the request at
+    // runtime instead (`creditsWithoutPayment` is false whenever isProduction
+    // is true, regardless of provider), so recharge already fails safely with
+    // "payments unavailable" rather than crediting for free. Deferring
+    // PAYMENT_PROVIDER to a later deploy should not take the rest of the API
+    // down with it.
+    console.warn(
+      '[boot] PAYMENT_PROVIDER is not set. The recharge endpoint will refuse ' +
+        'every purchase with "payments unavailable" until PAYMENT_PROVIDER is configured.'
     );
   }
   if (env.payments.provider === 'google_play' && !env.payments.googlePlay.configured) {

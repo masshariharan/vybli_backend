@@ -170,7 +170,9 @@ column, and answers `400` with `details.missing` naming the first gap.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/me` | My profile (includes phone, goal, onboarding status) |
-| PATCH | `/me` | Update name, age, gender, bio, city, avatar, languages |
+| PATCH | `/me` | Update name, age, bio, city, languages. No `gender` — fixed once set at onboarding, since it decides caller/earner status. No `avatar_url` either — see `/me/avatar` below. |
+| POST | `/me/avatar` | Upload a profile photo (multipart, field `photo`). The only way an avatar is set — bundled-avatar picks and real photos both go through this the same way. |
+| DELETE | `/me/avatar` | Remove the photo; the profile falls back to initials. |
 | PUT | `/me/presence` | `{ "status": "online" \| "offline" \| "busy" }` |
 | GET / PUT | `/me/languages` | Read / replace my languages |
 | GET / PATCH | `/me/settings/privacy` | Privacy |

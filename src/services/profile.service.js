@@ -71,7 +71,8 @@ async function updateProfile(user, payload) {
   const data = {};
   if (payload.name !== undefined) data.name = payload.name;
   if (payload.age !== undefined) data.age = payload.age;
-  if (payload.gender !== undefined) data.gender = payload.gender;
+  // No `gender` — see the doc comment on the `profile.update` schema in
+  // `validators/schemas.js` for why it is fixed once set at onboarding.
   if (payload.bio !== undefined) data.bio = payload.bio;
   if (payload.avatar_url !== undefined) data.avatarUrl = payload.avatar_url;
 

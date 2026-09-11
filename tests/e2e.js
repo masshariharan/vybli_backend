@@ -399,6 +399,80 @@ async function run() {
   await put('/me/presence', earner.token, { status: 'online' });
   await put('/me/presence', caller.token, { status: 'online' });
 
+  // ── Voice verification ──────────────────────────────────────────────────
+  section('Voice verification');
+
+  const statusAfterOnboarding = await get('/verification/status', earner.token);
+  check(
+    'status reports pending after the onboarding submission',
+    statusAfterOnboarding.data?.latest?.status === 'pending',
+    statusAfterOnboarding.data
+  );
+  check(
+    'not verified yet — only an administrator can set that',
+    statusAfterOnboarding.data?.is_verified === false
+  );
+  const firstVerificationId = statusAfterOnboarding.data?.latest?.id;
+
+  // The app lets someone re-record and resubmit a clearer sample while an
+  // earlier one is still sitting in the review queue — see
+  // `VoiceIdentificationScreen._advanceToStartEarning`, which now leaves the
+  // recording step in exactly this state on the way to Start Earning.
+  // Nothing about a pending submission should make a second one impossible.
+  const resubmitted = await postFile('/verification/voice', earner.token, WAV_MIN, {
+    field: 'audio',
+    filename: 'sample-2.wav',
+    fields: { language_code: 'en', duration_seconds: 9 },
+  });
+  check(
+    'resubmitting while a sample is still pending is accepted, not refused',
+    resubmitted.success && resubmitted.data?.status === 'pending',
+    resubmitted
+  );
+  check(
+    'the resubmission is a new row, not an edit of the pending one',
+    Boolean(resubmitted.data?.verification?.id) &&
+      resubmitted.data.verification.id !== firstVerificationId,
+    resubmitted.data?.verification
+  );
+
+  const statusAfterResubmit = await get('/verification/status', earner.token);
+  check(
+    'status now reflects the newest submission',
+    statusAfterResubmit.data?.latest?.id === resubmitted.data?.verification?.id,
+    {
+      latest: statusAfterResubmit.data?.latest?.id,
+      expected: resubmitted.data?.verification?.id,
+    }
+  );
+
+  // Too short to be a sample worth a reviewer's time.
+  const tooShort = await postFile('/verification/voice', earner.token, WAV_MIN, {
+    field: 'audio',
+    filename: 'short.wav',
+    fields: { language_code: 'en', duration_seconds: 2 },
+  });
+  check(
+    'a clip under the minimum length is rejected outright, not queued',
+    tooShort.success && tooShort.data?.status === 'rejected',
+    tooShort.data
+  );
+  check(
+    'the rejection names a reason',
+    Boolean(tooShort.data?.verification?.rejection_reason)
+  );
+
+  const nonEarner = await postFile('/verification/voice', caller.token, WAV_MIN, {
+    field: 'audio',
+    filename: 'sample.wav',
+    fields: { language_code: 'en', duration_seconds: 8 },
+  });
+  check(
+    'a Make Friends account cannot submit a voice sample at all',
+    !nonEarner.success && nonEarner.status === 400,
+    nonEarner
+  );
+
   // ── Discovery ─────────────────────────────────────────────────────────────
   section('Discovery');
 
