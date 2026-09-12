@@ -1,0 +1,45 @@
+-- The city catalogue moves into the client, and city detection with it.
+--
+-- `cities` was a seeded reference table the mobile app fetched over `GET
+-- /cities` before it could draw its onboarding location step, that
+-- `user_profiles.cityId` pointed at by foreign key, and that `GET
+-- /cities/nearest` matched device coordinates against. All three were on the
+-- wrong side of the wire.
+--
+-- The catalogue is static: 224 ids, names, states and coordinates, changing
+-- about as often as the app itself ships. Fetching it cost a round trip on the
+-- onboarding step, and the foreign key made an unseeded database fail twice
+-- over — the picker rendered nothing, and any id sent anyway was rejected
+-- because no row existed to reference.
+--
+-- Detection was worse. The phone produced a coordinate, sent it here, and this
+-- server forwarded that precise location to a third-party reverse geocoder to
+-- learn which state it was in, then haversined it against these rows. The phone
+-- was holding the coordinate the whole time and has a geocoder of its own that
+-- names the state without a network at all. So the match now happens on the
+-- device that asked, against a catalogue compiled into it: no round trip, no
+-- coordinate leaving the handset, and no way for an empty table to turn "which
+-- city am I in" into a dead screen.
+--
+-- Afterwards the id is the identity end to end. The client holds the
+-- catalogue, matches against it, sends an id, and resolves names itself; the
+-- server stores the id it is given, filters discovery on it, and counts
+-- profiles by it — none of which needs to know what a city is called.
+--
+-- `user_profiles.cityId` keeps every value it has. The ids were always these
+-- same slugs (`chennai`, `bangalore`), so there is nothing to rewrite here —
+-- only a constraint to drop and a table that no longer has a reader.
+
+-- The join that made an empty catalogue table unrecoverable.
+-- DropForeignKey
+-- `IF EXISTS` on both, because this runs unattended at container boot and a
+-- migration that aborts there takes the whole deploy with it — `migrate
+-- deploy` fails, the entrypoint's `set -e` stops before node starts, and the
+-- service is down rather than merely un-migrated. The constraint name is
+-- Prisma's own from the init migration and should be exactly this, but "should
+-- be" is not worth a failed rollout over a statement whose only job is to
+-- remove something.
+ALTER TABLE "user_profiles" DROP CONSTRAINT IF EXISTS "user_profiles_cityId_fkey";
+
+-- DropTable
+DROP TABLE IF EXISTS "cities";

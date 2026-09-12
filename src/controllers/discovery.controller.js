@@ -4,7 +4,6 @@ const discoveryService = require('../services/discovery.service');
 const referenceService = require('../services/reference.service');
 const avatarCatalog = require('../config/avatarCatalog');
 const geoip = require('../services/geoip.service');
-const nominatim = require('../services/nominatim.service');
 const favoriteService = require('../services/favorite.service');
 const serialize = require('../utils/serialize');
 const { ok, paginated } = require('../utils/respond');
@@ -86,23 +85,16 @@ async function randomMatch(req, res) {
 
 // ── Reference data ──────────────────────────────────────────────────────────
 
-async function cities(req, res) {
-  const params = q(req);
-  const rows = await referenceService.listCities({
-    q: params.q,
-    popularOnly: params.popular_only,
-    hasUsers: params.has_users,
-    latitude: params.lat,
-    longitude: params.lng,
-  });
-  return ok(
-    res,
-    {
-      cities: rows.map((c) => serialize.city(c, c.activeUsers)),
-      total: rows.length,
-    },
-    'Cities'
-  );
+/**
+ * "People online here", per city id.
+ *
+ * All that is left of `GET /cities`. The catalogue itself — names, states,
+ * coordinates — is compiled into the app, so the only thing still worth asking
+ * this server for is the figure that moves.
+ */
+async function cityStats(req, res) {
+  const counts = await referenceService.cityStats();
+  return ok(res, { counts }, 'City stats');
 }
 
 /** The predefined avatar catalog — see `config/avatarCatalog`. */
@@ -113,82 +105,31 @@ async function avatars(req, res) {
 }
 
 /**
- * Which city a coordinate is in.
+ * A rough coordinate for the caller's address.
  *
- * Answers `{ city: null }` rather than an error when nothing is close enough.
- * "We cannot tell" is a normal outcome — the user is outside every city the
- * platform serves — and the client's response to it is to ask, not to retry.
+ * **Not a city.** Which city a point is in is decided on the phone, against
+ * the catalogue the app carries — this answers only the one question a handset
+ * genuinely cannot answer about itself, because behind carrier NAT it sees a
+ * private address and never its own public one.
+ *
+ * This replaced `GET /cities/nearest`, which took the phone's coordinate,
+ * forwarded it to a third-party reverse geocoder for a state, matched it
+ * against a table here and returned a city. Every part of that the phone
+ * already had: it holds the fix, and its own geocoder names the state without
+ * a network. What was left was a round trip that leaked a precise location and
+ * returned nothing at all when the table behind it was unseeded.
+ *
+ * Answers `{ lat: null, lng: null }` rather than an error when it cannot tell.
+ * "We cannot say" is a normal outcome — no provider configured, a private
+ * address, a failed lookup — and the client's response is to ask the user,
+ * not to retry.
  */
-async function nearestCity(req, res) {
-  const params = q(req);
-
-  let latitude = params.lat;
-  let longitude = params.lng;
-  let source = 'device';
-
-  // No coordinate means the phone could not produce one. An IP is a much
-  // rougher answer, but it is available to every caller and needs no
-  // permission — and a rough city the user confirms beats asking someone who
-  // has no idea which of two hundred names is nearest.
-  if (latitude === undefined || longitude === undefined) {
-    const byIp = await geoip.locate(req.ip);
-    if (!byIp) {
-      return ok(
-        res,
-        { city: null, distance_km: null, source: 'none' },
-        'Could not work out where you are'
-      );
-    }
-    latitude = byIp.latitude;
-    longitude = byIp.longitude;
-    source = 'ip';
+async function ipEstimate(req, res) {
+  const at = await geoip.locate(req.ip);
+  if (!at) {
+    return ok(res, { lat: null, lng: null }, 'Could not work out where you are');
   }
-
-  // Ahead of the city match, not alongside it: the state this resolves to is
-  // what keeps a border coordinate from being matched to the nearest city in
-  // the *wrong* state. Only for a real device fix — an IP-derived point is
-  // already a rough guess at which city someone is near, and reverse-geocoding
-  // it would dress that same guess up as something more precise than it is.
-  const place =
-    source === 'device' ? await nominatim.reverseGeocode({ latitude, longitude }) : null;
-
-  const match = await referenceService.nearestCity({
-    latitude,
-    longitude,
-    preferState: place?.state ?? null,
-  });
-
-  if (!match) {
-    return ok(
-      res,
-      {
-        city: null,
-        distance_km: null,
-        source,
-        district: place?.district ?? null,
-        state: place?.state ?? null,
-      },
-      'No city near that location'
-    );
-  }
-
-  return ok(
-    res,
-    {
-      city: serialize.city(match.city),
-      distance_km: match.distanceKm,
-      // The client says "from your location" for a device fix and hedges for
-      // an IP one, because a carrier gateway can put a rural subscriber in the
-      // nearest metro and the user needs to know which claim they are checking.
-      source,
-      // Independent of `city`, which is the nearest of our own seeded list and
-      // can be some real distance away wherever that list is sparse — this is
-      // what the coordinate actually administratively sits in.
-      district: place?.district ?? null,
-      state: place?.state ?? null,
-    },
-    'Nearest city'
-  );
+  return ok(res, { lat: at.latitude, lng: at.longitude }, 'Approximate location');
 }
 
-module.exports = { feed, randomMatch, cities, avatars, nearestCity };
+module.exports = { feed, randomMatch, cityStats, avatars, ipEstimate };

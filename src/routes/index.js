@@ -152,25 +152,19 @@ auth.delete(
 router.use('/auth', auth);
 
 // ── Reference data ──────────────────────────────────────────────────────────
-// Public: the app needs the city list on the onboarding screens, before anyone
-// is signed in.
+// Public: the onboarding screens read these before anyone is signed in.
 //
-// There is no `/languages` here. That catalogue is static, so it ships inside
-// the app instead of being fetched — see `models/UserLanguage` in the schema.
+// Neither catalogue is served here. Cities and languages are both static, so
+// both ship compiled into the app — see `catalogue/` there, and `UserLanguage`
+// in the schema. What is left is the two things the app cannot know: how many
+// people are in a city, and roughly where an IP address is.
 
-router.get(
-  '/cities',
-  validate({ query: S.reference.cityQuery }),
-  h(discoveryController.cities)
-);
-// Public for the same reason as the list: the city step runs before the
-// account is finished. The coordinate is resolved and discarded — nothing
-// stores it.
-router.get(
-  '/cities/nearest',
-  validate({ query: S.reference.nearestQuery }),
-  h(discoveryController.nearestCity)
-);
+router.get('/cities/stats', h(discoveryController.cityStats));
+
+// A coordinate, never a city — which city a point is in is decided on the
+// phone. Public because the location step runs before the account is
+// finished; the IP is read from the request and nothing is stored.
+router.get('/location/ip-estimate', h(discoveryController.ipEstimate));
 // Public for the same reason — the avatar step is also pre-onboarding.
 router.get(
   '/avatars',

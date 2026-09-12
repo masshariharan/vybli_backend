@@ -109,9 +109,16 @@ WHERE array_length(ds."languages", 1) > 0;
 
 -- The join that made an empty catalogue table unrecoverable.
 -- DropForeignKey
-ALTER TABLE "user_languages" DROP CONSTRAINT "user_languages_languageCode_fkey";
+-- `IF EXISTS` on both, because this runs unattended at container boot and a
+-- migration that aborts there takes the whole deploy with it — `migrate
+-- deploy` fails, the entrypoint's `set -e` stops before node starts, and the
+-- service is down rather than merely un-migrated. The constraint name is
+-- Prisma's own from the init migration and should be exactly this, but "should
+-- be" is not worth a failed rollout over a statement whose only job is to
+-- remove something.
+ALTER TABLE "user_languages" DROP CONSTRAINT IF EXISTS "user_languages_languageCode_fkey";
 
 -- `user_languages.languageCode` stays exactly as it is — a text column holding
 -- the codes it already held. Nothing needs rewriting, only un-constraining.
 -- DropTable
-DROP TABLE "languages";
+DROP TABLE IF EXISTS "languages";

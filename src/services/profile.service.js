@@ -72,11 +72,9 @@ async function updateProfile(user, payload) {
   // `validators/schemas.js` for why it is fixed once set at onboarding.
   if (payload.bio !== undefined) data.bio = payload.bio;
 
-  if (payload.city_id !== undefined) {
-    const city = await prisma.city.findUnique({ where: { id: payload.city_id } });
-    if (!city) throw errors.notFound('City', 'CITY_NOT_FOUND');
-    data.cityId = payload.city_id;
-  }
+  // Stored as sent, for the same reason as the languages below: the catalogue
+  // is the client's, so there is nothing here to validate an id against.
+  if (payload.city_id !== undefined) data.cityId = payload.city_id;
 
   const operations = [];
   if (Object.keys(data).length > 0) {

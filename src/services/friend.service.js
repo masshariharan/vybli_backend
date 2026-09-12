@@ -19,7 +19,7 @@ const serialize = require('../utils/serialize');
  */
 
 const USER_INCLUDE = {
-  profile: { include: { city: true } },
+  profile: true,
   privacySettings: true,
 };
 

@@ -148,30 +148,6 @@ const env = {
   },
 
   /**
-   * State and district for a coordinate, once the phone has one.
-   *
-   * The client already has an on-device geocoder for a human-readable label,
-   * but it is Google Play Services' own local database, and that database is
-   * built for cities — a village-level fix routinely comes back with the
-   * district field simply empty. Nominatim's boundary data is OpenStreetMap's
-   * own administrative polygons, which for India are drawn down to district
-   * level everywhere, not just where a city geocoder bothered to index.
-   *
-   * `none` by default, and deliberately: like the IP fallback above, `nominatim`
-   * means every lookup sends a coordinate — a more precise thing than an IP —
-   * to a third party, and that should be a decision somebody made.
-   */
-  reverseGeocode: {
-    provider: (process.env.REVERSE_GEOCODE_PROVIDER || 'none').trim().toLowerCase(),
-    get configured() {
-      return this.provider === 'nominatim';
-    },
-    // Nominatim's usage policy requires a User-Agent that identifies the
-    // application — a bare http-library default is refused.
-    userAgent: process.env.NOMINATIM_USER_AGENT || 'Vybli/1.0',
-  },
-
-  /**
    * Who takes the money for a wallet recharge.
    *
    * `none` means no payment service provider is wired in, and the wallet is

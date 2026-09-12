@@ -26,7 +26,7 @@ const {
  */
 
 const USER_INCLUDE = {
-  profile: { include: { city: true } },
+  profile: true,
   privacySettings: true,
   languages: true,
 };

@@ -39,7 +39,7 @@ async function authenticate(req, _res, next) {
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
       include: {
-        profile: { include: { city: true } },
+        profile: true,
         privacySettings: true,
       },
     });

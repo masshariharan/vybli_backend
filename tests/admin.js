@@ -346,7 +346,7 @@ const post = (path, token, body) => api('POST', path, { token, body });
   const ENDPOINTS = [
     'activity?limit=3', 'calls?limit=3', 'calls/live', 'livekit/rooms',
     'friend-requests?limit=3', 'blocks?limit=3', 'wallets?limit=3',
-    'transactions?limit=3', 'earnings?limit=3', 'locations',
+    'transactions?limit=3', 'earnings?limit=3',
     'notifications?limit=3', 'messages/stats', 'audit-logs?limit=3',
   ];
   let allOk = true;
@@ -358,9 +358,6 @@ const post = (path, token, body) => api('POST', path, { token, body });
     }
   }
   check(`all ${ENDPOINTS.length} remaining endpoints respond`, allOk);
-
-  const locations = await get('/admin/locations', token);
-  check('locations carry a user count', typeof locations.data.items[0]?.user_count === 'number');
 
   const audit = await get('/admin/audit-logs?limit=5', token);
   check('the audit log lists the actions available to filter on', Array.isArray(audit.data.actions));

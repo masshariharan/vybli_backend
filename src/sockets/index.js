@@ -58,7 +58,7 @@ function attachSockets(httpServer) {
       const user = await prisma.user.findUnique({
         where: { id: payload.sub },
         include: {
-          profile: { include: { city: true } },
+          profile: true,
           privacySettings: true,
         },
       });

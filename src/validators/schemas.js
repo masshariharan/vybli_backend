@@ -14,6 +14,7 @@ const {
   bio,
   languageCodes,
   languageCodeFilter,
+  cityId,
   pagination,
 } = require('./common');
 
@@ -72,7 +73,7 @@ const onboarding = {
   gender: z.object({ gender }),
   age: z.object({ age }),
   languages: z.object({ language_codes: languageCodes }),
-  location: z.object({ city_id: z.string().trim().min(1, 'Pick your city') }),
+  location: z.object({ city_id: cityId }),
   profile: z.object({
     name,
     bio: bio.optional(),
@@ -92,7 +93,7 @@ const profile = {
       name: name.optional(),
       age: age.optional(),
       bio: bio.optional(),
-      city_id: z.string().trim().min(1).optional(),
+      city_id: cityId.optional(),
       language_codes: languageCodes.optional(),
     })
     .refine((data) => Object.keys(data).length > 0, {
@@ -151,43 +152,12 @@ const settings = {
 
 // ── Cities & languages ──────────────────────────────────────────────────────
 //
-// No language *query* here: the catalogue is not served any more, so there is
-// nothing to search. What remains is the write — which codes a profile speaks.
+// Neither catalogue is served any more, so there is nothing here to query and
+// no coordinate to resolve — both ship inside the app, which matches a device
+// fix against its own copy. What is left are the writes: which city a profile
+// is in, and which languages it speaks.
 
 const reference = {
-  /// A coordinate to resolve. Coerced because it arrives as a query string.
-  ///
-  /// Both optional: omitting them asks the server to work it out from the
-  /// caller's IP instead, which is the path for a phone that cannot produce a
-  /// fix. Supplying one without the other is refused rather than half-honoured.
-  nearestQuery: z
-    .object({
-      lat: z.coerce.number().min(-90).max(90).optional(),
-      lng: z.coerce.number().min(-180).max(180).optional(),
-    })
-    .refine((v) => (v.lat === undefined) === (v.lng === undefined), {
-      message: 'Send both lat and lng, or neither.',
-    }),
-
-  /// Optional on the city list: supplying a coordinate ranks the result by
-  /// distance instead of by popularity.
-  cityQuery: z.object({
-    lat: z.coerce.number().min(-90).max(90).optional(),
-    lng: z.coerce.number().min(-180).max(180).optional(),
-    q: z.string().trim().max(60).optional(),
-    popular_only: z
-      .enum(['true', 'false'])
-      .transform((v) => v === 'true')
-      .optional(),
-    // Discovery's own city filter asks for this — only cities with a real
-    // account already in them, as opposed to onboarding's "where do you
-    // live" picker, which omits it and gets every city.
-    has_users: z
-      .enum(['true', 'false'])
-      .transform((v) => v === 'true')
-      .optional(),
-  }),
-
   setLanguages: z.object({ language_codes: languageCodes }),
 
   avatarQuery: z.object({

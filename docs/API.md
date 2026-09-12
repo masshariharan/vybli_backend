@@ -2,7 +2,7 @@
 
 REST at `/api/v1`, Socket.IO on the same port. Built for the Vybli Flutter app
 — the response shapes match its existing models, so `VybliUser.fromJson`,
-`City.fromJson` and the rest parse the wire format unchanged.
+`CallRecord.fromJson` and the rest parse the wire format unchanged.
 
 ---
 
@@ -204,19 +204,32 @@ error would turn a setting into a failure.
 
 Public — the onboarding screens need them before anyone is signed in.
 
-| Method | Path | Query |
+| Method | Path | Returns |
 | --- | --- | --- |
-| GET | `/cities` | `q`, `popular_only` |
+| GET | `/cities/stats` | `{ "counts": { "chennai": 4, … } }` |
+| GET | `/location/ip-estimate` | `{ "lat": 13.08, "lng": 80.27 }`, or nulls |
 | GET | `/avatars` | `gender` (`male` \| `female`) |
 
-There is no `/languages`. That catalogue is static — sixty-seven codes, names
-and scripts — so it is compiled into the Flutter app
-(`lib/data/catalogue/languages.dart`) and never fetched. The API deals only in
-codes: it stores the ones it is given and matches on them, and has no opinion
-about which exist. A code from a newer app build is stored, not refused.
+**Neither catalogue is served.** Cities and languages are both static — 224
+city slugs with coordinates, 67 language codes — so both are compiled into the
+Flutter app (`lib/data/catalogue/`) and never fetched. The API deals only in
+ids: it stores the ones it is given, matches and counts on them, and has no
+opinion about which exist. An id from a newer app build is stored, not refused.
 
-Cities carry `active_users`: online, visible earners in that city — what
-discovery would actually return, not every row with that city id.
+That is why there is no `/cities` and no `/cities/nearest`. Coordinate-to-city
+resolution happens **on the device**: the phone holds the fix, names its own
+state with the platform geocoder, and matches against the bundled coordinates.
+Nothing about a user's location leaves the handset.
+
+`/cities/stats` is the one thing about a city the app cannot work out — online,
+visible earners per city, counted against the same predicate discovery uses.
+Cities with nobody in them are omitted; an absent id means zero.
+
+`/location/ip-estimate` answers the one thing a phone cannot work out about
+itself: roughly where its public address is, for handsets that produce no fix
+at all. It returns a **coordinate, never a city** — which city that is stays on
+the client. Nulls when no provider is configured or the lookup fails, which the
+client treats as "ask the user".
 
 ---
 
@@ -496,7 +509,6 @@ registration endpoint exists, and there is no admin table in Postgres.
 | GET | `/admin/reports`, `/admin/blocks` | |
 | POST | `/admin/reports/:id/resolve` | `{ status, resolution, notes }` |
 | GET | `/admin/wallets`, `/admin/earnings`, `/admin/transactions` | |
-| GET/PUT/POST | `/admin/locations` | The city catalogue the app reads. Languages are not administered — that list ships with the app. |
 | GET | `/admin/notifications` | |
 | GET | `/admin/audit-logs` | Read-only. There is no write route |
 
@@ -633,7 +645,7 @@ different numbers is the case an IP limit misses.
 # .env already exists, real values and all — every field documented inline.
 npm install
 npx prisma migrate deploy
-npm run seed              # 20 cities, 5 coin packages, VIP plans
+npm run seed              # 5 coin packages, VIP plans (no catalogues — see above)
 npm run dev
 ```
 

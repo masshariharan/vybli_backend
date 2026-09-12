@@ -1,20 +1,22 @@
 'use strict';
 
 const { createPrismaClient } = require('../src/config/prismaClient');
-const seedData = require('./seed-data.json');
 
 const prisma = createPrismaClient();
 
 /**
  * Reference data.
  *
- * Cities are extracted from the Flutter app's own catalogue, so the two agree
- * on ids from day one — a `city_id` of `chennai` means the same row on both
- * sides.
+ * What is left is what the server genuinely owns: what a recharge costs and
+ * what a VIP plan buys. Both are priced here so a change is a row update
+ * rather than a release.
  *
- * Languages are not seeded and no longer can be. That catalogue is static, so
- * it ships inside the app rather than in a table this has to keep in step; the
- * server stores only the codes a profile was saved with.
+ * Neither catalogue is seeded any more, and neither can be. Cities and
+ * languages are both static reference data that ships inside the Flutter app,
+ * so there is no table here to keep in step with it — the server stores only
+ * the id and the codes a profile was saved with. That is also what makes this
+ * script optional rather than load-bearing: an unseeded database no longer
+ * produces an app that cannot get past onboarding.
  *
  * Idempotent throughout: every write is an upsert, so this can be re-run after
  * a migration without duplicating anything or clobbering live rows.
@@ -76,29 +78,6 @@ const VIP_PLANS = [
   { id: 'vip_3m', days: 90, priceInr: 1899, bonusInr: 520, sortOrder: 3 },
 ];
 
-async function seedCities() {
-  for (const city of seedData.cities) {
-    await prisma.city.upsert({
-      where: { id: city.id },
-      create: city,
-      update: {
-        name: city.name,
-        state: city.state,
-        country: city.country,
-        isPopular: city.isPopular,
-        // Carried on re-seed as well as on create: coordinates were added to
-        // existing rows by a later migration, and an update that skipped them
-        // would leave every city already in the database unable to answer
-        // "where am I".
-        latitude: city.latitude ?? null,
-        longitude: city.longitude ?? null,
-        region: city.region ?? null,
-      },
-    });
-  }
-  return seedData.cities.length;
-}
-
 async function seedPackages() {
   for (const pkg of RECHARGE_PACKAGES) {
     await prisma.rechargePackage.upsert({
@@ -123,9 +102,6 @@ async function seedVipPlans() {
 
 async function main() {
   console.info('[seed] starting');
-
-  const cities = await seedCities();
-  console.info(`[seed] ${cities} cities`);
 
   const packages = await seedPackages();
   console.info(`[seed] ${packages} recharge packages`);

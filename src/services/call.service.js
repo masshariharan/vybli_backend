@@ -35,7 +35,7 @@ const activeTimers = new Map();
 const RING_TIMEOUT_MS = 45_000;
 
 const USER_INCLUDE = {
-  profile: { include: { city: true } },
+  profile: true,
   privacySettings: true,
 };
 

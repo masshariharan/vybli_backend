@@ -27,7 +27,7 @@ const { emitToUser } = require('../../sockets/bus');
  */
 
 const PROFILE_INCLUDE = {
-  profile: { include: { city: true } },
+  profile: true,
   languages: true,
 };
 
@@ -41,7 +41,10 @@ function summarise(user) {
     avatar_url: avatarCatalog.urlFor(p?.avatarId),
     gender: p?.gender ?? null,
     age: p?.age ?? null,
-    city: p?.city ? { id: p.city.id, name: p.city.name, state: p.city.state } : null,
+    // The id. The catalogue that turned it into a name lived in this database
+    // and does not any more — it belongs to the mobile client, which is the
+    // only place a city is rendered to somebody who lives in one.
+    city_id: p?.cityId ?? null,
     // Codes. The catalogue that turned these into names lived in this
     // database and does not any more — it belongs to the mobile client, which
     // is the only place a language is rendered to somebody who speaks it.

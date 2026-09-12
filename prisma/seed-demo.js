@@ -17,8 +17,9 @@ const prisma = createPrismaClient();
  * is printed in dev) and see the product from the earner's side.
  *
  * Marked `isDemo`, which is what lets them answer for themselves when
- * `DEMO_AUTO_RESPOND` is on. Run `npm run seed` first — this depends on the
- * cities being there.
+ * `DEMO_AUTO_RESPOND` is on. It no longer depends on `npm run seed` having run
+ * — the city and language ids these profiles carry are catalogue slugs the app
+ * resolves, not rows that have to exist first.
  */
 
 /** Demo numbers occupy a reserved block so they cannot collide with a real one. */
@@ -237,11 +238,6 @@ async function main() {
   }
 
   console.info('[demo] seeding demo accounts');
-
-  const cityCount = await prisma.city.count();
-  if (cityCount === 0) {
-    throw new Error('Run `npm run seed` first — demo users need cities.');
-  }
 
   const seeded = [];
 

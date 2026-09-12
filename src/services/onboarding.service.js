@@ -173,8 +173,11 @@ async function setLanguages(user, languageCodes) {
  * finishes — see [complete].
  */
 async function setLocation(user, cityId) {
-  const city = await prisma.city.findUnique({ where: { id: cityId } });
-  if (!city) throw errors.notFound('City', 'CITY_NOT_FOUND');
+  // Stored as sent. There is no catalogue here to check it against any more —
+  // it belongs to the client, which is also the only party that can match a
+  // device fix to it — and an id this build has not seen is a city a newer app
+  // knows about rather than a fault. Shape is enforced by
+  // `S.onboarding.location`.
   const afterLocation = await applyStep(user, { cityId }, 'LOCATION_COMPLETED');
 
   const goal = afterLocation.user.profile.gender === 'female' ? 'earnMoney' : 'makeFriends';

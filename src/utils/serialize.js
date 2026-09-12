@@ -75,15 +75,15 @@ function publicUser(user, { viewer = null, viewerProfile = null, favorited = fal
     age: profile.age,
     gender: profile.gender,
 
+    // The id alone. The name, state and country used to be sent alongside it,
+    // off a joined catalogue row — which meant every request that mentioned a
+    // person joined a table to answer it, and a hidden city had to be blanked
+    // in four fields instead of one. The client holds the catalogue, so the id
+    // is the whole answer.
+    //
     // Hiding the city means sending nothing rather than sending a blank the
     // client has to know to distrust.
     city_id: showCity ? profile.cityId ?? '' : '',
-    city_name: showCity ? profile.city?.name ?? '' : '',
-    state_name: showCity ? profile.city?.state ?? '' : '',
-    // Sent rather than assumed. The client used to fill in "India" itself when
-    // rebuilding its home-city object, which is correct for every row seeded
-    // so far and wrong the day a city outside it is added.
-    country_name: showCity ? profile.city?.country ?? '' : '',
 
     languages,
     bio: profile.bio ?? '',
@@ -168,9 +168,6 @@ function userSummary(user) {
     age: profile.age,
     gender: profile.gender,
     city_id: showCity ? profile.cityId ?? '' : '',
-    city_name: showCity ? profile.city?.name ?? '' : '',
-    state_name: showCity ? profile.city?.state ?? '' : '',
-    country_name: showCity ? profile.city?.country ?? '' : '',
     languages: languageCodes(user),
     bio: profile.bio ?? '',
     avatar_url: avatarCatalog.urlFor(profile.avatarId),
@@ -189,21 +186,10 @@ function userSummary(user) {
 }
 
 // ── Reference data ──────────────────────────────────────────────────────────
-
-function city(row, activeUsers = 0) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    name: row.name,
-    state: row.state,
-    country: row.country,
-    is_popular: row.isPopular,
-    active_users: row._count?.profiles ?? activeUsers,
-    // Present only when the request carried a coordinate. Null means "not
-    // measured", which the client shows as nothing rather than as zero.
-    distance_km: row.distanceKm ?? null,
-  };
-}
+//
+// No `city` serializer, and no `language` one either. Both catalogues are
+// compiled into the app, so neither is ever sent: what crosses the wire is the
+// id, and the name is resolved on the side that draws it.
 
 /** The language codes on a loaded user, whichever shape the row was loaded in. */
 function languageCodes(user) {
@@ -327,7 +313,7 @@ function callRecord(row, viewerId) {
     id: row.id,
     user_id: peer?.id ?? '',
     user_name: peerProfile.name ?? 'Unknown',
-    city_name: peerProfile.city?.name ?? '',
+    city_id: peerProfile.cityId ?? '',
     avatar_url: avatarCatalog.urlFor(peerProfile.avatarId),
     type: row.type,
     direction,
@@ -503,7 +489,6 @@ module.exports = {
   publicUser,
   myProfile,
   userSummary,
-  city,
   languageCodes,
   avatar,
   message,

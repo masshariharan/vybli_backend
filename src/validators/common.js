@@ -76,6 +76,23 @@ const languageCodes = z
   .max(20, 'That is more languages than we can match on');
 
 /**
+ * The catalogue slug a profile stores as its city — `chennai`, `bangalore`.
+ *
+ * Shape only, for the same reason as [languageCodes]: the catalogue ships in
+ * the app, so a slug this build has never seen is a newer client's city rather
+ * than a fault. What is worth refusing is junk — an unbounded string, or a
+ * display name where a slug belongs.
+ *
+ * Lowercased on the way in so `Chennai` and `chennai` cannot become two
+ * different cities to group counts by.
+ */
+const cityId = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z][a-z0-9_-]{1,63}$/, 'That is not a city');
+
+/**
  * The same codes as a discovery *filter*, where empty is meaningful: it reads
  * as "any language" rather than as a profile that speaks none.
  */
@@ -120,6 +137,7 @@ module.exports = {
   bio,
   languageCodes,
   languageCodeFilter,
+  cityId,
   pagination,
   toSkipTake,
 };

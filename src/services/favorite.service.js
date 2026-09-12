@@ -87,7 +87,7 @@ async function listFavorites(userId, { skip, take }) {
       include: {
         favoriteUser: {
           include: {
-            profile: { include: { city: true } },
+            profile: true,
             privacySettings: true,
             languages: true,
           },

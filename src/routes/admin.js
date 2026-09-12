@@ -5,7 +5,7 @@ const rateLimit = require('express-rate-limit');
 
 const { requireAdmin } = require('../middleware/adminAuth');
 const { asyncHandler } = require('../middleware/error');
-const { ok, created } = require('../utils/respond');
+const { ok } = require('../utils/respond');
 const env = require('../config/env');
 
 const adminAuth = require('../services/admin/auth.service');
@@ -694,32 +694,10 @@ router.get(
 
 // ── Catalogue ───────────────────────────────────────────────────────────────
 //
-// Cities only. The language catalogue is static and ships inside the mobile
-// app, so there is nothing here to administer: a language added from this panel
-// could never have been rendered by an installed build anyway.
-
-router.get(
-  '/locations',
-  h(async (req, res) => ok(res, { items: await platform.cities({ search: str(req.query.search) }) }, 'Locations'))
-);
-
-router.put(
-  '/locations/:id',
-  h(async (req, res) => {
-    const row = await platform.upsertCity({ ...req.body, id: req.params.id });
-    audit.changedCatalogue(req, { entity: 'city', id: row.id, change: 'updated' });
-    return ok(res, { city: row }, 'Location saved');
-  })
-);
-
-router.post(
-  '/locations',
-  h(async (req, res) => {
-    const row = await platform.upsertCity(req.body ?? {});
-    audit.changedCatalogue(req, { entity: 'city', id: row.id, change: 'created' });
-    return created(res, { city: row }, 'Location added');
-  })
-);
+// Nothing to administer. Both catalogues the app draws from — cities and
+// languages — are static and ship compiled into it, so a row added here could
+// never be rendered by an installed build. Changing either is an app release,
+// which is what it always actually was.
 
 // ── Notifications ───────────────────────────────────────────────────────────
 

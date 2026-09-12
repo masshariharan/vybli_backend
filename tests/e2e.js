@@ -184,13 +184,43 @@ async function run() {
     status: langs.status,
   });
 
+  // The city catalogue is the app's, not ours — names, states and coordinates
+  // ship compiled into the Flutter build, so this asserts the absence.
   const cities = await get('/cities');
-  check('cities are served', cities.data?.cities?.length >= 20);
+  check('the city catalogue is not served by the API', cities.status === 404, {
+    status: cities.status,
+  });
+
+  // What is left: the one thing about a city only this server knows.
+  const stats = await get('/cities/stats');
+  check('city stats are keyed by city id', stats.success && stats.data?.counts, {
+    got: stats.data,
+  });
   check(
-    'city payload matches the Flutter City model',
-    cities.data?.cities?.[0]?.is_popular !== undefined &&
-      cities.data?.cities?.[0]?.active_users !== undefined
+    'every counted city is a slug, and every count a number',
+    Object.entries(stats.data?.counts ?? {}).every(
+      ([id, n]) => /^[a-z][a-z0-9_-]*$/.test(id) && Number.isInteger(n) && n >= 0
+    ),
+    { counts: stats.data?.counts }
   );
+
+  // A coordinate, never a city — which city a point is in is decided on the
+  // phone. Answers with nulls rather than erroring when it cannot tell.
+  const estimate = await get('/location/ip-estimate');
+  check(
+    'the IP estimate answers a coordinate or an honest null',
+    estimate.success &&
+      'lat' in estimate.data &&
+      'lng' in estimate.data &&
+      !('city' in estimate.data),
+    { got: estimate.data }
+  );
+
+  // The resolution that used to live here.
+  const nearest = await get('/cities/nearest?lat=13.0827&lng=80.2707');
+  check('coordinate-to-city is no longer a server route', nearest.status === 404, {
+    status: nearest.status,
+  });
 
   // ── Auth & onboarding ─────────────────────────────────────────────────────
   section('Auth and onboarding');
@@ -624,8 +654,8 @@ async function run() {
   const hiddenCity = await get(`/users/${earner.id}`, caller.token);
   check(
     'a hidden city is absent from the payload, not blanked client-side',
-    hiddenCity.data?.user?.city_name === '',
-    { got: hiddenCity.data?.user?.city_name }
+    hiddenCity.data?.user?.city_id === '' && !('city_name' in hiddenCity.data.user),
+    { got: hiddenCity.data?.user?.city_id }
   );
   await patch('/me/settings/privacy', earner.token, { show_city_on_profile: true });
 

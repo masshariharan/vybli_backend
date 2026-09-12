@@ -297,7 +297,7 @@ async function verificationFeed({ status, userId, skip = 0, take = 25 }) {
   const [rows, total] = await Promise.all([
     prisma.userProfile.findMany({
       where,
-      include: { user: { include: { languages: true } }, city: true },
+      include: { user: { include: { languages: true } } },
       // Oldest request first: this is a queue, and the person who has been
       // waiting longest should be at the top of it.
       orderBy: [{ verificationStatus: 'asc' }, { verificationRequestedAt: 'asc' }],
@@ -735,59 +735,14 @@ async function adjustWallet(userId, { balance = 0, rupees = 0, reason, reviewer 
 
 // ── Catalogue ───────────────────────────────────────────────────────────────
 
-// Languages are not here. The catalogue is static reference data the mobile
-// app compiles in (`catalogue/languages.dart`), so there is no table to list
-// and nothing to edit — an "Add language" button that shipped a language no
-// installed app could render was never the affordance it looked like.
-
-async function cities({ search, includeInactive = true } = {}) {
-  const where = {};
-  if (!includeInactive) where.isActive = true;
-  if (search) {
-    where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { state: { contains: search, mode: 'insensitive' } },
-      { region: { contains: search, mode: 'insensitive' } },
-      { id: { contains: search, mode: 'insensitive' } },
-    ];
-  }
-
-  const rows = await prisma.city.findMany({
-    where,
-    include: { _count: { select: { profiles: true } } },
-    orderBy: [{ isPopular: 'desc' }, { name: 'asc' }],
-  });
-
-  return rows.map((c) => ({
-    id: c.id,
-    name: c.name,
-    state: c.state,
-    country: c.country,
-    region: c.region,
-    is_popular: c.isPopular,
-    is_active: c.isActive,
-    user_count: c._count.profiles,
-  }));
-}
-
-async function upsertCity({ id, name, state, country, region, isPopular, isActive }) {
-  if (!id?.trim() || !name?.trim() || !state?.trim()) {
-    throw errors.badRequest('A city needs an id, a name and a state.');
-  }
-  const data = {
-    name: name.trim(),
-    state: state.trim(),
-    country: (country || 'India').trim(),
-    region: region?.trim() || null,
-    isPopular: Boolean(isPopular),
-    isActive: isActive !== false,
-  };
-  return prisma.city.upsert({
-    where: { id: id.trim() },
-    create: { id: id.trim(), ...data },
-    update: data,
-  });
-}
+// Neither catalogue is administered here any more, and neither can be. Cities
+// and languages are both static reference data compiled into the mobile app —
+// so a row added from this panel could never have been rendered by an
+// installed build, and an "Add city" button that looked like it opened a new
+// market opened nothing at all.
+//
+// What the app cannot carry, and this server still answers, is how many people
+// are in a city right now: `GET /cities/stats`, counted from profiles.
 
 // ── Notifications ───────────────────────────────────────────────────────────
 
@@ -904,8 +859,6 @@ module.exports = {
   transactionFeed,
   earningFeed,
   adjustWallet,
-  cities,
-  upsertCity,
   notificationFeed,
   auditLog,
 };

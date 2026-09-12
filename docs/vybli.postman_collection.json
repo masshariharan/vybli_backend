@@ -102,23 +102,7 @@
     {
       "name": "01 · Reference data",
       "description": "Public — the onboarding screens need these before anyone is signed in.",
-      "item": [
-        {
-          "name": "Cities",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{base_url}}/cities",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "cities"
-              ]
-            }
-          }
-        }
-      ]
+      "item": []
     },
     {
       "name": "02 · Auth",

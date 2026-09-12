@@ -4,7 +4,7 @@ Node.js · Express · PostgreSQL · Prisma · Socket.IO
 
 The backend for the Vybli Flutter app. Built from the app's actual screens and
 flows rather than from a generic template — the response shapes match its
-existing models, so `VybliUser.fromJson`, `City.fromJson` and the rest parse
+existing models, so `VybliUser.fromJson`, `CallRecord.fromJson` and the rest parse
 the wire format unchanged.
 
 ```bash
@@ -17,10 +17,11 @@ npm run seed:all          # reference data + the 22 demo profiles
 npm run dev               # http://localhost:4000
 ```
 
-`npm run seed` alone loads only reference data — 20 cities, 5 coin packages and
-the VIP plans. Languages are not in it: that catalogue is static and ships inside
-the Flutter app, so the server only ever stores the codes a profile was saved
-with. `seed:all` adds the demo accounts below, which is what makes the app usable
+`npm run seed` alone loads only what the server genuinely owns — the 5 coin
+packages and the VIP plans. Neither catalogue is in it: cities and languages are
+both static and ship inside the Flutter app, so the server only ever stores the
+city id and language codes a profile was saved with. An unseeded database no
+longer produces an app that cannot get past onboarding. `seed:all` adds the demo accounts below, which is what makes the app usable
 the moment you open it.
 
 ### Demo accounts
@@ -115,7 +116,7 @@ Screen by screen. Every response is `{ success, message, data }`; lists add
 | Choose avatar | `PUT /me/avatar` | `{ "avatar_id" }` from `GET /avatars` — never an upload |
 | Ready | `POST /onboarding/complete` | Re-checks; names the first gap |
 | Home feed | `GET /users/discover` | `scope`, filters, pagination |
-| City picker | `GET /cities` | `active_users` is live |
+| City picker | bundled catalogue + `GET /cities/stats` | The list is compiled in; only the counts are fetched |
 | Random Call | `POST /users/random-match` → `POST /calls` | Match first, dial second |
 | User profile | `GET /users/:id` | Carries `connection_status` |
 | Add Friend | `POST /friends/requests` | |

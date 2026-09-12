@@ -56,7 +56,7 @@ async function loadCounterpart(otherId) {
   const other = await prisma.user.findUnique({
     where: { id: otherId },
     include: {
-      profile: { include: { city: true } },
+      profile: true,
       privacySettings: true,
     },
   });

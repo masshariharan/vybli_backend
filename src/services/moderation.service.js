@@ -106,7 +106,7 @@ async function listBlocked(user, { skip, take }) {
       where,
       include: {
         blocked: {
-          include: { profile: { include: { city: true } }, privacySettings: true },
+          include: { profile: true, privacySettings: true },
         },
       },
       orderBy: { createdAt: 'desc' },

@@ -280,6 +280,21 @@ model UserProfile {
   /// nothing here is ever uploaded by a client.
   avatarId String?
 
+  /// Where they live, as a catalogue slug — `chennai`, `bangalore`.
+  ///
+  /// There is no `City` table behind it and deliberately so. The catalogue —
+  /// name, state, coordinates, which eight are "popular" — is static reference
+  /// data that belongs to the client, which is the only party that renders any
+  /// of it and the only one that can match a device fix against it. Holding it
+  /// here bought a `GET /cities` round trip before onboarding could draw a
+  /// picker, a `GET /cities/nearest` that forwarded the user's coordinate to a
+  /// third-party geocoder, and a foreign key that made an unseeded database
+  /// fail two ways at once: the picker rendered nothing, and any id sent
+  /// anyway was rejected because no row existed to point at.
+  ///
+  /// So the id is stored as written. What the server still does with it is
+  /// match on it — discovery's city filter — and count by it, neither of which
+  /// needs to know what the city is called.
   cityId String?
 
   goal     UserGoal @default(makeFriends)
@@ -337,8 +352,7 @@ model UserProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  city City? @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([isEarner, cityId, presence])
   @@index([presence])
@@ -409,40 +423,6 @@ model UserLanguage {
   @@id([userId, languageCode])
   @@index([languageCode])
   @@map("user_languages")
-}
-
-/// Slug id (`chennai`, `bangalore`) rather than a generated one — the Flutter
-/// app already uses these as `city_id` and they are stable and readable.
-model City {
-  id        String  @id
-  name      String
-  state     String
-  country   String  @default("India")
-  isPopular Boolean @default(false)
-
-  /// Optional grouping above the state — "South India", "NCR". Null where the
-  /// distinction does not matter.
-  region String?
-
-  /// City centre, WGS84. What `GET /cities/nearest` measures against.
-  ///
-  /// Nullable because a city added through the admin panel may not have them
-  /// yet, and a city with no coordinates should still be pickable by hand — it
-  /// simply cannot be the answer to "where am I". Precision is deliberately
-  /// coarse: the question is which of twenty cities is closest, not where in
-  /// one the user is standing.
-  latitude  Float?
-  longitude Float?
-
-  /// Disabled rather than deleted: retire it from the picker without
-  /// orphaning the profiles that already point at it.
-  isActive Boolean @default(true)
-
-  profiles UserProfile[]
-
-  @@index([isPopular])
-  @@index([isActive])
-  @@map("cities")
 }
 
 // ── Social graph ────────────────────────────────────────────────────────────
