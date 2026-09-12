@@ -21,7 +21,9 @@ const smsService = require('./sms.service');
  *
  * Delivery is [sms.service]'s job. `OTP_DEV_MODE` with no provider configured
  * prints the code instead of sending it, so the app is testable end to end
- * without an SMS account; production refuses to boot in that state.
+ * without an SMS account — a real, permanent flag rather than something tied
+ * to how this process was started; see the doc comment on `env.otp` for what
+ * that costs left on.
  */
 
 function generateCode(length) {
@@ -36,12 +38,11 @@ function generateCode(length) {
  * Hands the code to the user. Replace the body with an SMS provider call.
  *
  * Deliberately never returns the code — the caller decides whether to expose
- * it, and only in development.
+ * it, and only when `OTP_DEV_MODE` says so.
  */
 async function deliver({ dialCode, phone, code }) {
-  // Development with no provider: print it and carry on, so the app is
-  // testable end to end without an SMS account. `env` refuses to boot in
-  // production with `devMode` on.
+  // No provider configured: print it and carry on, so the app is testable
+  // end to end without an SMS account.
   if (env.otp.devMode && !env.sms.configured) {
     console.info(`[otp] ${dialCode}${phone} → ${code} (dev mode, not sent by SMS)`);
     return;
@@ -93,7 +94,7 @@ async function requestOtp({ dialCode, phone, purpose = 'login' }) {
 
   return {
     expiresAt,
-    // Development only. `env` refuses to start in production with this on.
+    // Only when OTP_DEV_MODE is on — see the doc comment on `env.otp`.
     devCode: env.otp.devMode ? code : undefined,
   };
 }

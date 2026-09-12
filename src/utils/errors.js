@@ -280,7 +280,7 @@ const errors = {
       code: 'NOT_EARNER_ACCOUNT',
     }),
   withdrawalRequiresVerification: () =>
-    new AppError('Complete voice verification before withdrawing.', {
+    new AppError('Your account must be verified before withdrawing.', {
       status: 403,
       code: 'WITHDRAWAL_REQUIRES_VERIFICATION',
     }),

@@ -47,32 +47,6 @@ async function api(method, path, { token, body } = {}) {
   return res.json();
 }
 
-/** A real 1x1 PNG — an earner needs a photo before `complete` accepts them. */
-const PNG_1PX = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64'
-);
-
-/**
- * The smallest byte sequence `verificationUpload` accepts as a WAV — just
- * the RIFF/WAVE magic bytes, since the endpoint checks those, not the field
- * name or content type. Mirrors `WAV_MIN` in `tests/e2e.js`.
- */
-const WAV_MIN = Buffer.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45]);
-
-/** Posts one file as multipart/form-data, the way the phone does. */
-async function postFile(path, token, bytes, { field = 'audio', filename = 'sample.wav', fields = {} } = {}) {
-  const form = new FormData();
-  form.append(field, new Blob([bytes]), filename);
-  for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: form,
-  });
-  return res.json();
-}
-
 /** Every number this run created, so it can remove them again. */
 const createdPhones = [];
 
@@ -136,9 +110,10 @@ async function createAccount({ goal, name }) {
   await api('POST', '/onboarding/location', { token, body: { city_id: 'chennai' } });
   await api('POST', '/onboarding/profile', { token, body: { name } });
   if (goal === 'earnMoney') {
-    await postFile('/me/avatar', token, PNG_1PX, { field: 'photo', filename: 'p.png' });
-    await postFile('/verification/voice', token, WAV_MIN, {
-      fields: { language_code: 'en', duration_seconds: 8 },
+    const avatars = await api('GET', '/avatars?gender=female', {});
+    await api('PUT', '/me/avatar', {
+      token,
+      body: { avatar_id: avatars.data.avatars[0].id },
     });
   }
   const done = await api('POST', '/onboarding/complete', { token });

@@ -55,55 +55,6 @@ async function api(method, path, { token, body } = {}) {
   return { status: res.status, ...json };
 }
 
-/**
- * A real 1x1 PNG.
- *
- * Real bytes rather than a placeholder string, because the upload endpoint
- * checks magic bytes — a test that posted `"fake image"` would prove only that
- * the rejection path works.
- */
-const PNG_1PX = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64'
-);
-
-/** A GIF — a real image, but not one this API accepts. */
-const GIF_1PX = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
-
-/**
- * A minimal WAV: the "RIFF"…"WAVE" markers `detectAudio` checks for, no
- * actual audio data. Real bytes for the same reason [PNG_1PX] is a real PNG —
- * the endpoint checks magic bytes, not the field name or content type.
- */
-const WAV_MIN = Buffer.from([
-  0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45,
-]);
-
-/** Posts one file as multipart/form-data, the way the phone does. */
-async function postFile(
-  path,
-  token,
-  bytes,
-  { field = 'photo', filename = 'p.png', fields = {} } = {}
-) {
-  const form = new FormData();
-  form.append(field, new Blob([bytes]), filename);
-  for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    // No Content-Type header on purpose: fetch sets it, with the boundary.
-    body: form,
-  });
-  let json;
-  try {
-    json = await res.json();
-  } catch {
-    json = { success: false, message: 'Non-JSON response' };
-  }
-  return { status: res.status, ...json };
-}
-
 const get = (p, t) => api('GET', p, { token: t });
 const post = (p, t, b) => api('POST', p, { token: t, body: b });
 const patch = (p, t, b) => api('PATCH', p, { token: t, body: b });
@@ -155,29 +106,9 @@ async function removeCreatedAccounts() {
       where: { id: { in: rows.map((r) => r.id) } },
     });
 
-    // The photos too. Deleting the row does not delete the bytes: nothing
-    // cascades to object storage, so a suite that uploads and then removes its
-    // accounts leaves a directory per run behind for ever. Local driver only —
-    // the s3 driver is not what a test run should be writing to.
-    removeStoredPhotos(rows.map((r) => r.id));
-
     return count;
   } finally {
     await prisma.$disconnect();
-  }
-}
-
-/** Deletes the local-driver photo directories belonging to these users. */
-function removeStoredPhotos(userIds) {
-  const fs = require('fs');
-  const path = require('path');
-  const root = path.resolve(__dirname, '../uploads/avatars');
-  if (!fs.existsSync(root)) return;
-  for (const id of userIds) {
-    // Guarded rather than trusted: these ids come from the database, but a
-    // recursive delete built from a variable deserves the check regardless.
-    if (!/^[a-z0-9]+$/i.test(id)) continue;
-    fs.rmSync(path.join(root, id), { recursive: true, force: true });
   }
 }
 
@@ -210,14 +141,12 @@ async function createAccount({ name, cityId = 'chennai', gender = 'female', age 
   await post('/onboarding/profile', token, { name, bio: `Hi, I am ${name}.` });
 
   if (gender === 'female') {
-    // An earner needs a photo and a submitted voice sample before `complete`
-    // will accept it.
-    await postFile('/me/avatar', token, PNG_1PX);
-    await postFile('/verification/voice', token, WAV_MIN, {
-      field: 'audio',
-      filename: 'sample.wav',
-      fields: { language_code: 'en', duration_seconds: 8 },
-    });
+    // An earner needs a photo before `complete` will accept it. Identity
+    // review itself happens after, manually, and has no onboarding step.
+    // The client always sends a real catalog id — never a guess — but any
+    // valid one does for a fixture.
+    const avatars = await get('/avatars?gender=female', null);
+    await put('/me/avatar', token, { avatar_id: avatars.data.avatars[0].id });
   }
 
   const completed = await post('/onboarding/complete', token);
@@ -368,10 +297,10 @@ async function run() {
   });
   check('an Earn Money account can be created', Boolean(earner.id));
   check('it is flagged as an earner', earner.user.is_earner === true);
-  // Submitting a sample queues it for review; it does not verify the account.
-  // `isVerified` is set by an administrator in the panel and nowhere else, so a
-  // fresh earner is discoverable but not yet badged.
-  check('the voice sample did not self-approve', earner.user.is_verified === false);
+  // Finishing onboarding queues the account for review; it does not verify
+  // it. `isVerified` is set by an administrator in the panel and nowhere
+  // else, so a fresh earner is discoverable but not yet badged.
+  check('onboarding did not self-approve', earner.user.is_verified === false);
 
   // Distinct from the default every fixture account otherwise shares, so a
   // later assertion that a card quotes "the earner's own rate" is actually
@@ -399,78 +328,28 @@ async function run() {
   await put('/me/presence', earner.token, { status: 'online' });
   await put('/me/presence', caller.token, { status: 'online' });
 
-  // ── Voice verification ──────────────────────────────────────────────────
-  section('Voice verification');
+  // ── Verification ──────────────────────────────────────────────────────────
+  section('Verification');
 
+  // `onboardingService.complete` queues an earner as `pending` the moment
+  // onboarding finishes — there is nothing for the client to submit, only a
+  // status to read.
   const statusAfterOnboarding = await get('/verification/status', earner.token);
   check(
-    'status reports pending after the onboarding submission',
-    statusAfterOnboarding.data?.latest?.status === 'pending',
+    'status reports pending once onboarding finishes',
+    statusAfterOnboarding.data?.status === 'pending',
     statusAfterOnboarding.data
   );
   check(
     'not verified yet — only an administrator can set that',
     statusAfterOnboarding.data?.is_verified === false
   );
-  const firstVerificationId = statusAfterOnboarding.data?.latest?.id;
 
-  // The app lets someone re-record and resubmit a clearer sample while an
-  // earlier one is still sitting in the review queue — see
-  // `VoiceIdentificationScreen._advanceToStartEarning`, which now leaves the
-  // recording step in exactly this state on the way to Start Earning.
-  // Nothing about a pending submission should make a second one impossible.
-  const resubmitted = await postFile('/verification/voice', earner.token, WAV_MIN, {
-    field: 'audio',
-    filename: 'sample-2.wav',
-    fields: { language_code: 'en', duration_seconds: 9 },
-  });
+  const nonEarnerStatus = await get('/verification/status', caller.token);
   check(
-    'resubmitting while a sample is still pending is accepted, not refused',
-    resubmitted.success && resubmitted.data?.status === 'pending',
-    resubmitted
-  );
-  check(
-    'the resubmission is a new row, not an edit of the pending one',
-    Boolean(resubmitted.data?.verification?.id) &&
-      resubmitted.data.verification.id !== firstVerificationId,
-    resubmitted.data?.verification
-  );
-
-  const statusAfterResubmit = await get('/verification/status', earner.token);
-  check(
-    'status now reflects the newest submission',
-    statusAfterResubmit.data?.latest?.id === resubmitted.data?.verification?.id,
-    {
-      latest: statusAfterResubmit.data?.latest?.id,
-      expected: resubmitted.data?.verification?.id,
-    }
-  );
-
-  // Too short to be a sample worth a reviewer's time.
-  const tooShort = await postFile('/verification/voice', earner.token, WAV_MIN, {
-    field: 'audio',
-    filename: 'short.wav',
-    fields: { language_code: 'en', duration_seconds: 2 },
-  });
-  check(
-    'a clip under the minimum length is rejected outright, not queued',
-    tooShort.success && tooShort.data?.status === 'rejected',
-    tooShort.data
-  );
-  check(
-    'the rejection names a reason',
-    Boolean(tooShort.data?.verification?.rejection_reason)
-  );
-
-  const nonEarner = await postFile('/verification/voice', caller.token, WAV_MIN, {
-    field: 'audio',
-    filename: 'sample.wav',
-    fields: { language_code: 'en', duration_seconds: 8 },
-  });
-  check(
-    'a Make Friends account cannot submit a voice sample at all',
-    !nonEarner.success && nonEarner.status === 400,
-    nonEarner
+    'a Make Friends account is never queued for review',
+    nonEarnerStatus.data?.status === 'not_required',
+    nonEarnerStatus.data
   );
 
   // ── Discovery ─────────────────────────────────────────────────────────────
@@ -840,7 +719,7 @@ async function run() {
   const direct = createPrismaClient();
   await direct.userProfile.update({
     where: { userId: earner.id },
-    data: { isVerified: true },
+    data: { isVerified: true, verificationStatus: 'verified', verifiedAt: new Date() },
   });
 
   const noAccountWithdraw = await post('/wallet/withdraw', earner.token, {});
@@ -965,109 +844,93 @@ async function run() {
     );
   }
 
-  section('Profile photos');
+  section('Avatars');
 
   {
-    // Male: a non-earner has no photo requirement, so this account starts
-    // with a clean slate for the upload/replace/delete assertions below —
-    // an earner would already have one from onboarding.
-    const uploader = await createAccount({ name: 'Photo Tester', gender: 'male' });
+    const catalog = await get('/avatars');
+    check('the avatar catalog loads', catalog.success && catalog.data.total > 0, catalog.data);
 
-    // Nothing yet — a fresh profile falls back to initials.
-    const before = await get('/me', uploader.token);
+    const maleOnly = await get('/avatars?gender=male');
     check(
-      'a new profile has no photo',
+      'a gender filter returns only that gender',
+      maleOnly.success && maleOnly.data.avatars.every((a) => a.gender === 'male'),
+      maleOnly.data
+    );
+
+    const [firstMale, secondMale] = maleOnly.data.avatars;
+
+    // Male: a non-earner has no photo requirement, so this account starts
+    // with nothing set — an earner would already have one from onboarding.
+    const picker = await createAccount({ name: 'Avatar Tester', gender: 'male' });
+
+    const before = await get('/me', picker.token);
+    check(
+      'a new profile has no avatar',
       before.success && before.data.user.avatar_url === null,
       JSON.stringify(before.data?.user?.avatar_url)
     );
 
-    const uploaded = await postFile('/me/avatar', uploader.token, PNG_1PX);
-    const url = uploaded.data?.user?.avatar_url;
-    check('uploading a PNG sets the avatar', uploaded.success && Boolean(url), uploaded.message);
-
-    // Content-addressed, inside this user's namespace, and not guessable from
-    // the user id alone.
+    const picked = await put('/me/avatar', picker.token, { avatar_id: firstMale.id });
     check(
-      'the url is namespaced and content-addressed',
-      typeof url === 'string' &&
-        url.includes(`/avatars/${uploader.id}/`) &&
-        /[0-9a-f]{32}\.png$/.test(url),
-      url
+      'picking a catalog avatar sets it',
+      picked.success && picked.data.user.avatar_url === firstMale.url,
+      picked.data?.user?.avatar_url
     );
 
     // The bytes are actually retrievable at that URL.
     const origin = BASE.replace(/\/api\/v1$/, '');
-    const fetched = await fetch(url.startsWith('http') ? url : `${origin}${url}`);
-    const body = Buffer.from(await fetched.arrayBuffer());
+    const fetched = await fetch(`${origin}${firstMale.url}`);
+    check('the avatar image is actually served', fetched.ok, fetched.status);
+
+    // The whole point: two accounts choosing the same avatar share the exact
+    // same URL — nothing was duplicated or uploaded on either one's behalf.
+    const other = await createAccount({ name: 'Avatar Sharer', gender: 'male' });
+    const otherPicked = await put('/me/avatar', other.token, { avatar_id: firstMale.id });
     check(
-      'the photo is served back byte-for-byte',
-      fetched.ok && body.equals(PNG_1PX),
-      `status ${fetched.status}, ${body.length} bytes`
+      'a second account picking the same avatar gets the identical url',
+      otherPicked.success && otherPicked.data.user.avatar_url === picked.data.user.avatar_url,
+      otherPicked.data?.user?.avatar_url
     );
 
-    // Idempotent: the key is the hash, so re-uploading does not make a second
-    // object or a different URL.
-    const again = await postFile('/me/avatar', uploader.token, PNG_1PX);
+    // Switching is just picking a different id — nothing to delete, nothing
+    // left behind from the previous choice.
+    const switched = await put('/me/avatar', picker.token, { avatar_id: secondMale.id });
     check(
-      're-uploading the same image keeps the same url',
-      again.success && again.data.user.avatar_url === url,
-      again.data?.user?.avatar_url
+      'switching avatars updates the url',
+      switched.success && switched.data.user.avatar_url === secondMale.url,
+      switched.data?.user?.avatar_url
     );
 
-    // A real image, but not one browsers reliably render — refused.
-    const gif = await postFile('/me/avatar', uploader.token, GIF_1PX, { filename: 'a.gif' });
-    check('a GIF is refused', gif.status === 400, `status ${gif.status}: ${gif.message}`);
-
-    // Magic bytes, not the filename. This is text calling itself a PNG.
-    const liar = await postFile('/me/avatar', uploader.token, Buffer.from('not an image at all'));
+    const bogus = await put('/me/avatar', picker.token, { avatar_id: 'not-a-real-avatar' });
     check(
-      'a text file named .png is refused',
-      liar.status === 400,
-      `status ${liar.status}: ${liar.message}`
+      'an id outside the catalog is refused',
+      !bogus.success && bogus.status === 404,
+      `status ${bogus.status}: ${bogus.message}`
     );
 
-    // The refusals must not have disturbed the photo already set.
-    const intact = await get('/me', uploader.token);
+    // The refusal must not have disturbed the avatar already set.
+    const intact = await get('/me', picker.token);
     check(
-      'a refused upload leaves the existing photo alone',
-      intact.data.user.avatar_url === url,
+      'a refused pick leaves the existing avatar alone',
+      intact.data.user.avatar_url === secondMale.url,
       intact.data?.user?.avatar_url
     );
 
-    // The hole this endpoint closed: pointing a profile at someone else's URL.
-    const injected = await patch('/me', uploader.token, {
+    // There is no writable `avatar_url` or `avatar_id` field on PATCH /me —
+    // picking one is the only way, and it is checked against the catalog.
+    const injected = await patch('/me', picker.token, {
       avatar_url: 'https://example.com/someone-elses-photo.jpg',
     });
-    const after = await get('/me', uploader.token);
+    const after = await get('/me', picker.token);
     check(
       'avatar_url cannot be set through PATCH /me',
-      after.data.user.avatar_url === url,
+      after.data.user.avatar_url === secondMale.url,
       `patch said ${injected.status}, avatar is now ${after.data?.user?.avatar_url}`
     );
 
-    // Replacing removes the old object.
-    const second = Buffer.concat([PNG_1PX, Buffer.from([0x00])]);
-    // Still a valid PNG signature, different bytes, so a different hash.
-    const replaced = await postFile('/me/avatar', uploader.token, second);
-    check(
-      'a different image gets a different url',
-      replaced.success && replaced.data.user.avatar_url !== url,
-      replaced.data?.user?.avatar_url
-    );
-    const oldGone = await fetch(url.startsWith('http') ? url : `${origin}${url}`);
-    check('the replaced photo is deleted from storage', oldGone.status === 404, `status ${oldGone.status}`);
-
-    // And removing it falls back to initials.
-    const removed = await del('/me/avatar', uploader.token);
-    check(
-      'deleting the photo clears the url',
-      removed.success && removed.data.user.avatar_url === null,
-      removed.data?.user?.avatar_url
-    );
-
-    // Signed out, this is nobody's photo to change.
-    const anon = await postFile('/me/avatar', null, PNG_1PX);
-    check('an anonymous upload is refused', anon.status === 401, `status ${anon.status}`);
+    // Signed out, this is nobody's avatar to change.
+    const anon = await put('/me/avatar', null, { avatar_id: firstMale.id });
+    check('an anonymous pick is refused', anon.status === 401, `status ${anon.status}`);
   }
 
   section('Calls and billing');

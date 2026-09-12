@@ -3,14 +3,10 @@ dist/
 *.log
 npm-debug.log*
 
-# Secrets and local config — never commit real values.
+# Secrets and real config — never commit it. There is one .env file and it
+# holds real credentials; see the comment at the top of .env itself.
 .env
 .env.*
-!.env.example
-
-# Photos written by the local storage driver. User data, and development-only —
-# production runs the s3 driver.
-uploads/
 
 # Editor / OS cruft
 .vscode/

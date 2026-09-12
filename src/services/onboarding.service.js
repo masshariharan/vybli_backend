@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const activity = require('./activity.service');
+const { emitToAdmin } = require('../sockets/bus');
 const { USER_INCLUDE } = require('./auth.service');
 
 /**
@@ -25,7 +26,6 @@ const STEP_ORDER = [
   'LANGUAGE_COMPLETED',
   'LOCATION_COMPLETED',
   'MODE_SELECTED',
-  'VERIFICATION_COMPLETED',
   'ONBOARDING_COMPLETED',
 ];
 
@@ -56,12 +56,11 @@ function nextStep(status, { isEarner = false, hasPhoto = false } = {}) {
     case 'LOCATION_COMPLETED':
       return 'mode';
     case 'MODE_SELECTED':
-      // Only the Earn Money branch has a photo and a voice check. A friends
-      // account is finished the moment it picks up a mode.
+      // Only the Earn Money branch needs a photo. A friends account is
+      // finished the moment it picks up a mode. Identity review happens
+      // afterwards, manually, and is not a step of onboarding at all.
       if (!isEarner) return 'complete';
-      return hasPhoto ? 'verification' : 'photo';
-    case 'VERIFICATION_COMPLETED':
-      return 'complete';
+      return hasPhoto ? 'complete' : 'photo';
     case 'ONBOARDING_COMPLETED':
     default:
       return null;
@@ -97,7 +96,7 @@ async function applyStep(user, data, targetStatus) {
     status: fresh.profile.onboardingStatus,
     next_step: nextStep(fresh.profile.onboardingStatus, {
       isEarner: fresh.profile.isEarner,
-      hasPhoto: Boolean(fresh.profile.avatarUrl),
+      hasPhoto: Boolean(fresh.profile.avatarId),
     }),
   };
 }
@@ -109,7 +108,6 @@ const STEP_LABELS = {
   LANGUAGE_COMPLETED: 'languages chosen',
   LOCATION_COMPLETED: 'city confirmed',
   MODE_SELECTED: 'account type chosen',
-  VERIFICATION_COMPLETED: 'voice verified',
   ONBOARDING_COMPLETED: 'finished',
 };
 
@@ -162,7 +160,7 @@ async function setLanguages(user, languageCodes) {
     status: fresh.profile.onboardingStatus,
     next_step: nextStep(fresh.profile.onboardingStatus, {
       isEarner: fresh.profile.isEarner,
-      hasPhoto: Boolean(fresh.profile.avatarUrl),
+      hasPhoto: Boolean(fresh.profile.avatarId),
     }),
   };
 }
@@ -178,8 +176,9 @@ async function setLanguages(user, languageCodes) {
  * discovered or called — the exact inconsistency the client had before its
  * audit.
  *
- * Verification is *not* granted here. An earner is discoverable only after the
- * voice check, which is the next step.
+ * Verification is *not* granted here. An earner is discoverable only after an
+ * administrator has reviewed the account, which happens after onboarding
+ * finishes — see [complete].
  */
 async function setLocation(user, cityId) {
   const city = await prisma.city.findUnique({ where: { id: cityId } });
@@ -227,17 +226,7 @@ async function complete(user) {
 
   // A profile picture is how a caller decides whether to answer — an earner
   // with no photo is a name and a price, nothing to go on.
-  if (profile.isEarner && !profile.avatarUrl) missing.push('photo');
-
-  // An earner must pass the voice check before going live — that is what the
-  // check is for.
-  if (
-    profile.isEarner &&
-    !profile.isVerified &&
-    rank(profile.onboardingStatus) < rank('VERIFICATION_COMPLETED')
-  ) {
-    missing.push('verification');
-  }
+  if (profile.isEarner && !profile.avatarId) missing.push('photo');
 
   if (missing.length > 0) {
     throw errors.badRequest('A few things are still missing', {
@@ -246,10 +235,36 @@ async function complete(user) {
     });
   }
 
+  // An earner's identity review starts the moment onboarding does —
+  // `not_required` is the only state that can still be sitting here, since
+  // nothing ever moves it backwards once a decision (or a fresh request) has
+  // been made. The account is not discoverable or payable until an
+  // administrator acts on it from the `/verifications` queue.
+  const startsReview = profile.isEarner && profile.verificationStatus === 'not_required';
+
   await prisma.userProfile.update({
     where: { userId: user.id },
-    data: { onboardingStatus: 'ONBOARDING_COMPLETED' },
+    data: {
+      onboardingStatus: 'ONBOARDING_COMPLETED',
+      ...(startsReview
+        ? { verificationStatus: 'pending', verificationRequestedAt: new Date() }
+        : {}),
+    },
   });
+
+  if (startsReview) {
+    activity.record({
+      userId: user.id,
+      type: 'verification_requested',
+      description: 'Queued for identity review after finishing onboarding',
+      status: 'pending',
+    });
+    emitToAdmin('admin:verification_pending', {
+      user_id: user.id,
+      name: profile.name ?? null,
+      at: new Date().toISOString(),
+    });
+  }
 
   const fresh = await reload(user.id);
   return { user: fresh, status: 'ONBOARDING_COMPLETED', next_step: null };
@@ -264,7 +279,7 @@ async function getStatus(user) {
     status: profile?.onboardingStatus ?? 'PHONE_VERIFIED',
     next_step: nextStep(profile?.onboardingStatus ?? 'PHONE_VERIFIED', {
       isEarner: profile?.isEarner ?? false,
-      hasPhoto: Boolean(profile?.avatarUrl),
+      hasPhoto: Boolean(profile?.avatarId),
     }),
     is_complete: profile?.onboardingStatus === 'ONBOARDING_COMPLETED',
     // What is already answered, so the client can prefill rather than re-ask.
@@ -274,7 +289,7 @@ async function getStatus(user) {
       languages: languageCount > 0,
       location: Boolean(profile?.cityId),
       mode: rank(profile?.onboardingStatus ?? '') >= rank('MODE_SELECTED'),
-      photo: Boolean(profile?.avatarUrl),
+      photo: Boolean(profile?.avatarId),
       verification: Boolean(profile?.isVerified),
       name: Boolean(profile?.name?.trim()),
     },

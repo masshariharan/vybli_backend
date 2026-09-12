@@ -8,7 +8,9 @@ existing models, so `VybliUser.fromJson`, `City.fromJson` and the rest parse
 the wire format unchanged.
 
 ```bash
-cp .env.example .env      # set DATABASE_URL and the two JWT secrets
+# .env already exists in this checkout, real values and all — every field is
+# documented inline in the file itself. Point DATABASE_URL at your Postgres
+# and you're set; see its own comments for anything else you want to turn on.
 npm install
 npx prisma migrate deploy
 npm run seed:all          # reference data + the 22 demo profiles
@@ -33,11 +35,13 @@ accepting calls that no human had authorised, which is indistinguishable — to 
 was on the other end — from the product lying to them. A request to a seeded account
 now waits, exactly as a request to a real person waits.
 
-`DEMO_SHOW_SEEDED_PROFILES` decides whether they may appear in a discovery feed, and it
-is **forced off in production** whatever the environment says. They are not people, and
-a real user must never be offered one.
+`DEMO_SHOW_SEEDED_PROFILES` in `.env` decides whether they may appear in a discovery
+feed. It defaults to `false` — they are not people, and a real user must never be
+offered one by accident.
 
-`seed-demo.js` also refuses outright to run with `NODE_ENV=production`.
+`seed-demo.js` also refuses outright to run with `NODE_ENV=production`, as a manual
+safety valve against re-seeding a live database — set that variable yourself for the
+one command, it has nothing to do with `.env`.
 
 Full reference: [`docs/API.md`](docs/API.md).
 Postman: [`docs/vybli.postman_collection.json`](docs/vybli.postman_collection.json)
@@ -106,7 +110,7 @@ Screen by screen. Every response is `{ success, message, data }`; lists add
 | Login | `POST /auth/otp/request` | `dev_code` comes back in dev |
 | OTP | `POST /auth/otp/verify` | Returns tokens + `onboarding_status` |
 | Gender / Age / Languages / City / Goal | `POST /onboarding/*` | Each replies `next_step` |
-| Voice ID | `POST /verification/voice` | Under 4s is rejected |
+| Choose avatar | `PUT /me/avatar` | `{ "avatar_id" }` from `GET /avatars` — never an upload |
 | Ready | `POST /onboarding/complete` | Re-checks; names the first gap |
 | Home feed | `GET /users/discover` | `scope`, filters, pagination |
 | City picker | `GET /cities` | `active_users` is live |
@@ -238,7 +242,6 @@ docker run -d --name vybli-backend -p 4000:4000 \
   -e JWT_SECRET="…" -e JWT_REFRESH_SECRET="…" \
   -e CORS_ORIGIN="https://app.example.com" \
   -e PAYMENT_PROVIDER=google_play \
-  -e STORAGE_DRIVER=s3 -e STORAGE_BUCKET="…" -e STORAGE_PUBLIC_URL="https://…" \
   -e LIVEKIT_URL="wss://…" -e LIVEKIT_API_KEY="…" -e LIVEKIT_API_SECRET="…" \
   -e ADMIN_USERNAME="…" -e ADMIN_PASSWORD_HASH="…" -e ADMIN_JWT_SECRET="…" \
   vybli-backend
@@ -281,7 +284,6 @@ Honest about what is stubbed, and where the seam is:
 | SMS | Codes logged; returned in dev | `deliver()` in `otp.service.js` |
 | Payments | No provider. `PAYMENT_PROVIDER=none` credits directly in development and **refuses in production** | `purchase()` in `wallet.service.js` |
 | Payouts | Recorded `pending`, never settled | `withdraw()` in `wallet.service.js` |
-| Voice ID | Decided on recording length | `decide()` in `verification.service.js` |
 | Media | URLs stored, nothing uploaded | Attachment fields on `Message` |
 | WebRTC | Signalling relayed; no TURN | `call:signal` handler |
 

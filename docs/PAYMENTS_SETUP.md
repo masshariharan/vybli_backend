@@ -83,7 +83,7 @@ independent choice for that leg.
 
 ## 4. Environment variables to add
 
-Extend the existing `# ── Payments ──` section in `.env` / `.env.example`:
+Extend the existing `# ── Payments ──` section in `.env`:
 
 ```
 PAYMENT_PROVIDER=google_play

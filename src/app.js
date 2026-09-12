@@ -2,7 +2,7 @@
 
 const express = require('express');
 const helmet = require('helmet');
-const storage = require('./services/storage.service');
+const avatarCatalog = require('./config/avatarCatalog');
 const cors = require('cors');
 const compression = require('compression');
 const morgan = require('morgan');
@@ -46,7 +46,7 @@ function createApp() {
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
   if (!env.isTest) {
-    app.use(morgan(env.isProduction ? 'combined' : 'dev'));
+    app.use(morgan('combined'));
   }
 
   app.use(globalLimiter);
@@ -59,30 +59,24 @@ function createApp() {
     })
   );
 
-  // The local storage driver's files, served by this same server.
+  // The predefined avatar catalog — bundled with the code, not user content,
+  // so unlike an upload it survives every redeploy and needs no object
+  // storage at all. Served by this same server in every environment.
   //
-  // Development only — production runs the `s3` driver and this never mounts,
-  // because a container filesystem does not survive a redeploy. The boot guard
-  // in `config/env` refuses to start production with the local driver at all.
-  //
-  // `immutable` is honest here: keys are content hashes, so the bytes behind
-  // one can never change. Cross-origin is opened deliberately — the admin panel
-  // is served from a different origin and has to render these images.
-  if (env.storage.driver === 'local') {
-    app.use(
-      '/uploads',
-      (_req, res, next) => {
-        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-        next();
-      },
-      express.static(storage.localStaticRoot(), {
-        immutable: true,
-        maxAge: '365d',
-        index: false,
-        dotfiles: 'deny',
-      })
-    );
-  }
+  // Cross-origin is opened deliberately — the admin panel is served from a
+  // different origin and has to render these images too.
+  app.use(
+    '/avatars',
+    (_req, res, next) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      next();
+    },
+    express.static(avatarCatalog.ROOT, {
+      maxAge: '7d',
+      index: false,
+      dotfiles: 'deny',
+    })
+  );
 
   app.use('/api/v1', routes);
 

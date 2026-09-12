@@ -41,9 +41,10 @@ let roomClient = null;
 /**
  * The management client, built lazily.
  *
- * Lazily because a development machine with no credentials must still be able
- * to boot the API and run every non-call test; production cannot reach this
- * state at all, since [env] refuses to start without them.
+ * [env] already refuses to boot at all without real LiveKit credentials —
+ * see its own guard — so by the time this runs, `env.livekit.configured` is
+ * always true. The check stays anyway: a function whose one job is deciding
+ * whether to build this client should not simply trust that it always will.
  */
 function client() {
   if (!env.livekit.configured) return null;

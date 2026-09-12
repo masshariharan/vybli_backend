@@ -83,10 +83,8 @@ async function overview() {
     messagesToday,
 
     verifPending,
-    verifUnderReview,
-    verifApproved,
+    verifVerified,
     verifRejected,
-    verifReverification,
 
     walletTotals,
     balanceTotals,
@@ -108,7 +106,7 @@ async function overview() {
     prisma.userProfile.count({ where: { presence: 'online' } }),
     prisma.userProfile.count({ where: { presence: 'busy' } }),
     prisma.userProfile.count({ where: { isVerified: true } }),
-    prisma.verification.count({ where: { status: { in: ['pending', 'under_review'] } } }),
+    prisma.userProfile.count({ where: { verificationStatus: 'pending' } }),
     prisma.user.count({ where: { status: 'suspended', deletedAt: null } }),
     prisma.userProfile.count({ where: { isEarner: true } }),
 
@@ -131,11 +129,9 @@ async function overview() {
     prisma.message.count(),
     prisma.message.count({ where: { createdAt: { gte: today } } }),
 
-    prisma.verification.count({ where: { status: 'pending' } }),
-    prisma.verification.count({ where: { status: 'under_review' } }),
-    prisma.verification.count({ where: { status: 'approved' } }),
-    prisma.verification.count({ where: { status: 'rejected' } }),
-    prisma.verification.count({ where: { status: 'reverification_required' } }),
+    prisma.userProfile.count({ where: { verificationStatus: 'pending' } }),
+    prisma.userProfile.count({ where: { verificationStatus: 'verified' } }),
+    prisma.userProfile.count({ where: { verificationStatus: 'rejected' } }),
 
     prisma.wallet.aggregate({
       _sum: { totalEarnings: true, availableBalance: true, pendingBalance: true },
@@ -193,10 +189,8 @@ async function overview() {
     },
     verification: {
       pending: verifPending,
-      under_review: verifUnderReview,
-      approved: verifApproved,
+      verified: verifVerified,
       rejected: verifRejected,
-      reverification_required: verifReverification,
     },
     finance: {
       total_balance: money(balanceTotals._sum.balance),
@@ -310,20 +304,23 @@ const SERIES = {
 
   verifications: (from, to) =>
     prisma.$queryRaw`
-      SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::int AS value
-      FROM verifications WHERE "createdAt" >= ${from} AND "createdAt" < ${to}
+      SELECT date_trunc('day', "verificationRequestedAt") AS day, COUNT(*)::int AS value
+      FROM user_profiles
+      WHERE "verificationRequestedAt" >= ${from} AND "verificationRequestedAt" < ${to}
       GROUP BY 1 ORDER BY 1`,
 
   verifications_approved: (from, to) =>
     prisma.$queryRaw`
-      SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::int AS value
-      FROM verifications WHERE status = 'approved' AND "createdAt" >= ${from} AND "createdAt" < ${to}
+      SELECT date_trunc('day', "verifiedAt") AS day, COUNT(*)::int AS value
+      FROM user_profiles
+      WHERE "verificationStatus" = 'verified' AND "verifiedAt" >= ${from} AND "verifiedAt" < ${to}
       GROUP BY 1 ORDER BY 1`,
 
   verifications_rejected: (from, to) =>
     prisma.$queryRaw`
-      SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::int AS value
-      FROM verifications WHERE status = 'rejected' AND "createdAt" >= ${from} AND "createdAt" < ${to}
+      SELECT date_trunc('day', "verifiedAt") AS day, COUNT(*)::int AS value
+      FROM user_profiles
+      WHERE "verificationStatus" = 'rejected' AND "verifiedAt" >= ${from} AND "verifiedAt" < ${to}
       GROUP BY 1 ORDER BY 1`,
 
   earnings: (from, to) =>

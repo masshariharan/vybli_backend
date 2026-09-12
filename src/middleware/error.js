@@ -1,6 +1,5 @@
 'use strict';
 
-const env = require('../config/env');
 const { AppError } = require('../utils/errors');
 
 /** Anything that reaches here has no route. */
@@ -76,8 +75,8 @@ function errorHandler(err, req, res, _next) {
 
   const body = { success: false, message, error: code };
   if (details !== undefined) body.details = details;
-  // The stack is a development aid, never shipped.
-  if (!env.isProduction && status >= 500) body.stack = err.stack;
+  // Never shipped to the client — logged above instead, in full, for whoever
+  // is watching this process's own output.
 
   res.status(status).json(body);
 }

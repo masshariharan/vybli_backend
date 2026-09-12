@@ -9,7 +9,7 @@ const { q } = require('../middleware/validate');
 const { toSkipTake } = require('../validators/common');
 
 /**
- * Notifications, moderation and verification.
+ * Notifications, moderation and verification status.
  *
  * Three small surfaces sharing one file rather than three files of forty
  * lines each — none of them has enough behaviour to earn its own.
@@ -98,54 +98,13 @@ const moderation = {
 };
 
 // ── Verification ────────────────────────────────────────────────────────────
+// Read-only: there is nothing left for a client to submit. Review is manual,
+// see `verification.service`.
 
 const verification = {
-  async submit(req, res) {
-    const result = await verificationService.submit(req.user, {
-      languageCode: req.body.language_code,
-      durationSeconds: req.body.duration_seconds,
-      audioBuffer: req.file?.buffer,
-    });
-
-    // `status` rather than `approved`: submitting is no longer a decision.
-    // A boolean here would have to be false for a sample that is queued and
-    // false for one that was refused, and the client shows two very different
-    // screens for those.
-    const pending = result.status === 'pending';
-    return ok(
-      res,
-      {
-        verification: serialize.verification(result.verification),
-        status: result.status,
-        user: pending ? serialize.myProfile(result.user) : undefined,
-      },
-      pending
-        ? 'Voice sample received — our team is reviewing it'
-        : (result.verification.rejectionReason ?? "We couldn't accept that recording")
-    );
-  },
-
   async status(req, res) {
     const status = await verificationService.status(req.user);
-    return ok(
-      res,
-      {
-        ...status,
-        latest: status.latest ? serialize.verification(status.latest) : null,
-      },
-      'Verification status'
-    );
-  },
-
-  async history(req, res) {
-    const params = q(req);
-    const { skip, take } = toSkipTake(params);
-    const { rows, total } = await verificationService.history(req.user, { skip, take });
-    return paginated(res, rows.map(serialize.verification), {
-      page: params.page,
-      limit: params.limit,
-      total,
-    });
+    return ok(res, status, 'Verification status');
   },
 };
 

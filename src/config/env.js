@@ -14,9 +14,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 function required(name) {
   const value = process.env[name];
   if (!value || !value.trim()) {
-    throw new Error(
-      `Missing required environment variable ${name}. Copy .env.example to .env and fill it in.`
-    );
+    throw new Error(`Missing required environment variable ${name}. Set it in .env.`);
   }
   return value.trim();
 }
@@ -42,10 +40,11 @@ function bool(name, fallback) {
  *
  * The `configured` checks below all ask whether a value is *present*, which a
  * placeholder satisfies perfectly. `LIVEKIT_API_SECRET=PASTE_YOUR_LIVEKIT_
- * SECRET_HERE` passed every production guard: the server booted, minted call
- * tokens signed with the literal string "PASTE_YOUR...", and LiveKit rejected
- * every one of them. Calls would ring, bill, and carry no audio — the exact
- * failure those guards exist to prevent, walked straight through.
+ * SECRET_HERE` passed every guard below on that basis alone: the server
+ * booted, minted call tokens signed with the literal string "PASTE_YOUR...",
+ * and LiveKit rejected every one of them. Calls would ring, bill, and carry
+ * no audio — the exact failure those guards exist to prevent, walked
+ * straight through.
  */
 function looksLikePlaceholder(value) {
   if (!value) return false;
@@ -54,13 +53,17 @@ function looksLikePlaceholder(value) {
   );
 }
 
-const nodeEnv = process.env.NODE_ENV || 'development';
-const isProduction = nodeEnv === 'production';
+/**
+ * `NODE_ENV=test` is the one environment distinction this file still makes —
+ * for automated test runs specifically (skipping request logging and rate
+ * limiting so a fast test suite doesn't trip its own limiter), not for
+ * "development versus production". There is no such thing here any more:
+ * one `.env`, always held to the same requirements, wherever it runs.
+ */
+const isTest = process.env.NODE_ENV === 'test';
 
 const env = {
-  nodeEnv,
-  isProduction,
-  isTest: nodeEnv === 'test',
+  isTest,
   port: num('PORT', 4000),
 
   databaseUrl: required('DATABASE_URL'),
@@ -77,9 +80,14 @@ const env = {
     length: num('OTP_LENGTH', 6),
     maxAttempts: num('OTP_MAX_ATTEMPTS', 5),
     resendCooldownSeconds: num('OTP_RESEND_COOLDOWN', 30),
-    // Returning the code in the API response is a development affordance so
-    // the app is testable without an SMS gateway. Refused in production below.
-    devMode: bool('OTP_DEV_MODE', !isProduction),
+    // Returns the code in the API response instead of sending it, so the app
+    // (and the e2e test suite) is testable without an SMS gateway. A plain
+    // flag, not a "dev mode" — whatever this says is exactly what happens,
+    // wherever this file runs. The shipped app signs in through Firebase by
+    // default anyway (see `ApiConfig.useFirebaseAuth`), which never touches
+    // this path at all; turn this off if you also serve the OTP/MSG91 build
+    // to real strangers.
+    devMode: bool('OTP_DEV_MODE', false),
   },
 
   corsOrigin: (process.env.CORS_ORIGIN || '*')
@@ -97,9 +105,9 @@ const env = {
    *
    * `seed-demo.js` writes 22 complete accounts marked `isDemo` so a developer
    * has somebody to call. They are **not** people, so they must never appear
-   * in a real user's discovery feed — the flag below is what keeps them out,
-   * and it is forced off in production regardless of what the environment
-   * says.
+   * in a real user's discovery feed by accident — off by default, a plain flag
+   * you turn on deliberately rather than something that happens to be true
+   * because of which environment this looks like it's running in.
    *
    * There is deliberately no "answer for themselves" behaviour any more. It
    * used to exist (`DEMO_AUTO_RESPOND`) and it meant the server sent messages
@@ -107,7 +115,7 @@ const env = {
    * from the product lying to whoever was on the other end.
    */
   demo: {
-    showSeededProfiles: isProduction ? false : bool('DEMO_SHOW_SEEDED_PROFILES', true),
+    showSeededProfiles: bool('DEMO_SHOW_SEEDED_PROFILES', false),
   },
 
   economy: {
@@ -166,11 +174,13 @@ const env = {
   /**
    * Who takes the money for a wallet recharge.
    *
-   * `none` means no payment service provider is wired in. On a development
-   * machine that credits the wallet directly so the wallet screens have a
-   * ledger to render; **in production it makes the endpoint refuse**, because
-   * the alternative — the behaviour this replaced — was an authenticated HTTP
-   * call that credited money for free.
+   * `none` means no payment service provider is wired in, and the wallet is
+   * credited directly with no payment taken — the ledger row says so
+   * (`"no payment taken"`). That is real money-shaped behaviour, not a
+   * sandboxed dev affordance: whatever `PAYMENT_PROVIDER` says in the one
+   * `.env` this runs with is exactly what happens, wherever it runs. Set a
+   * real provider before this is reachable by anyone you don't trust to not
+   * call `POST /wallet/purchase` for free money.
    *
    * The only provider wired in is `google_play` — a purchase token the client
    * got from the Play Billing SDK, verified server-to-server against the Play
@@ -183,9 +193,9 @@ const env = {
     get configured() {
       return this.provider !== 'none' && this.provider !== '';
     },
-    /// True only where crediting a wallet without a payment is acceptable.
+    /// True whenever no provider is configured — see the doc comment above.
     get creditsWithoutPayment() {
-      return !this.configured && !isProduction;
+      return !this.configured;
     },
     /**
      * Google Play Billing: collection for recharge/VIP purchases on Android.
@@ -225,9 +235,9 @@ const env = {
    * additionally checks whether the Firebase user has been revoked — the one
    * thing the public path cannot do.
    *
-   * Not required to boot: with an SMS provider configured the OTP path works
-   * on its own, and the test suite uses it. What production refuses is having
-   * *neither* — see the guard below.
+   * Not required to boot on its own: with an SMS provider configured the OTP
+   * path works without it, and the test suite uses that path. What the guard
+   * below refuses is having *neither*.
    */
   firebase: {
     projectId: (process.env.FIREBASE_PROJECT_ID || '').trim(),
@@ -254,10 +264,12 @@ const env = {
   /**
    * Who carries the OTP.
    *
-   * [configured] rather than a feature flag: a development machine with no
-   * provider still boots and prints codes to the terminal. Production refuses
-   * to start without one, because an API where nobody can sign in is not a
-   * running API.
+   * [configured] rather than a feature flag: with no provider set, `deliver`
+   * below prints the code to the terminal instead of sending it, if
+   * `OTP_DEV_MODE` is on — otherwise the OTP path simply cannot send
+   * anything. Either way, the boot guard below refuses to start with no way
+   * for anyone to sign in at all (see [firebase] above for the other one),
+   * because an API where nobody can sign in is not a running API.
    */
   sms: {
     provider: (process.env.SMS_PROVIDER || 'msg91').trim(),
@@ -313,52 +325,11 @@ const env = {
    * history row — is this server's. LiveKit's only job is the media path, and
    * it is given exactly one room per call with a token scoped to it.
    *
-   * [configured] rather than a feature flag: the integration is not optional,
-   * but a development machine without credentials should still be able to run
-   * the rest of the API. Production refuses to boot without them, below,
-   * because a call that rings and bills in silence is worse than no call.
+   * [configured] used by the admin panel to decide what it can show, but the
+   * boot guard below refuses to start without real credentials at all — a
+   * call that rings and bills in silence is worse than no call, and there is
+   * no lesser mode this server runs in where that would be acceptable.
    */
-  /**
-   * Where profile photos are stored.
-   *
-   * `driver` is `s3` for any S3-compatible object store — Cloudflare R2, AWS
-   * S3, Backblaze B2, MinIO — and `local` for files on this machine's disk.
-   *
-   * Local is a development affordance and production refuses it below. A
-   * container filesystem does not survive a redeploy, so every deploy would
-   * delete every photo while the database went on pointing at them: broken
-   * images for every user, and no error anywhere to explain it.
-   */
-  storage: {
-    driver: (process.env.STORAGE_DRIVER || 'local').trim(),
-    bucket: (process.env.STORAGE_BUCKET || '').trim(),
-    /// R2, MinIO and B2 need this. Real AWS S3 derives it from the region.
-    endpoint: (process.env.STORAGE_ENDPOINT || '').trim(),
-    /// R2 ignores regions but the SDK requires one; `auto` is R2's convention.
-    region: (process.env.STORAGE_REGION || 'auto').trim(),
-    accessKeyId: (process.env.STORAGE_ACCESS_KEY_ID || '').trim(),
-    secretAccessKey: (process.env.STORAGE_SECRET_ACCESS_KEY || '').trim(),
-    /// The origin photos are *served* from, which is rarely the origin they
-    /// are written to: R2 writes to an account endpoint and reads through a
-    /// public bucket domain or a CDN in front of it.
-    publicUrl: (process.env.STORAGE_PUBLIC_URL || '').trim(),
-    forcePathStyle: bool('STORAGE_FORCE_PATH_STYLE', true),
-    /// Generous for a phone photo, small enough that a hostile client cannot
-    /// use the endpoint as free storage. Enforced again by multer, so the
-    /// bytes never fully arrive.
-    maxBytes: num('STORAGE_MAX_BYTES', 8 * 1024 * 1024),
-    /// A verification clip is at most 15 seconds of uncompressed WAV — a few
-    /// megabytes even at CD quality — so this has headroom to spare without
-    /// coming close to what would let the endpoint be used as free storage.
-    verificationMaxBytes: num('STORAGE_VERIFICATION_MAX_BYTES', 10 * 1024 * 1024),
-    get configured() {
-      if (this.driver === 'local') return Boolean(this.publicUrl);
-      return Boolean(
-        this.bucket && this.accessKeyId && this.secretAccessKey && this.publicUrl
-      );
-    },
-  },
-
   livekit: {
     url: (process.env.LIVEKIT_URL || '').trim(),
     apiKey: (process.env.LIVEKIT_API_KEY || '').trim(),
@@ -375,178 +346,109 @@ const env = {
   },
 };
 
-// The local driver serves photos off this same server, so its URLs are
-// *relative* and a development machine needs no storage configuration at all.
+// Guard rails, checked at boot rather than left as a comment nobody reads.
 //
-// Relative rather than absolute because this server cannot know the address it
-// is reached by. A phone on a LAN calls it at `10.x:4000`, the emulator at
-// `10.0.2.2:4000`, and a browser at `localhost:4000` — all three at once, and
-// an absolute URL baked at boot is wrong for two of them. Clients resolve a
-// relative photo URL against the API origin they already hold, which is by
-// definition the address that reached the server.
-//
-// S3 URLs stay absolute: a CDN domain is the same from everywhere.
-if (env.storage.driver === 'local' && !env.storage.publicUrl) {
-  env.storage.publicUrl = '/uploads';
+// Unconditional — there is no "development" reading of this file that gets
+// to skip them. `OTP_DEV_MODE` and an unconfigured `PAYMENT_PROVIDER` are the
+// two deliberate exceptions (see their own doc comments above): real,
+// permanent flags this file controls directly, not a relaxation tied to
+// which environment this looks like it's running in.
+if (env.jwt.secret === env.jwt.refreshSecret) {
+  throw new Error(
+    'JWT_SECRET and JWT_REFRESH_SECRET must differ, or a refresh token would pass as an access token.'
+  );
+}
+if (env.jwt.secret.startsWith('change-me')) {
+  throw new Error('JWT_SECRET is still the example value.');
+}
+if (env.corsOrigin.includes('*')) {
+  // Not a boot-time throw, by request: this API's real clients (the Flutter
+  // app, curl, Postman) never send a browser CORS preflight at all — CORS
+  // is a browser-only restriction on which *origins* may read a response,
+  // and every request here still needs a valid Bearer token regardless of
+  // origin. Wildcarding it only widens which *websites* could read a
+  // response on behalf of a signed-in browser tab (the admin panel, once
+  // deployed) — worth knowing, not worth refusing to boot over.
+  console.warn(
+    '[boot] CORS_ORIGIN is "*". Fine for the mobile app, which never sends a ' +
+      "CORS preflight — but any website can then read this API's responses " +
+      "from a signed-in browser tab. Set it to the admin panel's real origin " +
+      'once that has a domain.'
+  );
+}
+if (!env.payments.configured) {
+  // Not a boot-time throw: `wallet.service.purchase` already refuses the
+  // request at runtime once a provider is configured (`creditsWithoutPayment`
+  // is false the moment `payments.configured` is true), so this is purely
+  // informational.
+  console.warn(
+    '[boot] PAYMENT_PROVIDER is not set. Recharge currently credits the ' +
+      'wallet with no payment taken — see the doc comment on `payments` above.'
+  );
+}
+if (env.payments.provider === 'google_play' && !env.payments.googlePlay.configured) {
+  throw new Error(
+    'PAYMENT_PROVIDER=google_play but PLAY_BILLING_PACKAGE_NAME, ' +
+      'PLAY_BILLING_SERVICE_ACCOUNT_EMAIL and PLAY_BILLING_SERVICE_ACCOUNT_PRIVATE_KEY ' +
+      'are not all set — without them a purchase token cannot be verified against the ' +
+      'Play Developer API.'
+  );
+}
+for (const [name, value] of [
+  ['JWT_SECRET', env.jwt.secret],
+  ['JWT_REFRESH_SECRET', env.jwt.refreshSecret],
+  ['LIVEKIT_API_KEY', env.livekit.apiKey],
+  ['LIVEKIT_API_SECRET', env.livekit.apiSecret],
+  ['ADMIN_PASSWORD', env.admin.password],
+  ['ADMIN_JWT_SECRET', env.admin.jwtSecret],
+  ...(env.payments.provider === 'google_play'
+    ? [
+        ['PLAY_BILLING_PACKAGE_NAME', env.payments.googlePlay.packageName],
+        ['PLAY_BILLING_SERVICE_ACCOUNT_EMAIL', env.payments.googlePlay.serviceAccountEmail],
+      ]
+    : []),
+]) {
+  if (looksLikePlaceholder(value)) {
+    throw new Error(
+      `${name} is still a placeholder ("${value}"). It is present, which is why every ` +
+        'other check passed, but it is not a credential — whatever it authenticates ' +
+        'would reject it at the first real request.'
+    );
+  }
 }
 
-// Guard rails that only matter in production, checked at boot rather than
-// left as a comment nobody reads.
-if (isProduction) {
-  if (env.otp.devMode) {
-    throw new Error(
-      'OTP_DEV_MODE must be false in production — it returns the OTP in the API response.'
-    );
-  }
-  if (env.jwt.secret === env.jwt.refreshSecret) {
-    throw new Error(
-      'JWT_SECRET and JWT_REFRESH_SECRET must differ, or a refresh token would pass as an access token.'
-    );
-  }
-  if (env.jwt.secret.startsWith('change-me')) {
-    throw new Error('JWT_SECRET is still the example value.');
-  }
-  if (env.corsOrigin.includes('*')) {
-    // Not a boot-time throw, by request: this API's real clients (the Flutter
-    // app, curl, Postman) never send a browser CORS preflight at all — CORS
-    // is a browser-only restriction on which *origins* may read a response,
-    // and every request here still needs a valid Bearer token regardless of
-    // origin. Wildcarding it only widens which *websites* could read a
-    // response on behalf of a signed-in browser tab (the admin panel, once
-    // deployed) — worth knowing, not worth refusing to boot over.
-    console.warn(
-      '[boot] CORS_ORIGIN is "*" in production. Fine for the mobile app, which ' +
-        'never sends a CORS preflight — but any website can then read this ' +
-        "API's responses from a signed-in browser tab. Set it to the admin " +
-        "panel's real origin once that has a domain."
-    );
-  }
-  if (!env.payments.configured) {
-    // Not a boot-time throw: `wallet.service.purchase` refuses the request at
-    // runtime instead (`creditsWithoutPayment` is false whenever isProduction
-    // is true, regardless of provider), so recharge already fails safely with
-    // "payments unavailable" rather than crediting for free. Deferring
-    // PAYMENT_PROVIDER to a later deploy should not take the rest of the API
-    // down with it.
-    console.warn(
-      '[boot] PAYMENT_PROVIDER is not set. The recharge endpoint will refuse ' +
-        'every purchase with "payments unavailable" until PAYMENT_PROVIDER is configured.'
-    );
-  }
-  if (env.payments.provider === 'google_play' && !env.payments.googlePlay.configured) {
-    throw new Error(
-      'PAYMENT_PROVIDER=google_play but PLAY_BILLING_PACKAGE_NAME, ' +
-        'PLAY_BILLING_SERVICE_ACCOUNT_EMAIL and PLAY_BILLING_SERVICE_ACCOUNT_PRIVATE_KEY ' +
-        'are not all set — without them a purchase token cannot be verified against the ' +
-        'Play Developer API.'
-    );
-  }
-  for (const [name, value] of [
-    ['JWT_SECRET', env.jwt.secret],
-    ['JWT_REFRESH_SECRET', env.jwt.refreshSecret],
-    ['LIVEKIT_API_KEY', env.livekit.apiKey],
-    ['LIVEKIT_API_SECRET', env.livekit.apiSecret],
-    ['STORAGE_ACCESS_KEY_ID', env.storage.accessKeyId],
-    ['STORAGE_SECRET_ACCESS_KEY', env.storage.secretAccessKey],
-    ['ADMIN_PASSWORD', env.admin.password],
-    ['ADMIN_JWT_SECRET', env.admin.jwtSecret],
-    ...(env.payments.provider === 'google_play'
-      ? [
-          ['PLAY_BILLING_PACKAGE_NAME', env.payments.googlePlay.packageName],
-          ['PLAY_BILLING_SERVICE_ACCOUNT_EMAIL', env.payments.googlePlay.serviceAccountEmail],
-        ]
-      : []),
-  ]) {
-    if (looksLikePlaceholder(value)) {
-      throw new Error(
-        `${name} is still a placeholder ("${value}"). It is present, which is why every ` +
-          'other check passed, but it is not a credential — whatever it authenticates ' +
-          'would reject it at the first real request.'
-      );
-    }
-  }
-
-  if (!env.livekit.configured) {
-    throw new Error(
-      'LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required in production — ' +
-        'without them calls ring and bill but carry no audio.'
-    );
-  }
-  if (env.livekit.url.startsWith('ws://')) {
-    throw new Error('LIVEKIT_URL must be wss:// in production, not ws://.');
-  }
-  if (env.storage.driver !== 's3') {
-    throw new Error(
-      'STORAGE_DRIVER must be "s3" in production. The local driver writes to this ' +
-        "machine's disk, which does not survive a redeploy — every profile photo " +
-        'would vanish while the database kept pointing at it.'
-    );
-  }
-  if (!env.storage.configured) {
-    throw new Error(
-      'STORAGE_BUCKET, STORAGE_ACCESS_KEY_ID, STORAGE_SECRET_ACCESS_KEY and ' +
-        'STORAGE_PUBLIC_URL are required in production — without them nobody can ' +
-        'upload a profile photo.'
-    );
-  }
-  if (env.storage.publicUrl.startsWith('http://')) {
-    throw new Error(
-      'STORAGE_PUBLIC_URL must be https:// in production — the app blocks cleartext.'
-    );
-  }
-  if (!env.admin.configured) {
-    throw new Error(
-      'ADMIN_USERNAME, ADMIN_PASSWORD (or ADMIN_PASSWORD_HASH) and ADMIN_JWT_SECRET are ' +
-        'required in production — the admin panel is unreachable without them.'
-    );
-  }
-  if (env.admin.jwtSecret === env.jwt.secret) {
-    throw new Error(
-      'ADMIN_JWT_SECRET must differ from JWT_SECRET, or a user token would pass as an admin one.'
-    );
-  }
-  if (!env.sms.configured && !env.firebase.configured) {
-    throw new Error(
-      'No way for anyone to sign in. Configure either Firebase ' +
-        '(FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) ' +
-        'or an SMS provider (MSG91_AUTH_KEY, MSG91_TEMPLATE_ID).'
-    );
-  }
-  if (env.admin.password && !env.admin.passwordHash) {
-    console.warn(
-      '[boot] ADMIN_PASSWORD is set in plaintext. Prefer ADMIN_PASSWORD_HASH ' +
-        '(bcrypt) so the password is not readable from the process environment.'
-    );
-  }
-} else {
-  // The placeholder check above only runs in production, which is exactly
-  // how `LIVEKIT_API_SECRET=PASTE_YOUR_LIVEKIT_SECRET_HERE` walked straight
-  // through every guard here: `configured` only asks whether the string is
-  // non-empty, so the server booted, minted tokens signed with the literal
-  // placeholder, and LiveKit rejected every one — a call that rings, bills,
-  // and carries no audio, with nothing at boot to say why.
-  //
-  // Development still has to boot without real credentials, so this warns
-  // instead of throwing — but it warns, rather than leaving the same mistake
-  // to be found by hand, minutes of silent calls later.
-  for (const [name, value] of [
-    ['LIVEKIT_API_KEY', env.livekit.apiKey],
-    ['LIVEKIT_API_SECRET', env.livekit.apiSecret],
-    ['JWT_SECRET', env.jwt.secret],
-    ['JWT_REFRESH_SECRET', env.jwt.refreshSecret],
-    ['STORAGE_ACCESS_KEY_ID', env.storage.accessKeyId],
-    ['STORAGE_SECRET_ACCESS_KEY', env.storage.secretAccessKey],
-    ['ADMIN_PASSWORD', env.admin.password],
-    ['ADMIN_JWT_SECRET', env.admin.jwtSecret],
-  ]) {
-    if (looksLikePlaceholder(value)) {
-      console.warn(
-        `[boot] ${name} looks like a placeholder ("${value}") rather than a real ` +
-          'credential. The server will start, but whatever this authenticates against ' +
-          'will reject it at the first real request.'
-      );
-    }
-  }
+if (!env.livekit.configured) {
+  throw new Error(
+    'LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required — without them ' +
+      'calls ring and bill but carry no audio.'
+  );
+}
+if (env.livekit.url.startsWith('ws://')) {
+  throw new Error('LIVEKIT_URL must be wss://, not ws://.');
+}
+if (!env.admin.configured) {
+  throw new Error(
+    'ADMIN_USERNAME, ADMIN_PASSWORD (or ADMIN_PASSWORD_HASH) and ADMIN_JWT_SECRET are ' +
+      'required — the admin panel is unreachable without them.'
+  );
+}
+if (env.admin.jwtSecret === env.jwt.secret) {
+  throw new Error(
+    'ADMIN_JWT_SECRET must differ from JWT_SECRET, or a user token would pass as an admin one.'
+  );
+}
+if (!env.sms.configured && !env.firebase.configured) {
+  throw new Error(
+    'No way for anyone to sign in. Configure either Firebase ' +
+      '(FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) ' +
+      'or an SMS provider (MSG91_AUTH_KEY, MSG91_TEMPLATE_ID).'
+  );
+}
+if (env.admin.password && !env.admin.passwordHash) {
+  console.warn(
+    '[boot] ADMIN_PASSWORD is set in plaintext. Prefer ADMIN_PASSWORD_HASH ' +
+      '(bcrypt) so the password is not readable from the process environment.'
+  );
 }
 
 module.exports = env;

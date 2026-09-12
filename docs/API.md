@@ -138,10 +138,13 @@ the user back a screen.
 
 ```
 PHONE_VERIFIED → GENDER_COMPLETED → AGE_COMPLETED → LANGUAGE_COMPLETED
-→ LOCATION_COMPLETED → MODE_SELECTED → [VERIFICATION_COMPLETED] → ONBOARDING_COMPLETED
+→ LOCATION_COMPLETED → MODE_SELECTED → ONBOARDING_COMPLETED
 ```
 
-Verification applies to Earn Money accounts only.
+Both roles complete the same way — there is no verification step in
+onboarding. An earner's identity review starts automatically the moment
+`ONBOARDING_COMPLETED` lands, and is decided afterwards, manually, from the
+admin panel; see [Notifications, moderation, verification](#notifications-moderation-verification).
 
 There is no separate "pick a mode" screen or endpoint. `goal`/`isEarner` are
 derived from gender the moment `/onboarding/location` lands — female →
@@ -170,9 +173,8 @@ column, and answers `400` with `details.missing` naming the first gap.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/me` | My profile (includes phone, goal, onboarding status) |
-| PATCH | `/me` | Update name, age, bio, city, languages. No `gender` — fixed once set at onboarding, since it decides caller/earner status. No `avatar_url` either — see `/me/avatar` below. |
-| POST | `/me/avatar` | Upload a profile photo (multipart, field `photo`). The only way an avatar is set — bundled-avatar picks and real photos both go through this the same way. |
-| DELETE | `/me/avatar` | Remove the photo; the profile falls back to initials. |
+| PATCH | `/me` | Update name, age, bio, city, languages. No `gender` — fixed once set at onboarding, since it decides caller/earner status. No `avatar_url` or `avatar_id` either — see `/me/avatar` below. |
+| PUT | `/me/avatar` | `{ "avatar_id": "male_01" }`. The only way an avatar is set — checked against the predefined catalog (`GET /avatars`), never a file upload. |
 | PUT | `/me/presence` | `{ "status": "online" \| "offline" \| "busy" }` |
 | GET / PUT | `/me/languages` | Read / replace my languages |
 | GET / PATCH | `/me/settings/privacy` | Privacy |
@@ -206,6 +208,7 @@ Public — the onboarding screens need them before anyone is signed in.
 | --- | --- | --- |
 | GET | `/languages` | `q`, `popular_only` |
 | GET | `/cities` | `q`, `popular_only` |
+| GET | `/avatars` | `gender` (`male` \| `female`) |
 
 Language search matches aliases, so `?q=bangla` finds Bengali and `?q=oriya`
 finds Odia. Results are ranked exact → prefix → contains.
@@ -431,9 +434,7 @@ authenticated way to get coins for free.
 | POST | `/moderation/block` | `{ "user_id" }` |
 | DELETE | `/moderation/block/:id` | Unblock |
 | POST | `/moderation/report` | `{ "user_id", "reason", "details", "also_block" }` |
-| GET | `/verification/status` | Am I verified |
-| POST | `/verification/voice` | `{ "language_code", "duration_seconds", "sample_url" }` |
-| GET | `/verification/history` | Past attempts |
+| GET | `/verification/status` | `{ "is_verified", "status", "rejection_reason" }` |
 
 **Blocking is a full severance**, not a discovery filter: the friendship and
 conversation are deleted, pending requests are cancelled, a live call is
@@ -443,26 +444,21 @@ ended, messages and calls are refused, and `connection_status` collapses to
 Notification settings are honoured centrally, so a feature says "this
 happened" and one place decides whether the user hears about it.
 
-**Voice verification is decided by a person**, in the admin panel. `POST
-/verification/voice` records the submission and answers
-`{ "status": "pending" | "rejected" }` — it does not approve. Under 4s is
-rejected on arrival as too short to review; everything else joins the queue at
-`GET /admin/verifications`, and `POST /admin/verifications/:id/decide` is the
-only thing that sets `isVerified`.
+**Identity verification is decided by a person**, in the admin panel, and
+there is nothing for a client to submit — `GET /verification/status` is
+read-only. `status` is one of `not_required` (a Make Friends account, or an
+earner still onboarding), `pending`, `verified`, or `rejected`.
 
-It used to auto-approve on length alone, which made `isVerified` — the flag
-deciding who is discoverable and who may take paid calls — mean nothing more
-than "held the button for four seconds", while the review queue the
-administrator was given sat unused.
+An earner is queued `pending` automatically the moment onboarding finishes —
+see `onboardingService.complete` — and `POST
+/admin/verifications/:id/decide` (`{ "decision": "verified" | "rejected",
+"reason" }`, `:id` the user id) is the only thing that ever moves it on from
+there, or sets `isVerified`. The queue itself is `GET /admin/verifications`.
 
-Onboarding advances on *submission*, not on approval, or the account would be
-locked out of every route past onboarding for as long as the queue is. Being
-discoverable stays gated on `isVerified`, which is separate.
-
-No audio is captured or uploaded yet: the submission carries the language and
-the length, so `sample_url` is null and the reviewer has metadata without a
-recording. That needs a recorder in the app and object storage behind
-`/verification/voice`; nothing else in the flow changes.
+Onboarding completes without waiting on a decision — an account would
+otherwise be locked out of every route past onboarding for as long as the
+queue is. Being discoverable stays gated on `isVerified`, which is separate
+and starts `false`.
 
 ---
 
@@ -493,9 +489,8 @@ registration endpoint exists, and there is no admin table in Postgres.
 | GET | `/admin/activity` | The platform-wide timeline |
 | GET | `/admin/calls`, `/admin/calls/live`, `/admin/livekit/rooms` | History, in-progress, and the media server's own view |
 | GET | `/admin/friend-requests` | |
-| GET | `/admin/verifications` | The queue, oldest first |
-| POST | `/admin/verifications/:id/decide` | `{ decision, reason, notes }` — reason required to reject |
-| GET | `/admin/verifications/:id/recording` | **Audited.** Never returned in a list |
+| GET | `/admin/verifications` | The identity-review queue, oldest request first |
+| POST | `/admin/verifications/:id/decide` | `:id` is the user id. `{ decision, reason }` — reason required to reject |
 | GET | `/admin/reports`, `/admin/blocks` | |
 | POST | `/admin/reports/:id/resolve` | `{ status, resolution, notes }` |
 | GET | `/admin/wallets`, `/admin/earnings`, `/admin/transactions` | |
@@ -516,8 +511,9 @@ which half was wrong.
 Every administrator action **and every read of private data** is recorded with
 the action, the target, the account concerned, a description, the IP and the
 user agent. That includes `conversation.viewed`, `messages.searched` and
-`verification.recording_accessed` — reading somebody's private conversation is
-the most invasive thing this API can do, and it leaves a trace.
+`verification.verified` / `verification.rejected` — reading somebody's private
+conversation is the most invasive thing this API can do, and it leaves a
+trace.
 
 Append-only by construction: no route updates or deletes an entry.
 
@@ -535,7 +531,7 @@ second unaudited path to the same power.
 | `admin:friend_request` | A request was sent |
 | `admin:message_sent` | A message was delivered |
 | `admin:call_started` / `admin:call_ended` | Call lifecycle, with the participants |
-| `admin:verification_submitted` | A voice sample arrived |
+| `admin:verification_pending` | An earner finished onboarding and was queued for review |
 | `admin:report_filed` | Somebody was reported |
 
 ---
@@ -632,7 +628,7 @@ different numbers is the case an IP limit misses.
 ## Running it
 
 ```bash
-cp .env.example .env      # fill in DATABASE_URL and the two JWT secrets
+# .env already exists, real values and all — every field documented inline.
 npm install
 npx prisma migrate deploy
 npm run seed              # 67 languages, 20 cities, 5 coin packages
@@ -642,8 +638,8 @@ npm run dev
 Tests need the server running:
 
 ```bash
-npm run test:e2e          # 117 checks over the whole journey
-npm run test:sockets      # 33 checks over the real-time layer
+npm run test:e2e          # ~200 checks over the whole journey
+npm run test:sockets      # ~35 checks over the real-time layer
 ```
 
 ---
@@ -657,7 +653,6 @@ Honest about what is stubbed, and where the seam is:
 | SMS | Codes logged, returned in dev | `deliver()` in `otp.service.js` |
 | Payments | No provider. `PAYMENT_PROVIDER=none` credits directly in development and **refuses in production** | `purchase()` in `wallet.service.js` |
 | Payouts | Recorded `pending`, never settled | `withdraw()` in `wallet.service.js` |
-| Voice ID | Decided on length; the audio is not uploaded | `decide()` in `verification.service.js` |
 | Attachments | URLs stored, nothing uploaded | Attachment fields on `Message` |
 | Push | In-app only; nothing wakes a closed app | Needs FCM / APNs |
 

@@ -40,8 +40,9 @@ let app = null;
  *    in [verifyPhoneToken]. Optional, and only worth the key management if
  *    you also intend to disable Firebase users from somewhere.
  *
- * Lazy either way, because a development machine with neither must still boot
- * and run the OTP path and the whole test suite.
+ * Lazy either way, because a deployment that signs people in through SMS
+ * instead — Firebase entirely unconfigured — must still boot and run the OTP
+ * path and the whole test suite without this ever being touched.
  */
 function client() {
   if (!env.firebase.configured) return null;

@@ -500,10 +500,10 @@
           }
         },
         {
-          "name": "7 · Voice verification (earners only)",
-          "description": "Under 4 seconds is rejected — the stand-in for a real voice-ID provider.",
+          "name": "7 · Choose avatar (earners only)",
+          "description": "A predefined avatar, picked by id from GET /avatars?gender=female — not an upload. Identity review itself is manual and happens after Complete, from the admin panel.",
           "request": {
-            "method": "POST",
+            "method": "PUT",
             "header": [
               {
                 "key": "Content-Type",
@@ -512,16 +512,16 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"language_code\": \"en\",\n  \"duration_seconds\": 8\n}"
+              "raw": "{\n  \"avatar_id\": \"female_01\"\n}"
             },
             "url": {
-              "raw": "{{base_url}}/verification/voice",
+              "raw": "{{base_url}}/me/avatar",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
-                "verification",
-                "voice"
+                "me",
+                "avatar"
               ]
             }
           }

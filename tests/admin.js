@@ -310,11 +310,11 @@ const post = (path, token, body) => api('POST', path, { token, body });
   check('the verification queue loads', verifications.success);
   if (verifications.data.items[0]) {
     const v = verifications.data.items[0];
-    check('a queue entry never carries the recording URL', !('sample_url' in v) && !('url' in v), {
+    check('a queue entry never carries a recording URL', !('sample_url' in v) && !('url' in v), {
       keys: Object.keys(v),
     });
 
-    const noReasonReject = await api('POST', `/admin/verifications/${v.id}/decide`, {
+    const noReasonReject = await api('POST', `/admin/verifications/${v.user_id}/decide`, {
       token,
       body: { decision: 'rejected' },
       raw: true,

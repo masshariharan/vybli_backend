@@ -2,6 +2,7 @@
 
 const prisma = require('../../config/prisma');
 const { errors } = require('../../utils/errors');
+const avatarCatalog = require('../../config/avatarCatalog');
 const { summarise, PROFILE_INCLUDE } = require('./users.service');
 
 /**
@@ -57,7 +58,7 @@ function serializeMessage(m) {
       ? {
           id: m.sender.id,
           name: m.sender.profile?.name ?? null,
-          avatar_url: m.sender.profile?.avatarUrl ?? null,
+          avatar_url: avatarCatalog.urlFor(m.sender.profile?.avatarId),
         }
       : { id: m.senderId, name: null, avatar_url: null },
     // The recipient is the other side of the conversation, not a column —

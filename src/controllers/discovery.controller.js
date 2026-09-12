@@ -2,6 +2,7 @@
 
 const discoveryService = require('../services/discovery.service');
 const referenceService = require('../services/reference.service');
+const avatarCatalog = require('../config/avatarCatalog');
 const geoip = require('../services/geoip.service');
 const nominatim = require('../services/nominatim.service');
 const favoriteService = require('../services/favorite.service');
@@ -123,6 +124,13 @@ async function cities(req, res) {
   );
 }
 
+/** The predefined avatar catalog — see `config/avatarCatalog`. */
+async function avatars(req, res) {
+  const params = q(req);
+  const rows = avatarCatalog.list(params.gender);
+  return ok(res, { avatars: rows.map(serialize.avatar), total: rows.length }, 'Avatars');
+}
+
 /**
  * Which city a coordinate is in.
  *
@@ -202,4 +210,4 @@ async function nearestCity(req, res) {
   );
 }
 
-module.exports = { feed, randomMatch, languages, cities, nearestCity };
+module.exports = { feed, randomMatch, languages, cities, avatars, nearestCity };

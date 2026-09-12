@@ -3,6 +3,7 @@
 const prisma = require('../../config/prisma');
 const { errors } = require('../../utils/errors');
 const env = require('../../config/env');
+const avatarCatalog = require('../../config/avatarCatalog');
 const livekit = require('../livekit.service');
 const activity = require('../activity.service');
 const { emitToUser } = require('../../sockets/bus');
@@ -57,7 +58,7 @@ async function activityFeed({ userId, type, status, relatedUserId, from, to, sea
       user: {
         id: a.user.id,
         name: a.user.profile?.name ?? null,
-        avatar_url: a.user.profile?.avatarUrl ?? null,
+        avatar_url: avatarCatalog.urlFor(a.user.profile?.avatarId),
       },
     })),
     total,
@@ -282,119 +283,81 @@ async function friendRequestFeed({ status, userId, from, to, search, skip = 0, t
 }
 
 // ── Verification ────────────────────────────────────────────────────────────
+//
+// Manual and administrator-driven, off the profile directly — there is no
+// per-attempt row any more. `onboardingService.complete` is what queues an
+// earner as `pending`; this is the only place anything moves it on from
+// there.
 
-async function verificationFeed({ status, userId, from, to, skip = 0, take = 25 }) {
-  const where = {};
-  if (status) where.status = status;
+async function verificationFeed({ status, userId, skip = 0, take = 25 }) {
+  const where = { isEarner: true };
+  if (status) where.verificationStatus = status;
   if (userId) where.userId = userId;
-  if (from || to) {
-    where.createdAt = {};
-    if (from) where.createdAt.gte = new Date(from);
-    if (to) where.createdAt.lte = new Date(to);
-  }
 
   const [rows, total] = await Promise.all([
-    prisma.verification.findMany({
+    prisma.userProfile.findMany({
       where,
-      include: { user: { include: PROFILE_INCLUDE } },
-      // Oldest first: this is a queue, and the person who has been waiting
-      // longest should be at the top of it.
-      orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
+      include: { user: { include: { languages: { include: { language: true } } } }, city: true },
+      // Oldest request first: this is a queue, and the person who has been
+      // waiting longest should be at the top of it.
+      orderBy: [{ verificationStatus: 'asc' }, { verificationRequestedAt: 'asc' }],
       skip,
       take,
     }),
-    prisma.verification.count({ where }),
+    prisma.userProfile.count({ where }),
   ]);
 
   return {
-    items: rows.map((v) => ({
-      id: v.id,
-      user: summarise(v.user),
-      kind: v.kind,
-      status: v.status,
-      attempt: v.attempt,
-      language_code: v.languageCode,
-      duration_seconds: v.durationSeconds,
-      rejection_reason: v.rejectionReason,
-      review_notes: v.reviewNotes,
-      reviewed_by: v.reviewedBy,
-      reviewed_at: v.reviewedAt?.toISOString() ?? null,
-      created_at: v.createdAt.toISOString(),
-      has_recording: Boolean(v.sampleUrl),
+    items: rows.map((p) => ({
+      user_id: p.userId,
+      user: summarise({ ...p.user, profile: p, languages: p.user.languages }),
+      status: p.verificationStatus,
+      requested_at: p.verificationRequestedAt?.toISOString() ?? null,
+      verified_at: p.verifiedAt?.toISOString() ?? null,
+      verified_by: p.verifiedBy,
+      rejection_reason: p.rejectionReason,
     })),
     total,
   };
 }
 
 /**
- * Decides a verification.
+ * Decides an earner's identity review.
  *
- * A rejection or a re-verification request **requires a reason**, because the
- * user is shown it and because an operator reviewing the decision later needs
- * to know what it was. Approving does not: "it was fine" is the default.
+ * A rejection **requires a reason**, because the user is shown it and because
+ * an operator reviewing the decision later needs to know what it was.
+ * Verifying does not: "it was fine" is the default.
  *
  * The profile's `isVerified` flag moves with the decision — that flag is what
  * puts an account in the discovery feed, so leaving them to drift would mean
  * a rejected account still taking paid calls.
  */
-async function decideVerification(verificationId, { decision, reason, notes, reviewer }) {
-  const verification = await prisma.verification.findUnique({
-    where: { id: verificationId },
-    include: { user: { include: { profile: true } } },
-  });
-  if (!verification) throw errors.notFound('Verification', 'VERIFICATION_NOT_FOUND');
+async function decideVerification(userId, { decision, reason, reviewer }) {
+  const profile = await prisma.userProfile.findUnique({ where: { userId } });
+  if (!profile) throw errors.notFound('User', 'USER_NOT_FOUND');
 
-  const NEEDS_REASON = ['rejected', 'reverification_required'];
-  if (NEEDS_REASON.includes(decision) && !reason?.trim()) {
-    throw errors.badRequest(
-      decision === 'rejected'
-        ? 'A reason is required to reject a verification.'
-        : 'A reason is required when asking for re-verification.'
-    );
+  if (decision === 'rejected' && !reason?.trim()) {
+    throw errors.badRequest('A reason is required to reject a verification.');
   }
 
-  const updated = await prisma.verification.update({
-    where: { id: verificationId },
+  const updated = await prisma.userProfile.update({
+    where: { userId },
     data: {
-      status: decision,
-      rejectionReason: NEEDS_REASON.includes(decision) ? reason.trim() : null,
-      reviewNotes: notes?.trim() || null,
-      reviewedBy: reviewer,
-      reviewedAt: new Date(),
+      verificationStatus: decision,
+      isVerified: decision === 'verified',
+      verifiedAt: new Date(),
+      verifiedBy: reviewer,
+      rejectionReason: decision === 'rejected' ? reason.trim() : null,
     },
   });
 
-  // Approved means discoverable; anything else means not.
-  if (decision === 'approved') {
-    await prisma.userProfile.update({
-      where: { userId: verification.userId },
-      data: { isVerified: true },
-    });
-  } else if (decision === 'rejected' || decision === 'reverification_required') {
-    await prisma.userProfile.update({
-      where: { userId: verification.userId },
-      data: { isVerified: false },
-    });
-  }
-
-  const TYPES = {
-    approved: 'verification_approved',
-    rejected: 'verification_rejected',
-    reverification_required: 'reverification_requested',
-    under_review: 'verification_requested',
-    expired: 'verification_rejected',
-  };
-
   activity.record({
-    userId: verification.userId,
-    type: TYPES[decision] ?? 'verification_requested',
-    relatedEntityId: verificationId,
+    userId,
+    type: decision === 'verified' ? 'verification_approved' : 'verification_rejected',
     description:
-      decision === 'approved'
-        ? 'Voice verification approved by the administrator'
-        : decision === 'reverification_required'
-          ? `Re-verification requested — ${reason.trim()}`
-          : `Voice verification ${decision}${reason ? ` — ${reason.trim()}` : ''}`,
+      decision === 'verified'
+        ? 'Identity verified by the administrator'
+        : `Identity verification rejected — ${reason.trim()}`,
     metadata: { decision, reason: reason?.trim() ?? null, by: reviewer },
     status: decision,
   });
@@ -403,19 +366,14 @@ async function decideVerification(verificationId, { decision, reason, notes, rev
   // an account that quietly stops working.
   await require('../notification.service')
     .notify({
-      userId: verification.userId,
+      userId,
       kind: 'system',
-      title:
-        decision === 'approved'
-          ? 'Voice verified'
-          : decision === 'reverification_required'
-            ? 'Please verify your voice again'
-            : 'Voice verification was not accepted',
+      title: decision === 'verified' ? 'You are verified' : 'Verification was not accepted',
       body:
-        decision === 'approved'
+        decision === 'verified'
           ? 'You can take calls and earn on Vybli.'
-          : (reason?.trim() ?? 'Record again in a quiet place.'),
-      data: { verification_id: verificationId },
+          : (reason?.trim() ?? 'Contact support for details.'),
+      data: {},
     })
     .catch(() => {});
 
@@ -424,38 +382,12 @@ async function decideVerification(verificationId, { decision, reason, notes, rev
   // notification alone would tell the user they are verified while their own
   // Profile still said otherwise until the next cold start, so the socket
   // carries the fact as well as the announcement.
-  emitToUser(verification.userId, 'profile:updated', {
-    is_verified: decision === 'approved',
+  emitToUser(userId, 'profile:updated', {
+    is_verified: decision === 'verified',
     reason: 'verification',
   });
 
-  return { id: updated.id, status: updated.status, user_id: verification.userId };
-}
-
-/**
- * The stored recording for a verification.
- *
- * Returns the reference rather than a public link. The route streams it
- * through the authenticated endpoint and logs the access — a direct URL to
- * somebody's voice, guessable or not, is a public URL to somebody's voice.
- */
-async function verificationRecording(verificationId) {
-  const v = await prisma.verification.findUnique({
-    where: { id: verificationId },
-    select: {
-      id: true,
-      userId: true,
-      kind: true,
-      sampleUrl: true,
-      durationSeconds: true,
-      languageCode: true,
-    },
-  });
-  if (!v) throw errors.notFound('Verification', 'VERIFICATION_NOT_FOUND');
-  if (!v.sampleUrl) {
-    throw errors.notFound('Recording', 'RECORDING_NOT_STORED');
-  }
-  return v;
+  return { user_id: userId, status: updated.verificationStatus };
 }
 
 // ── Moderation ──────────────────────────────────────────────────────────────
@@ -1007,7 +939,6 @@ module.exports = {
   friendRequestFeed,
   verificationFeed,
   decideVerification,
-  verificationRecording,
   reportFeed,
   resolveReport,
   blockFeed,

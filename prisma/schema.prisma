@@ -56,7 +56,8 @@ enum AccountStatus {
 /// Resumable sign-up. The client asks for this and is sent to the matching
 /// step, so closing the app mid-onboarding never costs the answers already
 /// given. Order matches the screens: gender → age → languages → city → goal →
-/// (voice check, earners only) → done.
+/// done — both roles complete the same way; an earner's identity review
+/// happens afterwards, manually, and has no onboarding step of its own.
 enum OnboardingStatus {
   PHONE_VERIFIED
   GENDER_COMPLETED
@@ -64,7 +65,12 @@ enum OnboardingStatus {
   LANGUAGE_COMPLETED
   LOCATION_COMPLETED
   MODE_SELECTED
+
+  /// Unused — kept rather than dropped, same reasoning as
+  /// `ActivityType.reverification_requested`: removing a Postgres enum value
+  /// means recreating the whole type, for a value nothing writes any more.
   VERIFICATION_COMPLETED
+
   ONBOARDING_COMPLETED
 }
 
@@ -143,36 +149,17 @@ enum EarningStatus {
   withdrawn
 }
 
-enum VerificationKind {
-  /// The only kind anything submits. A short spoken clip, actually recorded
-  /// and stored — earlier rows carry this same value but never had real audio
-  /// behind it (the client only sent a self-reported language and length).
-  voice
-
-  /// Unused — added and then reverted in the same short-lived experiment
-  /// before anything shipped with it. Left in the enum rather than dropped:
-  /// removing a Postgres enum value means recreating the whole type, for a
-  /// value nothing has ever written.
-  video
-}
-
+/// The state of a manual, admin-driven identity review. There is no
+/// submission to look at — no recording, no upload — only a person's account
+/// itself. `pending` is set automatically once an earner finishes onboarding;
+/// an administrator then flips it to `verified` or `rejected` by hand.
 enum VerificationStatus {
+  /// Not an earner, or onboarding not yet complete — nothing to review.
+  not_required
+
   pending
-
-  /// An administrator has opened it but not decided. Distinct from `pending`
-  /// so a queue of untouched submissions does not mix with ones already
-  /// being looked at.
-  under_review
-
-  approved
+  verified
   rejected
-
-  /// Approved once, but the account has to submit again — a disputed report,
-  /// or a sample that no longer matches.
-  reverification_required
-
-  /// Aged out without a decision.
-  expired
 }
 
 enum NotificationKind {
@@ -242,7 +229,6 @@ model User {
 
   sessions      UserSession[]
   languages     UserLanguage[]
-  verifications Verification[]
   notifications Notification[]
 
   sentRequests     FriendRequest[] @relation("RequestsSent")
@@ -283,11 +269,16 @@ model UserProfile {
   id     String @id @default(cuid())
   userId String @unique
 
-  name      String
-  age       Int
-  gender    Gender
-  bio       String  @default("")
-  avatarUrl String?
+  name   String
+  age    Int
+  gender Gender
+  bio    String  @default("")
+
+  /// Id of a predefined avatar from the server-side catalog
+  /// (`src/config/avatarCatalog.js`) — never a per-user file. Resolved to a
+  /// full `avatar_url` at serialization time; nothing else is stored, and
+  /// nothing here is ever uploaded by a client.
+  avatarId String?
 
   cityId String?
 
@@ -296,7 +287,21 @@ model UserProfile {
   /// on every feed query and joining to check the goal would be wasteful.
   isEarner Boolean  @default(false)
 
+  /// The public-facing gate. Flipped by an administrator's manual decision —
+  /// see [verificationStatus] for the decision's own lifecycle.
   isVerified Boolean @default(false)
+
+  /// Manual identity review — set to `pending` automatically once an earner's
+  /// onboarding completes, decided by an administrator within 24h. Never
+  /// driven by anything the client uploads.
+  verificationStatus      VerificationStatus @default(not_required)
+  verificationRequestedAt DateTime?
+  verifiedAt              DateTime?
+  /// Admin username who decided, not a foreign key — same reasoning as
+  /// [Report.resolvedBy].
+  verifiedBy              String?
+  /// The sentence shown to a rejected user.
+  rejectionReason         String?
 
   /// Which call types this person accepts. Distinct from the *privacy* toggles
   /// of the same name: these describe the profile others see, the privacy ones
@@ -782,43 +787,6 @@ model VipPlan {
   @@map("vip_plans")
 }
 
-// ── Verification ────────────────────────────────────────────────────────────
-
-/// The identity check that gates the Earn Money role. Kept private — it is
-/// never exposed on a public profile, only the resulting `isVerified` flag is.
-model Verification {
-  id     String @id @default(cuid())
-  userId String
-
-  kind            VerificationKind   @default(video)
-  status          VerificationStatus @default(pending)
-  languageCode    String?
-  sampleUrl       String?
-  durationSeconds Int                @default(0)
-  rejectionReason String?
-  reviewedAt      DateTime?
-  createdAt       DateTime           @default(now())
-
-  /// Which try this is for the account, starting at 1. Lets the admin see
-  /// "rejected three times" without counting rows.
-  attempt Int @default(1)
-
-  /// Who decided. A single-admin system, so this is the admin username rather
-  /// than a foreign key — but recorded, because "who approved this" is the
-  /// first question asked about a bad approval.
-  reviewedBy String?
-
-  /// The administrator's own note. Separate from [rejectionReason], which is
-  /// the sentence the *user* is shown.
-  reviewNotes String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, status])
-  @@index([status, createdAt])
-  @@map("verifications")
-}
-
 // ── Settings ────────────────────────────────────────────────────────────────
 
 /// Enforced server-side on every read and write path, not just rendered by the
@@ -936,6 +904,9 @@ enum ActivityType {
   verification_requested
   verification_approved
   verification_rejected
+
+  /// Unused since manual verification replaced voice re-submission — nothing
+  /// writes this any more.
   reverification_requested
   wallet_activity
   earning

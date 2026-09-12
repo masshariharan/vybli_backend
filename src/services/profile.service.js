@@ -2,7 +2,7 @@
 
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
-const storage = require('./storage.service');
+const avatarCatalog = require('../config/avatarCatalog');
 const activity = require('./activity.service');
 const { USER_INCLUDE } = require('./auth.service');
 const relationship = require('./relationship.service');
@@ -74,7 +74,6 @@ async function updateProfile(user, payload) {
   // No `gender` — see the doc comment on the `profile.update` schema in
   // `validators/schemas.js` for why it is fixed once set at onboarding.
   if (payload.bio !== undefined) data.bio = payload.bio;
-  if (payload.avatar_url !== undefined) data.avatarUrl = payload.avatar_url;
 
   if (payload.city_id !== undefined) {
     const city = await prisma.city.findUnique({ where: { id: payload.city_id } });
@@ -209,49 +208,29 @@ async function resetAllPresence() {
 }
 
 /**
- * Replaces this user's profile photo with an already-stored image.
+ * Points this user's profile at one of the predefined avatars.
  *
- * The old object is deleted after the row is updated, not before. If the
- * delete fails the user still has their new photo and the platform has one
- * orphaned object; if the order were reversed, a failed update would leave a
- * profile pointing at bytes that no longer exist.
+ * There is nothing to store and nothing to delete — every account choosing
+ * `male_01` points at the same file, so switching away from it never leaves
+ * an orphaned object the way a real upload would. Just a single column
+ * write, validated against the catalog so a stale or invented id can never
+ * land in the database.
  */
-async function setAvatar(userId, url) {
-  const existing = await prisma.userProfile.findUnique({
-    where: { userId },
-    select: { avatarUrl: true },
-  });
-  if (!existing) throw errors.notFound('Profile', 'PROFILE_NOT_FOUND');
-
-  await prisma.userProfile.update({ where: { userId }, data: { avatarUrl: url } });
-
-  if (existing.avatarUrl && existing.avatarUrl !== url) {
-    await storage.removeAvatar(existing.avatarUrl);
+async function setAvatarId(userId, avatarId) {
+  if (!avatarCatalog.isValid(avatarId)) {
+    throw errors.notFound('Avatar', 'AVATAR_NOT_FOUND');
   }
 
-  return getMyProfile(userId);
-}
-
-/** Removes the photo, falling the profile back to initials. */
-async function clearAvatar(userId) {
-  const existing = await prisma.userProfile.findUnique({
-    where: { userId },
-    select: { avatarUrl: true },
-  });
-  if (!existing) throw errors.notFound('Profile', 'PROFILE_NOT_FOUND');
-
-  if (existing.avatarUrl) {
-    await prisma.userProfile.update({ where: { userId }, data: { avatarUrl: null } });
-    await storage.removeAvatar(existing.avatarUrl);
-  }
+  // A missing profile surfaces as Prisma's own P2025, already mapped to a
+  // 404 by the global error handler.
+  await prisma.userProfile.update({ where: { userId }, data: { avatarId } });
 
   return getMyProfile(userId);
 }
 
 module.exports = {
   getMyProfile,
-  setAvatar,
-  clearAvatar,
+  setAvatarId,
   getPublicProfile,
   updateProfile,
   setPresence,

@@ -101,6 +101,13 @@ const profile = {
   presence: z.object({
     status: z.enum(['online', 'offline', 'busy']),
   }),
+
+  // The id alone — checked against the catalog in `profile.service`, not
+  // here, so the error names the actual set of valid ids rather than this
+  // schema growing stale the moment an avatar is added or removed.
+  setAvatar: z.object({
+    avatar_id: z.string().trim().min(1),
+  }),
 };
 
 const settings = {
@@ -187,6 +194,10 @@ const reference = {
 
   setLanguages: z.object({ language_codes: languageCodes }),
   languageParam: z.object({ code: z.string().trim().min(1) }),
+
+  avatarQuery: z.object({
+    gender: z.enum(['male', 'female']).optional(),
+  }),
 };
 
 // ── Discovery ───────────────────────────────────────────────────────────────
@@ -329,19 +340,6 @@ const wallet = {
   }),
 };
 
-// ── Verification ────────────────────────────────────────────────────────────
-
-const verification = {
-  // The recording itself arrives as `req.file` via `verificationUpload`
-  // (checked there and in `storage.service`), not through this schema —
-  // there is no longer a `sample_url` a client can just hand the server a
-  // URL for.
-  submit: z.object({
-    language_code: z.string().trim().min(1),
-    duration_seconds: z.coerce.number().int().min(0).max(120),
-  }),
-};
-
 // ── Moderation ──────────────────────────────────────────────────────────────
 
 const moderation = {
@@ -386,7 +384,6 @@ module.exports = {
   chat,
   calls,
   wallet,
-  verification,
   moderation,
   notifications,
   favorites,

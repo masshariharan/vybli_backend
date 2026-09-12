@@ -6,8 +6,6 @@ const referenceService = require('../services/reference.service');
 const favoriteService = require('../services/favorite.service');
 const serialize = require('../utils/serialize');
 const { ok } = require('../utils/respond');
-const storage = require('../services/storage.service');
-const { errors, AppError } = require('../utils/errors');
 
 async function getMe(req, res) {
   const user = await profileService.getMyProfile(req.userId);
@@ -130,50 +128,20 @@ async function setMyLanguages(req, res) {
 }
 
 /**
- * Uploads a profile photo.
+ * Points the profile at one of the predefined avatars.
  *
- * The upload endpoint is the *only* way an avatar URL is set. `avatar_url` was
- * previously a writable field on `PATCH /me`, which let a client point their
- * profile at any URL on the internet — someone else's bandwidth, a tracking
- * pixel, or content this platform would be responsible for showing but had
- * never seen. Now the bytes arrive here, get checked, and the server decides
- * the URL.
+ * The only way an avatar is ever set. There is no upload: `avatar_id` names
+ * one of the server's own catalogued images, checked against it, so a
+ * client can never point a profile at an arbitrary URL or file.
  */
-async function uploadAvatar(req, res) {
-  if (!req.file || !req.file.buffer) {
-    throw errors.badRequest('Attach an image as the "photo" field.');
-  }
-
-  let stored;
-  try {
-    stored = await storage.putAvatar(req.userId, req.file.buffer);
-  } catch (error) {
-    if (!(error instanceof storage.StorageError)) throw error;
-    // The distinction matters to the app: it should tell the user to pick a
-    // different picture for one of these, and offer a retry for the other.
-    if (error.code === 'unavailable' || error.code === 'not_configured') {
-      throw new AppError(error.message, {
-        status: 503,
-        code: 'STORAGE_UNAVAILABLE',
-      });
-    }
-    throw errors.badRequest(error.message);
-  }
-
-  const user = await profileService.setAvatar(req.userId, stored.url);
-  return ok(res, { user: serialize.myProfile(user) }, 'Photo updated');
-}
-
-/** Removes the photo. The profile falls back to initials. */
-async function deleteAvatar(req, res) {
-  const user = await profileService.clearAvatar(req.userId);
-  return ok(res, { user: serialize.myProfile(user) }, 'Photo removed');
+async function setAvatar(req, res) {
+  const user = await profileService.setAvatarId(req.userId, req.body.avatar_id);
+  return ok(res, { user: serialize.myProfile(user) }, 'Avatar updated');
 }
 
 module.exports = {
   getMe,
-  uploadAvatar,
-  deleteAvatar,
+  setAvatar,
   updateMe,
   getPublic,
   setPresence,

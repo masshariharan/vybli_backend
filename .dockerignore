@@ -1,15 +1,10 @@
 node_modules
 npm-debug.log*
 
-# Secrets and local config — never bake these into an image. Pass real values
+# Secrets and real config — never bake these into an image. Pass real values
 # with `docker run -e` / `--env-file` / your orchestrator's secret store.
 .env
 .env.*
-!.env.example
-
-# Development-only data. Production runs the s3 storage driver; the local
-# driver's files never belong in an image.
-uploads
 
 # Not needed to build or run the API.
 .git

@@ -1,6 +1,7 @@
 'use strict';
 
 const env = require('../config/env');
+const avatarCatalog = require('../config/avatarCatalog');
 
 /**
  * The wire format.
@@ -89,7 +90,7 @@ function publicUser(user, { viewer = null, viewerProfile = null, favorited = fal
     status: showPresence ? profile.presence : 'offline',
     last_seen: showPresence ? iso(profile.lastSeen) : null,
 
-    avatar_url: profile.avatarUrl ?? null,
+    avatar_url: avatarCatalog.urlFor(profile.avatarId),
     is_verified: profile.isVerified ?? false,
     is_new: isNewAccount(user.createdAt),
     is_earner: profile.isEarner ?? false,
@@ -136,6 +137,9 @@ function myProfile(user) {
     onboarding_status: profile.onboardingStatus,
     account_status: user.status,
     created_at: iso(user.createdAt),
+    // Only on your own profile — the picker needs to know which catalog
+    // entry is currently selected. Nobody else's business which one it is.
+    avatar_id: profile.avatarId ?? null,
   };
 }
 
@@ -168,7 +172,7 @@ function userSummary(user) {
       .map((l) => l.language?.name ?? l.name ?? null)
       .filter(Boolean),
     bio: profile.bio ?? '',
-    avatar_url: profile.avatarUrl ?? null,
+    avatar_url: avatarCatalog.urlFor(profile.avatarId),
     status: showPresence ? profile.presence : 'offline',
     last_seen: showPresence ? iso(profile.lastSeen) : null,
     is_verified: profile.isVerified ?? false,
@@ -208,6 +212,16 @@ function language(row) {
     native_name: row.nativeName,
     is_popular: row.isPopular,
     aliases: row.aliases ?? [],
+  };
+}
+
+/** A predefined avatar catalog entry — not a database row, see `config/avatarCatalog`. */
+function avatar(entry) {
+  if (!entry) return null;
+  return {
+    id: entry.id,
+    gender: entry.gender,
+    url: entry.url,
   };
 }
 
@@ -319,7 +333,7 @@ function callRecord(row, viewerId) {
     user_id: peer?.id ?? '',
     user_name: peerProfile.name ?? 'Unknown',
     city_name: peerProfile.city?.name ?? '',
-    avatar_url: peerProfile.avatarUrl ?? null,
+    avatar_url: avatarCatalog.urlFor(peerProfile.avatarId),
     type: row.type,
     direction,
     status: row.status,
@@ -490,25 +504,13 @@ function discoverySettings(row) {
   };
 }
 
-function verification(row) {
-  return {
-    id: row.id,
-    kind: row.kind,
-    status: row.status,
-    language_code: row.languageCode ?? null,
-    duration_seconds: row.durationSeconds,
-    rejection_reason: row.rejectionReason ?? null,
-    reviewed_at: iso(row.reviewedAt),
-    created_at: iso(row.createdAt),
-  };
-}
-
 module.exports = {
   publicUser,
   myProfile,
   userSummary,
   city,
   language,
+  avatar,
   message,
   chatThread,
   requestThread,
@@ -525,7 +527,6 @@ module.exports = {
   privacySettings,
   notificationSettings,
   discoverySettings,
-  verification,
   iso,
   money,
 };

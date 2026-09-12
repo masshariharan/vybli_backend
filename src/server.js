@@ -40,9 +40,7 @@ async function start() {
   // No host argument, so this binds every interface — loopback and the LAN
   // alike. That is what lets a phone on the same Wi-Fi reach it.
   server.listen(env.port, () => {
-    console.info(
-      `[boot] Vybli API listening on http://localhost:${env.port} (${env.nodeEnv})`
-    );
+    console.info(`[boot] Vybli API listening on http://localhost:${env.port}`);
     console.info(`[boot] REST at /api/v1 — Socket.IO on the same port`);
 
     // The LAN addresses, printed because `localhost` is the one address that
@@ -53,19 +51,16 @@ async function start() {
       console.info(`[boot] reachable from this network at http://${address}:${env.port}`);
     }
 
-    // `npm start` in development is a trap worth naming.
-    //
-    // It runs plain node, so the process serves whatever the code looked like
-    // when it launched. Edit a file and nothing changes — the API keeps
-    // answering, correctly, with the old behaviour. That failure is silent and
-    // it is indistinguishable from a bug in the code you just wrote, because
-    // the code you just wrote is not running.
-    //
-    // nodemon sets this variable in the child it spawns.
-    if (!env.isProduction && !process.env.__NODEMON_RUNNING) {
+    // `npm start` runs plain node, so the process serves whatever the code
+    // looked like when it launched — edit a file and nothing changes, which
+    // is indistinguishable from a bug in the code you just wrote, because the
+    // code you just wrote is not running. Worth naming whenever it's true,
+    // not just while "developing": nodemon sets this variable in the child it
+    // spawns, so its absence means exactly this, wherever it happens.
+    if (!process.env.__NODEMON_RUNNING) {
       console.warn(
         '[boot] no auto-reload — started with `npm start`. Edits will NOT take effect ' +
-          'until you restart. Use `npm run dev` while developing.'
+          'until this process is restarted. Use `npm run dev` (nodemon) while iterating.'
       );
     }
   });

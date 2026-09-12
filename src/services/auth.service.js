@@ -5,7 +5,6 @@ const { errors } = require('../utils/errors');
 const otpService = require('./otp.service');
 const firebase = require('./firebase.service');
 const activity = require('./activity.service');
-const storage = require('./storage.service');
 const { emitToAdmin } = require('../sockets/bus');
 const {
   signAccessToken,
@@ -325,8 +324,8 @@ async function logout({ userId, refreshToken, allDevices = false }) {
  * the account it names is gone.
  *
  * Everything that belongs to this account alone and nobody else — the
- * wallet and its ledger, what it earned, its voice-verification attempts and
- * the recordings behind them, its sessions, its own activity history — is
+ * wallet and its ledger, what it earned, its sessions, its own activity
+ * history — is
  * hard-deleted for real, not flagged. What is shared with someone else is
  * anonymised instead of erased: this account's own words are blanked out of
  * every message it sent (the row and the conversation stay, so the other
@@ -339,19 +338,6 @@ async function deleteAccount({ user, reason }) {
   const now = new Date();
   const tombstone = `deleted_${user.id}`;
 
-  // Read what needs deleting outside Postgres before the rows naming it are
-  // gone.
-  const [profile, verifications] = await Promise.all([
-    prisma.userProfile.findUnique({
-      where: { userId: user.id },
-      select: { avatarUrl: true },
-    }),
-    prisma.verification.findMany({
-      where: { userId: user.id },
-      select: { sampleUrl: true },
-    }),
-  ]);
-
   await prisma.$transaction([
     // Dead the moment they're revoked — nothing keeps a revoked session row
     // around for.
@@ -363,9 +349,6 @@ async function deleteAccount({ user, reason }) {
     // delete — this removes only what this account earned; the `Call` row
     // itself, and the other party's side of it, is untouched.
     prisma.earning.deleteMany({ where: { userId: user.id } }),
-
-    // The identity check itself, every attempt.
-    prisma.verification.deleteMany({ where: { userId: user.id } }),
 
     // Their own inbox and history — nobody else's record of anything.
     prisma.notification.deleteMany({ where: { userId: user.id } }),
@@ -394,11 +377,16 @@ async function deleteAccount({ user, reason }) {
       data: {
         name: 'Deleted user',
         bio: '',
-        avatarUrl: null,
+        avatarId: null,
         presence: 'offline',
         lastSeen: now,
         isEarner: false,
         isVerified: false,
+        verificationStatus: 'not_required',
+        verificationRequestedAt: null,
+        verifiedAt: null,
+        verifiedBy: null,
+        rejectionReason: null,
         voiceEnabled: false,
         videoEnabled: false,
       },
@@ -431,20 +419,6 @@ async function deleteAccount({ user, reason }) {
       },
     }),
   ]);
-
-  // Object storage lives outside Postgres and outside the transaction above —
-  // best-effort, and only after the database has actually committed, so an
-  // unreachable bucket cannot leave an account half-deleted. A leaked object
-  // costs a fraction of a cent; [storage] already treats a failed delete this
-  // way for the same reason.
-  const urls = [
-    profile?.avatarUrl && { url: profile.avatarUrl, remove: storage.removeAvatar },
-    ...verifications
-      .map((v) => v.sampleUrl)
-      .filter(Boolean)
-      .map((url) => ({ url, remove: storage.removeVerification })),
-  ].filter(Boolean);
-  await Promise.all(urls.map(({ url, remove }) => remove(url).catch(() => false)));
 
   // The one activity record this account keeps — its own history is gone
   // with everything else above, but the deletion event itself is exactly

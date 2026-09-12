@@ -127,34 +127,14 @@ const audit = {
       metadata: { query },
     }),
 
-  viewedVerification: (req, { verificationId, userId }) =>
-    write({
-      req,
-      userId,
-      action: 'verification.viewed',
-      targetType: 'verification',
-      targetId: verificationId,
-      description: 'Opened a voice verification',
-    }),
-
-  accessedRecording: (req, { verificationId, userId }) =>
-    write({
-      req,
-      userId,
-      action: 'verification.recording_accessed',
-      targetType: 'verification',
-      targetId: verificationId,
-      description: 'Played a submitted voice recording',
-    }),
-
-  decidedVerification: (req, { verificationId, userId, decision, reason }) =>
+  decidedVerification: (req, { userId, decision, reason }) =>
     write({
       req,
       userId,
       action: `verification.${decision}`,
-      targetType: 'verification',
-      targetId: verificationId,
-      description: `Voice verification ${decision}${reason ? ` — ${reason}` : ''}`,
+      targetType: 'user',
+      targetId: userId,
+      description: `Identity verification ${decision}${reason ? ` — ${reason}` : ''}`,
       metadata: { decision, reason: reason ?? null },
     }),
 

@@ -13,7 +13,6 @@ const {
 } = require('../middleware/rateLimit');
 const S = require('../validators/schemas');
 const prisma = require('../config/prisma');
-const { avatarUpload, verificationUpload } = require('../middleware/upload');
 
 const authController = require('../controllers/auth.controller');
 const onboardingController = require('../controllers/onboarding.controller');
@@ -174,6 +173,12 @@ router.get(
   validate({ query: S.reference.nearestQuery }),
   h(discoveryController.nearestCity)
 );
+// Public for the same reason — the avatar step is also pre-onboarding.
+router.get(
+  '/avatars',
+  validate({ query: S.reference.avatarQuery }),
+  h(discoveryController.avatars)
+);
 
 // ── Onboarding ──────────────────────────────────────────────────────────────
 
@@ -211,23 +216,13 @@ onboarding.post('/complete', h(onboardingController.complete));
 router.use('/onboarding', onboarding);
 
 // ── Verification ────────────────────────────────────────────────────────────
-// Also pre-onboarding: the voice check is a step inside it.
+// Read-only. Review is manual and administrator-driven — see the admin
+// `/verifications` routes — so there is nothing here for a client to submit.
 
 const verify = express.Router();
 verify.use(authenticate);
 
 verify.get('/status', h(verification.status));
-// Multipart: a recorded clip plus its language and length as ordinary form
-// fields on the same request. `verificationUpload` runs first so multer has
-// parsed the text fields into `req.body` before the zod schema reads them.
-verify.post(
-  '/voice',
-  writeLimiter,
-  verificationUpload,
-  validate({ body: S.verification.submit }),
-  h(verification.submit)
-);
-verify.get('/history', validate({ query: S.pagination }), h(verification.history));
 
 router.use('/verification', verify);
 
@@ -246,14 +241,15 @@ me.put(
   validate({ body: S.profile.presence }),
   h(profileController.setPresence)
 );
-// The photo. Multipart rather than JSON, and the only way an avatar is set —
-// `avatar_url` is not a writable field on PATCH, so a client cannot point a
-// profile at an image this server has never seen.
-//
-// Available during onboarding: it sits above `requireOnboarded` deliberately,
-// because adding a photo is part of setting the account up.
-me.post('/avatar', writeLimiter, avatarUpload, h(profileController.uploadAvatar));
-me.delete('/avatar', writeLimiter, h(profileController.deleteAvatar));
+// The avatar. Just an id from the predefined catalog — the only way an
+// avatar is ever set, so a client can never point a profile at an image
+// this server does not itself serve.
+me.put(
+  '/avatar',
+  writeLimiter,
+  validate({ body: S.profile.setAvatar }),
+  h(profileController.setAvatar)
+);
 
 me.get('/languages', h(profileController.getMyLanguages));
 me.put(

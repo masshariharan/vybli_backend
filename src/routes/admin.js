@@ -281,7 +281,10 @@ router.get(
 
 router.get(
   '/users/:id/verification',
-  h(async (req, res) => ok(res, { items: await users.verifications(req.params.id) }, 'Verification'))
+  h(async (req, res) => {
+    const result = await platform.verificationFeed({ userId: req.params.id, take: 1 });
+    return ok(res, { item: result.items[0] ?? null }, 'Verification');
+  })
 );
 
 router.get(
@@ -554,7 +557,6 @@ router.get(
     const p = page(req);
     const result = await platform.verificationFeed({
       ...p,
-      ...range(req),
       status: str(req.query.status),
       userId: str(req.query.user_id),
     });
@@ -562,11 +564,13 @@ router.get(
   })
 );
 
+// `:id` is the user id — there is one identity review per account, not one
+// per attempt.
 router.post(
   '/verifications/:id/decide',
   h(async (req, res) => {
-    const { decision, reason, notes } = req.body ?? {};
-    const ALLOWED = ['approved', 'rejected', 'reverification_required', 'under_review', 'expired'];
+    const { decision, reason } = req.body ?? {};
+    const ALLOWED = ['verified', 'rejected'];
     if (!ALLOWED.includes(decision)) {
       return res.status(400).json({
         success: false,
@@ -578,42 +582,14 @@ router.post(
     const result = await platform.decideVerification(req.params.id, {
       decision,
       reason,
-      notes,
       reviewer: env.admin.username,
     });
     audit.decidedVerification(req, {
-      verificationId: req.params.id,
-      userId: result.user_id,
+      userId: req.params.id,
       decision,
       reason,
     });
     return ok(res, result, 'Verification updated');
-  })
-);
-
-/**
- * The submitted recording.
- *
- * Redirected to, not embedded, and only after the access is logged. The
- * `sampleUrl` is never returned in a list response — a public URL to
- * somebody's voice is a public URL to somebody's voice, however obscure.
- */
-router.get(
-  '/verifications/:id/recording',
-  h(async (req, res) => {
-    const v = await platform.verificationRecording(req.params.id);
-    audit.accessedRecording(req, { verificationId: v.id, userId: v.userId });
-    return ok(
-      res,
-      {
-        verification_id: v.id,
-        kind: v.kind,
-        url: v.sampleUrl,
-        duration_seconds: v.durationSeconds,
-        language_code: v.languageCode,
-      },
-      'Recording'
-    );
   })
 );
 

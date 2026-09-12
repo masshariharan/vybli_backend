@@ -2,6 +2,7 @@
 
 const prisma = require('../../config/prisma');
 const { errors } = require('../../utils/errors');
+const avatarCatalog = require('../../config/avatarCatalog');
 const activity = require('../activity.service');
 const { emitToUser } = require('../../sockets/bus');
 
@@ -37,7 +38,7 @@ function summarise(user) {
     id: user.id,
     phone: `${user.dialCode} ${user.phone}`,
     name: p?.name || null,
-    avatar_url: p?.avatarUrl ?? null,
+    avatar_url: avatarCatalog.urlFor(p?.avatarId),
     gender: p?.gender ?? null,
     age: p?.age ?? null,
     city: p?.city ? { id: p.city.id, name: p.city.name, state: p.city.state } : null,
@@ -53,11 +54,7 @@ function summarise(user) {
     suspended_reason: user.suspendedReason ?? null,
     deleted_at: user.deletedAt?.toISOString() ?? null,
     created_at: user.createdAt.toISOString(),
-    // The most recent submission's status, when the caller asked for it (see
-    // `list`'s `verifications` include below) — `undefined` when it wasn't
-    // loaded, so this stays `null` rather than throwing for every other
-    // caller of `summarise` that doesn't fetch that relation.
-    verification_status: user.verifications?.[0]?.status ?? null,
+    verification_status: p?.verificationStatus ?? null,
     // Counted in the same query rather than N+1'd per row.
     counts: user._count
       ? {
@@ -99,7 +96,7 @@ const ACTIVE_WINDOW_MS = 24 * 3600_000;
 // turning into a 500.
 const TYPE_VALUES = new Set(['earner', 'call_user']);
 const PRESENCE_VALUES = new Set(['online', 'offline', 'busy']);
-const VERIFICATION_VALUES = new Set(['pending', 'under_review', 'approved', 'rejected', 'reverification_required']);
+const VERIFICATION_VALUES = new Set(['pending', 'verified', 'rejected']);
 const STATUS_VALUES = new Set(['active', 'suspended', 'deleted']);
 
 /**
@@ -161,7 +158,7 @@ function buildWhere({ search, filter, from, to, includeDeleted, type, presence, 
       where.profile = { ...(where.profile ?? {}), isEarner: true };
       break;
     case 'pending_verification':
-      where.verifications = { some: { status: { in: ['pending', 'under_review'] } } };
+      where.profile = { ...(where.profile ?? {}), verificationStatus: 'pending' };
       break;
     case 'suspended':
       where.status = 'suspended';
@@ -192,13 +189,9 @@ function buildWhere({ search, filter, from, to, includeDeleted, type, presence, 
   }
 
   if (verification === 'none') {
-    where.verifications = { none: {} };
+    where.profile = { ...(where.profile ?? {}), verificationStatus: 'not_required' };
   } else if (VERIFICATION_VALUES.has(verification)) {
-    // The latest attempt is what the row's badge shows — "has ever had a
-    // verification at this status" is the closest a relational filter gets
-    // to "their latest one is this status" without a raw query, and matches
-    // how `pending_verification` above already reads this same relation.
-    where.verifications = { some: { status: verification } };
+    where.profile = { ...(where.profile ?? {}), verificationStatus: verification };
   }
 
   if (STATUS_VALUES.has(status)) {
@@ -246,9 +239,6 @@ async function list({
         ...PROFILE_INCLUDE,
         wallet: true,
         ...LIST_COUNTS,
-        // Just the latest attempt — the list shows one status per row, not
-        // the full history (that's the user detail page's job).
-        verifications: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
       orderBy,
       skip,
@@ -267,9 +257,6 @@ async function overview(userId) {
     include: {
       ...PROFILE_INCLUDE,
       wallet: true,
-      // Just the latest attempt — the full history is the Verification tab's
-      // job, this is only for the one status badge on the Overview screen.
-      verifications: { orderBy: { createdAt: 'desc' }, take: 1 },
     },
   });
   if (!user) throw errors.notFound('User', 'USER_NOT_FOUND');
@@ -299,7 +286,6 @@ async function overview(userId) {
     reportsMade,
     blocksMade,
     blocksReceived,
-    verifications,
     notifications,
     unreadNotifications,
     sessions,
@@ -361,7 +347,6 @@ async function overview(userId) {
     prisma.report.count({ where: { reporterId: userId } }),
     prisma.block.count({ where: { blockerId: userId } }),
     prisma.block.count({ where: { blockedId: userId } }),
-    prisma.verification.count({ where: { userId } }),
     prisma.notification.count({ where: { userId } }),
     prisma.notification.count({ where: { userId, readAt: null } }),
     prisma.userSession.count({ where: { userId, revokedAt: null } }),
@@ -390,8 +375,6 @@ async function overview(userId) {
     }),
   ]);
 
-  const latestVerification = user.verifications?.[0] ?? null;
-
   return {
     user: summarise(user),
     profile: {
@@ -407,15 +390,16 @@ async function overview(userId) {
       voice_enabled: user.profile?.voiceEnabled ?? null,
       video_enabled: user.profile?.videoEnabled ?? null,
     },
-    // The one verification record the Overview badge needs — full history
-    // (every attempt, every reviewer) stays on the Verification tab.
-    verification: latestVerification
+    // Manual and off the profile directly — there is no per-attempt row any
+    // more. `not_required` (a call-user, or an earner who hasn't finished
+    // onboarding yet) renders as no badge at all.
+    verification: user.profile && user.profile.verificationStatus !== 'not_required'
       ? {
-          status: latestVerification.status,
-          attempt: latestVerification.attempt,
-          reviewed_at: latestVerification.reviewedAt?.toISOString() ?? null,
-          reviewed_by: latestVerification.reviewedBy ?? null,
-          rejection_reason: latestVerification.rejectionReason ?? null,
+          status: user.profile.verificationStatus,
+          requested_at: user.profile.verificationRequestedAt?.toISOString() ?? null,
+          verified_at: user.profile.verifiedAt?.toISOString() ?? null,
+          verified_by: user.profile.verifiedBy ?? null,
+          rejection_reason: user.profile.rejectionReason ?? null,
         }
       : null,
     last_session: lastSession
@@ -456,7 +440,6 @@ async function overview(userId) {
       reports_made: reportsMade,
       blocks_made: blocksMade,
       blocked_by: blocksReceived,
-      verification_attempts: verifications,
       notifications,
       unread_notifications: unreadNotifications,
       active_sessions: sessions,
@@ -670,7 +653,7 @@ function serializeActivity(a) {
       ? {
           id: a.relatedUser.id,
           name: a.relatedUser.profile?.name ?? null,
-          avatar_url: a.relatedUser.profile?.avatarUrl ?? null,
+          avatar_url: avatarCatalog.urlFor(a.relatedUser.profile?.avatarId),
         }
       : null,
     related_entity_id: a.relatedEntityId,
@@ -904,31 +887,6 @@ async function notifications(userId, { kind, unreadOnly, skip = 0, take = 25 } =
   };
 }
 
-async function verifications(userId) {
-  const rows = await prisma.verification.findMany({
-    where: { userId },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  return rows.map((v) => ({
-    id: v.id,
-    kind: v.kind,
-    status: v.status,
-    attempt: v.attempt,
-    language_code: v.languageCode,
-    duration_seconds: v.durationSeconds,
-    rejection_reason: v.rejectionReason,
-    review_notes: v.reviewNotes,
-    reviewed_by: v.reviewedBy,
-    reviewed_at: v.reviewedAt?.toISOString() ?? null,
-    created_at: v.createdAt.toISOString(),
-    // The URL is never handed out. The recording is streamed through an
-    // authenticated endpoint that logs the access; a direct link would be a
-    // public URL to somebody's voice.
-    has_recording: Boolean(v.sampleUrl),
-  }));
-}
-
 /**
  * The Account History tab.
  *
@@ -1125,7 +1083,6 @@ module.exports = {
   reports,
   blocks,
   notifications,
-  verifications,
   accountHistory,
   setStatus,
   summarise,

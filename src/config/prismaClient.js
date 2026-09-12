@@ -21,7 +21,7 @@ function databaseUrl() {
   const value = process.env.DATABASE_URL;
   if (!value || !value.trim()) {
     throw new Error(
-      'Missing required environment variable DATABASE_URL. Copy .env.example to .env and fill it in.'
+      'Missing required environment variable DATABASE_URL. Set it in .env.'
     );
   }
   return value.trim();

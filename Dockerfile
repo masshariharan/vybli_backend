@@ -119,14 +119,6 @@ COPY --from=deps --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./
 COPY --chown=node:node src ./src
 
-# Production refuses to boot with STORAGE_DRIVER=local (config/env.js), so a
-# real deployment never touches this. It is created anyway, owned by `node`,
-# because `WORKDIR /app` itself is root-owned — a non-production run of this
-# same image (STORAGE_DRIVER left at its "local" default, say in a staging
-# environment with no S3 bucket yet) would otherwise crash at boot on
-# `mkdir '/app/uploads'`, EACCES, the moment app.js tried to create it itself.
-RUN mkdir -p uploads && chown node:node uploads
-
 USER node
 
 EXPOSE 4000

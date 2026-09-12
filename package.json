@@ -25,7 +25,6 @@
     "check:livekit": "node scripts/check-livekit.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1116.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "bcryptjs": "^2.4.3",
@@ -41,7 +40,6 @@
     "libphonenumber-js": "^1.13.11",
     "livekit-server-sdk": "^2.17.0",
     "morgan": "^1.10.0",
-    "multer": "^2.2.0",
     "pg": "^8.23.0",
     "socket.io": "^4.8.1",
     "zod": "^3.23.8"
