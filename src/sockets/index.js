@@ -111,12 +111,19 @@ function attachSockets(httpServer) {
 async function handleConnect(io, socket) {
   const userId = socket.userId;
 
-  // A second device connecting should not re-announce presence, and a phone
-  // reconnecting after a tunnel should not flap the status for their friends.
-  const sockets = await io.in(roomFor(userId)).fetchSockets();
-  if (sockets.length === 1) {
-    await profileService.setPresence(userId, 'online');
-  }
+  // Unconditionally. A connected socket means the account is online, and that
+  // is true of the second device as much as the first — `setPresence` is
+  // idempotent, so a status that has not changed writes nothing and announces
+  // nothing, which is what the count check here used to be for.
+  //
+  // It was `if (sockets.length === 1)`, and that is a different question from
+  // the one being asked. A phone whose connection died silently leaves a
+  // socket in the room until the server's ping times it out, so a reconnect
+  // inside that window saw two sockets, skipped the update, and left the
+  // account offline to everyone while the app sat there connected — with
+  // nothing to recover it, because the next thing to touch presence was the
+  // *disconnect* of the socket it had just replaced.
+  await profileService.setPresence(userId, 'online');
 
   const [unread, activeCall] = await Promise.all([
     chatService.unreadSummary(socket.user),

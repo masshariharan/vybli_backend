@@ -361,8 +361,21 @@ async function run() {
   check('it is not an earner', caller.user.is_earner === false);
 
   // Presence, so the earner is callable.
-  await put('/me/presence', earner.token, { status: 'online' });
+  const wentOnline = await put('/me/presence', earner.token, { status: 'online' });
   await put('/me/presence', caller.token, { status: 'online' });
+  check('presence is recorded', wentOnline.data?.status === 'online', {
+    got: wentOnline.data?.status,
+  });
+
+  // Setting the status it already has is a no-op that still answers with the
+  // truth. The socket layer leans on this: it marks every connection online
+  // unconditionally, because "is this the only socket in the room" is a
+  // different question from "is this account connected" — and answering the
+  // wrong one left people offline while their app sat there connected.
+  const again = await put('/me/presence', earner.token, { status: 'online' });
+  check('re-asserting the same presence is idempotent', again.success && again.data?.status === 'online', {
+    got: again.data,
+  });
 
   // ── Verification ──────────────────────────────────────────────────────────
   section('Verification');

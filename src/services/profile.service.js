@@ -132,21 +132,44 @@ async function updateProfile(user, payload) {
  * REST call for a client that wants to go invisible without dropping its
  * socket.
  *
+ * **Idempotent, and that is load-bearing.** Setting a status the profile
+ * already has does nothing and tells nobody: no write, no admin event, no
+ * `presence:changed` for their friends. That is what lets the socket layer
+ * call this unconditionally on every connect, which is the only way to be
+ * sure a connected account is marked online. It used to guard the call with
+ * "is this the only socket in the room", so a reconnect that raced an old,
+ * not-yet-reaped socket skipped the update and left somebody offline to
+ * everyone while their app sat there connected.
+ *
+ * The change is detected in the `updateMany` itself rather than by reading
+ * first and then writing: two devices connecting in the same instant would
+ * both read "offline", both decide they had changed something, and both
+ * announce it.
+ *
  * Only friends are notified. Broadcasting to everyone who has ever viewed a
  * profile would be a firehose, and friends are the only people with a surface
  * that shows live presence.
  */
 async function setPresence(userId, status) {
-  const profile = await prisma.userProfile.update({
-    where: { userId },
+  const { count } = await prisma.userProfile.updateMany({
+    where: { userId, presence: { not: status } },
     data: {
       presence: status,
       // Only meaningful when going offline; keeping it fresh on every change
       // means "last seen" is right even if the process dies mid-session.
       lastSeen: new Date(),
     },
+  });
+
+  const profile = await prisma.userProfile.findUnique({
+    where: { userId },
     select: { presence: true, lastSeen: true, userId: true },
   });
+
+  // Already in that state, or no such profile. Either way there is nothing to
+  // announce — the caller still gets the row, because the REST endpoint
+  // answers with it.
+  if (count === 0 || !profile) return profile;
 
   // The admin panel sees every presence change, including from accounts that
   // hide their status from other users. That is not a privacy hole being
@@ -180,17 +203,25 @@ async function setPresence(userId, status) {
 }
 
 /**
- * Marks everyone offline at boot — a crash leaves stale `online` rows behind.
+ * Marks everybody offline, for a process that has just started.
  *
- * Seeded demo accounts are exempt. Their presence is **fixture data**, not the
- * shadow of a socket: nobody ever connects as one, so resetting them left the
- * feed full of people who could never be called and random matching with
- * nothing to match. They are answered for by the demo responder, which does
- * not need a connection to do it.
+ * Presence is a fact about a live socket, and a freshly booted process holds
+ * none — so anything still recorded as online is a leftover from a run that
+ * was killed before its disconnect handlers could fire, which is every
+ * ungraceful restart and every redeploy. Left alone those accounts advertise
+ * themselves as available for ever.
+ *
+ * Runs before the server accepts connections, so it cannot race a client that
+ * has genuinely just reconnected.
+ *
+ * No account is exempt. The demo profiles used to be, which meant thirteen of
+ * them sat permanently "online" with nothing connected — a status that was
+ * decoration rather than a fact, on the one screen where the whole point is
+ * that the number is real.
  */
 async function resetAllPresence() {
   const { count } = await prisma.userProfile.updateMany({
-    where: { presence: { not: 'offline' }, isDemo: false },
+    where: { presence: { not: 'offline' } },
     data: { presence: 'offline' },
   });
   return count;

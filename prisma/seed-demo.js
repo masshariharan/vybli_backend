@@ -8,9 +8,11 @@ const prisma = createPrismaClient();
 /**
  * The 22 demo profiles, ported from the Flutter app's own mock data.
  *
- * Same names, cities, prices, languages and presence — so an app pointed at
- * this backend looks exactly like the one running on mocks, except every row
- * is real and every action goes through the API.
+ * Same names, cities, prices and languages — so an app pointed at this backend
+ * looks exactly like the one running on mocks, except every row is real and
+ * every action goes through the API. Presence is the exception: it is not
+ * seeded at all, because it is a fact about a live connection rather than a
+ * property of the account.
  *
  * These are complete accounts, not fixtures: each has a phone number, a
  * profile, a wallet and settings rows. You can sign in as any of them (the OTP
@@ -54,7 +56,11 @@ async function seedUser(user, index) {
     // denominator means the average survives a real rating being added.
     ratedCalls: user.rating > 0 ? Math.max(1, Math.round(user.totalCalls * 0.4)) : 0,
     totalCalls: user.totalCalls,
-    presence: user.presence,
+    // Offline, always. Presence is a fact about a live socket, and a seeded
+    // row has none — writing "online" here put thirteen accounts on the feed
+    // advertising themselves as available with nothing connected. They come
+    // online the moment somebody signs in as one, like any other account.
+    presence: 'offline',
     lastSeen: new Date(),
     onboardingStatus: 'ONBOARDING_COMPLETED',
     isDemo: true,
