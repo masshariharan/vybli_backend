@@ -17,8 +17,10 @@ npm run seed:all          # reference data + the 22 demo profiles
 npm run dev               # http://localhost:4000
 ```
 
-`npm run seed` alone loads only reference data — 67 languages, 20 cities, 5 coin
-packages. `seed:all` adds the demo accounts below, which is what makes the app usable
+`npm run seed` alone loads only reference data — 20 cities, 5 coin packages and
+the VIP plans. Languages are not in it: that catalogue is static and ships inside
+the Flutter app, so the server only ever stores the codes a profile was saved
+with. `seed:all` adds the demo accounts below, which is what makes the app usable
 the moment you open it.
 
 ### Demo accounts

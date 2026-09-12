@@ -176,7 +176,7 @@ column, and answers `400` with `details.missing` naming the first gap.
 | PATCH | `/me` | Update name, age, bio, city, languages. No `gender` — fixed once set at onboarding, since it decides caller/earner status. No `avatar_url` or `avatar_id` either — see `/me/avatar` below. |
 | PUT | `/me/avatar` | `{ "avatar_id": "male_01" }`. The only way an avatar is set — checked against the predefined catalog (`GET /avatars`), never a file upload. |
 | PUT | `/me/presence` | `{ "status": "online" \| "offline" \| "busy" }` |
-| GET / PUT | `/me/languages` | Read / replace my languages |
+| GET / PUT | `/me/languages` | Read / replace my language **codes**. Codes both ways — the catalogue that turns `ta` into "Tamil" ships inside the app, not here. |
 | GET / PATCH | `/me/settings/privacy` | Privacy |
 | GET / PATCH | `/me/settings/notifications` | Notifications |
 | GET / PATCH | `/me/settings/discovery` | Discovery filters |
@@ -206,12 +206,14 @@ Public — the onboarding screens need them before anyone is signed in.
 
 | Method | Path | Query |
 | --- | --- | --- |
-| GET | `/languages` | `q`, `popular_only` |
 | GET | `/cities` | `q`, `popular_only` |
 | GET | `/avatars` | `gender` (`male` \| `female`) |
 
-Language search matches aliases, so `?q=bangla` finds Bengali and `?q=oriya`
-finds Odia. Results are ranked exact → prefix → contains.
+There is no `/languages`. That catalogue is static — sixty-seven codes, names
+and scripts — so it is compiled into the Flutter app
+(`lib/data/catalogue/languages.dart`) and never fetched. The API deals only in
+codes: it stores the ones it is given and matches on them, and has no opinion
+about which exist. A code from a newer app build is stored, not refused.
 
 Cities carry `active_users`: online, visible earners in that city — what
 discovery would actually return, not every row with that city id.
@@ -223,8 +225,8 @@ discovery would actually return, not every row with that city id.
 **GET `/users/discover`**
 
 `scope` (`myCity` | `selectedCity` | `allCities`), `city_id` (required with
-`selectedCity`), `q`, `min_age`, `max_age`, `genders`, `languages`,
-`online_only`, `page`, `limit`.
+`selectedCity`), `q`, `min_age`, `max_age`, `genders`, `languages`
+(comma-separated **codes**, e.g. `ta,hi`), `online_only`, `page`, `limit`.
 
 Filters default to the saved Discovery Settings; query params override for
 one-off filtering. Sorted online → busy → offline, then by rating.
@@ -494,7 +496,7 @@ registration endpoint exists, and there is no admin table in Postgres.
 | GET | `/admin/reports`, `/admin/blocks` | |
 | POST | `/admin/reports/:id/resolve` | `{ status, resolution, notes }` |
 | GET | `/admin/wallets`, `/admin/earnings`, `/admin/transactions` | |
-| GET/PUT/POST | `/admin/languages`, `/admin/locations` | The catalogue the app reads |
+| GET/PUT/POST | `/admin/locations` | The city catalogue the app reads. Languages are not administered — that list ships with the app. |
 | GET | `/admin/notifications` | |
 | GET | `/admin/audit-logs` | Read-only. There is no write route |
 
@@ -631,7 +633,7 @@ different numbers is the case an IP limit misses.
 # .env already exists, real values and all — every field documented inline.
 npm install
 npx prisma migrate deploy
-npm run seed              # 67 languages, 20 cities, 5 coin packages
+npm run seed              # 20 cities, 5 coin packages, VIP plans
 npm run dev
 ```
 

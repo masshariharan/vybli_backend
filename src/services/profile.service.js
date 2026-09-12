@@ -51,10 +51,7 @@ async function getPublicProfile(viewer, targetId) {
 
   const [status, languages] = await Promise.all([
     relationship.connectionStatus(viewer.id, targetId),
-    prisma.userLanguage.findMany({
-      where: { userId: targetId },
-      include: { language: true },
-    }),
+    prisma.userLanguage.findMany({ where: { userId: targetId } }),
   ]);
 
   return { user: { ...target, languages }, connectionStatus: status };
@@ -86,21 +83,15 @@ async function updateProfile(user, payload) {
     operations.push(prisma.userProfile.update({ where: { userId: user.id }, data }));
   }
 
-  if (payload.language_codes) {
-    const known = await prisma.language.findMany({
-      where: { code: { in: payload.language_codes } },
-      select: { code: true },
-    });
-    if (known.length !== payload.language_codes.length) {
-      const knownSet = new Set(known.map((l) => l.code));
-      throw errors.badRequest('Some of those languages are not available', {
-        unknown: payload.language_codes.filter((c) => !knownSet.has(c)),
-      });
-    }
+  // Stored as sent: the catalogue is the client's, so there is nothing here to
+  // validate a code against. Deduplicated because the composite key would
+  // reject the whole write over a repeated code.
+  const languageCodes = payload.language_codes && [...new Set(payload.language_codes)];
+  if (languageCodes) {
     operations.push(
       prisma.userLanguage.deleteMany({ where: { userId: user.id } }),
       prisma.userLanguage.createMany({
-        data: payload.language_codes.map((code) => ({
+        data: languageCodes.map((code) => ({
           userId: user.id,
           languageCode: code,
         })),
@@ -124,12 +115,12 @@ async function updateProfile(user, payload) {
       metadata: { fields: changed, city_id: data.cityId ?? undefined },
     });
   }
-  if (payload.language_codes) {
+  if (languageCodes) {
     activity.record({
       userId: user.id,
       type: 'language_updated',
-      description: `Set their languages to ${payload.language_codes.join(', ')}`,
-      metadata: { languages: payload.language_codes },
+      description: `Set their languages to ${languageCodes.join(', ')}`,
+      metadata: { languages: languageCodes },
     });
   }
 

@@ -111,13 +111,15 @@ async function resetDiscoverySettings(req, res) {
 
 // ── Languages on the profile ────────────────────────────────────────────────
 
+/**
+ * The codes this account speaks, in the order they were chosen.
+ *
+ * Codes, not rendered languages: the catalogue lives in the app, so a name is
+ * something the caller resolves rather than something this endpoint knows.
+ */
 async function getMyLanguages(req, res) {
   const rows = await referenceService.getUserLanguages(req.userId);
-  return ok(
-    res,
-    { languages: rows.map((r) => serialize.language(r.language)) },
-    'Your languages'
-  );
+  return ok(res, { languages: rows.map((r) => r.languageCode) }, 'Your languages');
 }
 
 async function setMyLanguages(req, res) {

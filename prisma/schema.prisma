@@ -272,7 +272,7 @@ model UserProfile {
   name   String
   age    Int
   gender Gender
-  bio    String  @default("")
+  bio    String @default("")
 
   /// Id of a predefined avatar from the server-side catalog
   /// (`src/config/avatarCatalog.js`) — never a per-user file. Resolved to a
@@ -384,35 +384,27 @@ model OtpCode {
 
 // ── Reference data ──────────────────────────────────────────────────────────
 
-/// Seeded, not hard-coded in the client. `aliases` is what makes search find
-/// "Bangla" for Bengali and "Oriya" for Odia — a language you cannot find
-/// reads as a language the app does not support.
-model Language {
-  code       String   @id
-  name       String   @unique
-  nativeName String
-  isPopular  Boolean  @default(false)
-  aliases    String[] @default([])
-  sortOrder  Int      @default(0)
-
-  /// Disabled rather than deleted. A language somebody already selected
-  /// cannot be removed without orphaning their profile, but it can stop being
-  /// offered to the next person.
-  isActive Boolean @default(true)
-
-  users UserLanguage[]
-
-  @@index([isPopular])
-  @@map("languages")
-}
-
+/// Which languages a user speaks, as bare codes.
+///
+/// There is no `Language` table behind `languageCode` and deliberately so. The
+/// catalogue — name, native name, aliases, which twelve are "popular" — is
+/// static reference data that belongs to the client, which is the only party
+/// that renders any of it; see `catalogue/languages.dart` in the Flutter app.
+/// Holding it here bought a `GET /languages` round trip on the highest-dropoff
+/// onboarding step and a foreign key that made an unseeded database fail two
+/// ways at once: the picker rendered an empty list, and any code sent anyway
+/// was rejected because no row existed to point at.
+///
+/// So the code is stored as written. A code the server has never heard of is
+/// not an error here — it is a language a newer client knows about, and the
+/// server has no opinion on the catalogue any more. What it still enforces is
+/// shape and count, in `validators/common.js`.
 model UserLanguage {
   userId       String
   languageCode String
   createdAt    DateTime @default(now())
 
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  language Language @relation(fields: [languageCode], references: [code], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, languageCode])
   @@index([languageCode])
@@ -442,7 +434,7 @@ model City {
   latitude  Float?
   longitude Float?
 
-  /// Same reasoning as [Language.isActive]: retire it from the picker without
+  /// Disabled rather than deleted: retire it from the picker without
   /// orphaning the profiles that already point at it.
   isActive Boolean @default(true)
 
@@ -838,6 +830,10 @@ model DiscoverySettings {
   minAge     Int      @default(18)
   maxAge     Int      @default(45)
   genders    Gender[] @default([male, female])
+  /// Language **codes** to match on — the same identity `UserLanguage` stores
+  /// and the client sends. These held display names once, which meant the
+  /// filter matched by joining to a name column and quietly returned nobody
+  /// whenever the two spellings drifted.
   languages  String[] @default([])
   voiceCalls Boolean  @default(true)
   videoCalls Boolean  @default(true)

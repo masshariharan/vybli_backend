@@ -693,29 +693,10 @@ router.get(
 );
 
 // ── Catalogue ───────────────────────────────────────────────────────────────
-
-router.get(
-  '/languages',
-  h(async (req, res) => ok(res, { items: await platform.languages({ search: str(req.query.search) }) }, 'Languages'))
-);
-
-router.put(
-  '/languages/:code',
-  h(async (req, res) => {
-    const row = await platform.upsertLanguage({ ...req.body, code: req.params.code });
-    audit.changedCatalogue(req, { entity: 'language', id: row.code, change: 'updated' });
-    return ok(res, { language: row }, 'Language saved');
-  })
-);
-
-router.post(
-  '/languages',
-  h(async (req, res) => {
-    const row = await platform.upsertLanguage(req.body ?? {});
-    audit.changedCatalogue(req, { entity: 'language', id: row.code, change: 'created' });
-    return created(res, { language: row }, 'Language added');
-  })
-);
+//
+// Cities only. The language catalogue is static and ships inside the mobile
+// app, so there is nothing here to administer: a language added from this panel
+// could never have been rendered by an installed build anyway.
 
 router.get(
   '/locations',

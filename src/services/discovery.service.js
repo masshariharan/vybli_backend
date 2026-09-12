@@ -19,7 +19,7 @@ const settingsService = require('./settings.service');
 const PROFILE_INCLUDE = {
   profile: { include: { city: true } },
   privacySettings: true,
-  languages: { include: { language: true } },
+  languages: true,
 };
 
 /**
@@ -126,8 +126,12 @@ async function feed(user, params) {
     id: { notIn: [user.id, ...blockedIds] },
   };
 
+  // By code, which is what both sides store. This used to join to the
+  // catalogue's `name` column, so the filter matched on a display string and
+  // returned nobody the moment the client's spelling and the row's differed —
+  // an empty feed with nothing to say why.
   if (languages?.length) {
-    where.languages = { some: { language: { name: { in: languages } } } };
+    where.languages = { some: { languageCode: { in: languages } } };
   }
 
   const [rows, total] = await Promise.all([

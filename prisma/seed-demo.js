@@ -18,19 +18,13 @@ const prisma = createPrismaClient();
  *
  * Marked `isDemo`, which is what lets them answer for themselves when
  * `DEMO_AUTO_RESPOND` is on. Run `npm run seed` first — this depends on the
- * languages and cities being there.
+ * cities being there.
  */
 
 /** Demo numbers occupy a reserved block so they cannot collide with a real one. */
 const demoPhone = (index) => String(8800000000 + index);
 
-/** The mock data names languages; the database keys them by code. */
-async function languageCodeMap() {
-  const rows = await prisma.language.findMany({ select: { code: true, name: true } });
-  return new Map(rows.map((r) => [r.name.toLowerCase(), r.code]));
-}
-
-async function seedUser(user, index, codes) {
+async function seedUser(user, index) {
   const phone = demoPhone(index);
 
   // Keyed on the phone rather than a stored id, so re-running updates the same
@@ -107,37 +101,20 @@ async function seedUser(user, index, codes) {
     update: {},
   });
 
-  // Languages, resolved from the names the mock data uses. An unknown name is
-  // skipped rather than failing the whole seed.
-  const wanted = user.languages
-    .map((name) => codes.get(name.toLowerCase()))
-    .filter(Boolean);
-
+  // Codes, as the mock data and the app both carry them — there is no
+  // catalogue table to resolve a name against any more.
   await prisma.userLanguage.deleteMany({ where: { userId } });
-  if (wanted.length > 0) {
+  if (user.languages.length > 0) {
     await prisma.userLanguage.createMany({
-      data: wanted.map((code) => ({ userId, languageCode: code })),
+      data: user.languages.map((code) => ({ userId, languageCode: code })),
       skipDuplicates: true,
     });
   }
 
-  // An earner is verified through the voice check, so give them the record
-  // that would have produced their verified flag.
-  if (user.isEarner && user.isVerified) {
-    const already = await prisma.verification.findFirst({ where: { userId } });
-    if (!already) {
-      await prisma.verification.create({
-        data: {
-          userId,
-          kind: 'voice',
-          status: 'approved',
-          languageCode: wanted[0] ?? 'en',
-          durationSeconds: 7,
-          reviewedAt: new Date(),
-        },
-      });
-    }
-  }
+  // A verified earner's flag is set on the profile above. There is no separate
+  // verification record to write: the `Verification` model went with the voice
+  // check it belonged to, so this block had been calling a model that no longer
+  // exists — it only survived because nothing lints a dead branch.
 
   return { id: userId, phone, name: user.name };
 }
@@ -261,16 +238,15 @@ async function main() {
 
   console.info('[demo] seeding demo accounts');
 
-  const languageCount = await prisma.language.count();
-  if (languageCount === 0) {
-    throw new Error('Run `npm run seed` first — demo users need languages and cities.');
+  const cityCount = await prisma.city.count();
+  if (cityCount === 0) {
+    throw new Error('Run `npm run seed` first — demo users need cities.');
   }
 
-  const codes = await languageCodeMap();
   const seeded = [];
 
   for (let i = 0; i < demoUsers.length; i += 1) {
-    const result = await seedUser(demoUsers[i], i, codes);
+    const result = await seedUser(demoUsers[i], i);
     seeded.push({ ...result, isEarner: demoUsers[i].isEarner });
   }
 

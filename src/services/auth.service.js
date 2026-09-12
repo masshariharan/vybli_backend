@@ -28,7 +28,7 @@ const {
 const USER_INCLUDE = {
   profile: { include: { city: true } },
   privacySettings: true,
-  languages: { include: { language: true } },
+  languages: true,
 };
 
 /** Step one: text a code to the number. */

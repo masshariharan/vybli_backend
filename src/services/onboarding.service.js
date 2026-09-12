@@ -117,29 +117,21 @@ const setAge = (user, age) => applyStep(user, { age }, 'AGE_COMPLETED');
 /**
  * Replaces the user's languages.
  *
- * Every code is checked against the catalogue first — an unknown one is a
- * client bug, and silently dropping it would leave someone matched on fewer
- * languages than they chose without ever being told.
+ * The codes are stored as sent. There is no catalogue here to check them
+ * against any more — it belongs to the client, which is the only party that
+ * renders a language — and a code this server has not heard of is a language a
+ * newer app knows about rather than a fault. What is still enforced is shape
+ * and count, by `S.onboarding.languages`, and *deduplication* here: the
+ * composite key would otherwise reject the whole write over a repeat.
  */
 async function setLanguages(user, languageCodes) {
-  const known = await prisma.language.findMany({
-    where: { code: { in: languageCodes } },
-    select: { code: true },
-  });
-
-  if (known.length !== languageCodes.length) {
-    const knownSet = new Set(known.map((l) => l.code));
-    throw errors.badRequest('Some of those languages are not available', {
-      unknown: languageCodes.filter((c) => !knownSet.has(c)),
-    });
-  }
-
+  const codes = [...new Set(languageCodes)];
   const current = user.profile?.onboardingStatus ?? 'PHONE_VERIFIED';
 
   await prisma.$transaction([
     prisma.userLanguage.deleteMany({ where: { userId: user.id } }),
     prisma.userLanguage.createMany({
-      data: languageCodes.map((code) => ({ userId: user.id, languageCode: code })),
+      data: codes.map((code) => ({ userId: user.id, languageCode: code })),
     }),
     prisma.userProfile.update({
       where: { userId: user.id },
@@ -150,8 +142,8 @@ async function setLanguages(user, languageCodes) {
   activity.record({
     userId: user.id,
     type: 'language_updated',
-    description: `Chose ${languageCodes.join(', ')}`,
-    metadata: { languages: languageCodes },
+    description: `Chose ${codes.join(', ')}`,
+    metadata: { languages: codes },
   });
 
   const fresh = await reload(user.id);

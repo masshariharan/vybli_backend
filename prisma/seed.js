@@ -8,9 +8,13 @@ const prisma = createPrismaClient();
 /**
  * Reference data.
  *
- * Languages and cities are extracted from the Flutter app's own catalogues, so
- * the two agree on codes and ids from day one — a `city_id` of `chennai` means
- * the same row on both sides.
+ * Cities are extracted from the Flutter app's own catalogue, so the two agree
+ * on ids from day one — a `city_id` of `chennai` means the same row on both
+ * sides.
+ *
+ * Languages are not seeded and no longer can be. That catalogue is static, so
+ * it ships inside the app rather than in a table this has to keep in step; the
+ * server stores only the codes a profile was saved with.
  *
  * Idempotent throughout: every write is an upsert, so this can be re-run after
  * a migration without duplicating anything or clobbering live rows.
@@ -72,33 +76,6 @@ const VIP_PLANS = [
   { id: 'vip_3m', days: 90, priceInr: 1899, bonusInr: 520, sortOrder: 3 },
 ];
 
-async function seedLanguages() {
-  let index = 0;
-  for (const lang of seedData.langs) {
-    await prisma.language.upsert({
-      where: { code: lang.code },
-      create: {
-        code: lang.code,
-        name: lang.name,
-        nativeName: lang.nativeName,
-        isPopular: lang.isPopular,
-        // Lowercased so search can compare without a per-row transform.
-        aliases: lang.aliases.map((a) => a.toLowerCase()),
-        sortOrder: index,
-      },
-      update: {
-        name: lang.name,
-        nativeName: lang.nativeName,
-        isPopular: lang.isPopular,
-        aliases: lang.aliases.map((a) => a.toLowerCase()),
-        sortOrder: index,
-      },
-    });
-    index += 1;
-  }
-  return seedData.langs.length;
-}
-
 async function seedCities() {
   for (const city of seedData.cities) {
     await prisma.city.upsert({
@@ -146,9 +123,6 @@ async function seedVipPlans() {
 
 async function main() {
   console.info('[seed] starting');
-
-  const languages = await seedLanguages();
-  console.info(`[seed] ${languages} languages`);
 
   const cities = await seedCities();
   console.info(`[seed] ${cities} cities`);

@@ -62,9 +62,12 @@ function publicUser(user, { viewer = null, viewerProfile = null, favorited = fal
   const showPresence = isSelf || privacy.showOnlineStatus !== false;
   const showCity = isSelf || privacy.showCityOnProfile !== false;
 
-  const languages = (user.languages ?? [])
-    .map((l) => l.language?.name ?? l.name ?? null)
-    .filter(Boolean);
+  // Codes, not names. The catalogue lives in the client, which is the only
+  // party that renders a language, so it resolves `ta` to "Tamil" itself. This
+  // used to send the name off a joined `languages` row, which meant the client
+  // had to map back to codes before it could save — and silently dropped any
+  // language the two lists spelled differently.
+  const languages = languageCodes(user);
 
   return {
     id: user.id,
@@ -168,9 +171,7 @@ function userSummary(user) {
     city_name: showCity ? profile.city?.name ?? '' : '',
     state_name: showCity ? profile.city?.state ?? '' : '',
     country_name: showCity ? profile.city?.country ?? '' : '',
-    languages: (user.languages ?? [])
-      .map((l) => l.language?.name ?? l.name ?? null)
-      .filter(Boolean),
+    languages: languageCodes(user),
     bio: profile.bio ?? '',
     avatar_url: avatarCatalog.urlFor(profile.avatarId),
     status: showPresence ? profile.presence : 'offline',
@@ -204,15 +205,9 @@ function city(row, activeUsers = 0) {
   };
 }
 
-function language(row) {
-  if (!row) return null;
-  return {
-    code: row.code,
-    name: row.name,
-    native_name: row.nativeName,
-    is_popular: row.isPopular,
-    aliases: row.aliases ?? [],
-  };
+/** The language codes on a loaded user, whichever shape the row was loaded in. */
+function languageCodes(user) {
+  return (user.languages ?? []).map((l) => l.languageCode ?? l).filter(Boolean);
 }
 
 /** A predefined avatar catalog entry — not a database row, see `config/avatarCatalog`. */
@@ -509,7 +504,7 @@ module.exports = {
   myProfile,
   userSummary,
   city,
-  language,
+  languageCodes,
   avatar,
   message,
   chatThread,

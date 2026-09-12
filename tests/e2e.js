@@ -176,21 +176,13 @@ async function run() {
   // ── Reference data ────────────────────────────────────────────────────────
   section('Reference data');
 
+  // The language catalogue is the app's, not ours — it ships compiled into the
+  // Flutter build, so there is no endpoint to serve it and this asserts the
+  // absence rather than the contents.
   const langs = await get('/languages');
-  check('languages are served from the database', langs.data?.languages?.length >= 60, {
-    count: langs.data?.languages?.length,
+  check('the language catalogue is not served by the API', langs.status === 404, {
+    status: langs.status,
   });
-  check(
-    'popular languages are flagged for the picker',
-    langs.data?.popular?.length > 0
-  );
-
-  const search = await get('/languages?q=bangla');
-  check(
-    'searching an alias finds the language ("bangla" → Bengali)',
-    search.data?.languages?.[0]?.name === 'Bengali',
-    { got: search.data?.languages?.[0]?.name }
-  );
 
   const cities = await get('/cities');
   check('cities are served', cities.data?.cities?.length >= 20);
@@ -265,10 +257,24 @@ async function run() {
   await post('/onboarding/age', t, { age: 28 });
   await post('/onboarding/languages', t, { language_codes: ['en', 'hi'] });
 
-  const badLang = await post('/onboarding/languages', t, {
-    language_codes: ['en', 'klingon'],
+  // A code this server has never seen is a newer client's language, not a
+  // fault — there is no catalogue here to contradict it, and rejecting it would
+  // mean an app update could not add a language without a deploy.
+  const newCode = await post('/onboarding/languages', t, {
+    language_codes: ['en', 'tlh'],
   });
-  check('an unknown language is refused', !badLang.success, { error: badLang.error });
+  check('an unfamiliar but well-formed code is stored', newCode.success, {
+    error: newCode.error,
+  });
+
+  // Shape is still enforced: a display name where a code belongs is refused.
+  const badLang = await post('/onboarding/languages', t, {
+    language_codes: ['en', 'Klingon!'],
+  });
+  check('a malformed language code is refused', !badLang.success, { error: badLang.error });
+
+  // Put the account back to what the rest of this file expects.
+  await post('/onboarding/languages', t, { language_codes: ['en', 'hi'] });
 
   // Gender is male, so this also sets goal/isEarner to makeFriends — location
   // is the step that derives the role now; there is no separate mode step.

@@ -86,25 +86,6 @@ async function randomMatch(req, res) {
 
 // ── Reference data ──────────────────────────────────────────────────────────
 
-async function languages(req, res) {
-  const params = q(req);
-  const rows = await referenceService.searchLanguages({
-    q: params.q,
-    popularOnly: params.popular_only,
-  });
-  return ok(
-    res,
-    {
-      languages: rows.map(serialize.language),
-      // The client groups the picker into "Popular in India" and "All
-      // languages", so it is handed the split rather than deriving it.
-      popular: rows.filter((r) => r.isPopular).map(serialize.language),
-      total: rows.length,
-    },
-    'Languages'
-  );
-}
-
 async function cities(req, res) {
   const params = q(req);
   const rows = await referenceService.listCities({
@@ -210,4 +191,4 @@ async function nearestCity(req, res) {
   );
 }
 
-module.exports = { feed, randomMatch, languages, cities, avatars, nearestCity };
+module.exports = { feed, randomMatch, cities, avatars, nearestCity };

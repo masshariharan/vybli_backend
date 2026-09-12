@@ -3,65 +3,22 @@
 const prisma = require('../config/prisma');
 
 /**
- * Languages and cities.
+ * Cities and their live counts.
  *
- * Both are seeded tables rather than constants in the app, so adding a
- * language is a row insert instead of a store release. Neither is
- * user-writable.
+ * A seeded table rather than constants in the app, because a city carries a
+ * figure that has to be *counted* — how many earners are discoverable in it
+ * right now — and because the admin panel adds rows to it. Not user-writable.
+ *
+ * Languages used to live here too and no longer do. They are static reference
+ * data with no live figure attached, so the catalogue ships inside the Flutter
+ * app (`catalogue/languages.dart`) and nothing is fetched: the code is the
+ * identity, the client resolves the name. What is left here is the read of
+ * which codes one user has stored.
  */
-
-/**
- * Language search.
- *
- * Matches `aliases` as well as the name, which is what makes "Bangla" find
- * Bengali and "Oriya" find Odia. A language somebody cannot find by the name
- * they grew up with reads as a language the app does not support.
- *
- * Ranked: exact match, then prefix, then anything containing the term — so
- * typing "ta" offers Tamil before Marathi.
- */
-async function searchLanguages({ q, popularOnly = false } = {}) {
-  const where = {};
-  if (popularOnly) where.isPopular = true;
-
-  const term = q?.trim().toLowerCase();
-  if (term) {
-    where.OR = [
-      { name: { contains: term, mode: 'insensitive' } },
-      { nativeName: { contains: term, mode: 'insensitive' } },
-      { code: { equals: term, mode: 'insensitive' } },
-      { aliases: { hasSome: [term] } },
-    ];
-  }
-
-  const rows = await prisma.language.findMany({
-    where,
-    orderBy: [{ isPopular: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
-  });
-
-  if (!term) return rows;
-
-  // Aliases are stored lowercase, but a user typing "Bang" should still match
-  // "bangla" — so the containment pass happens here rather than in SQL.
-  const scored = rows.map((row) => {
-    const name = row.name.toLowerCase();
-    const aliases = (row.aliases ?? []).map((a) => a.toLowerCase());
-    let score = 3;
-    if (name === term || aliases.includes(term)) score = 0;
-    else if (name.startsWith(term) || aliases.some((a) => a.startsWith(term))) score = 1;
-    else if (name.includes(term) || aliases.some((a) => a.includes(term))) score = 2;
-    return { row, score };
-  });
-
-  return scored
-    .sort((a, b) => a.score - b.score || a.row.name.localeCompare(b.row.name))
-    .map((s) => s.row);
-}
 
 function getUserLanguages(userId) {
   return prisma.userLanguage.findMany({
     where: { userId },
-    include: { language: true },
     orderBy: { createdAt: 'asc' },
   });
 }
@@ -229,7 +186,6 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 module.exports = {
-  searchLanguages,
   getUserLanguages,
   listCities,
   getCity,

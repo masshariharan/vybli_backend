@@ -52,9 +52,41 @@ const name = z
 
 const bio = z.string().trim().max(160, 'Keep your bio under 160 characters');
 
+/**
+ * The language codes a profile is stored with.
+ *
+ * Shape only. There is no catalogue on this server to check a code against any
+ * more — it ships inside the app, which is the only party that renders a
+ * language — so a code this build has never seen is a newer client's language,
+ * not a fault. What is still worth refusing is junk: an unbounded string, or a
+ * display name where a code belongs.
+ *
+ * Lowercased on the way in so `TA` and `ta` cannot become two rows on the same
+ * profile, which the composite primary key would then reject outright.
+ */
 const languageCodes = z
-  .array(z.string().trim().min(1))
+  .array(
+    z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^[a-z][a-z0-9-]{1,11}$/, 'That is not a language code')
+  )
   .min(1, 'Pick at least one language')
+  .max(20, 'That is more languages than we can match on');
+
+/**
+ * The same codes as a discovery *filter*, where empty is meaningful: it reads
+ * as "any language" rather than as a profile that speaks none.
+ */
+const languageCodeFilter = z
+  .array(
+    z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^[a-z][a-z0-9-]{1,11}$/, 'That is not a language code')
+  )
   .max(20, 'That is more languages than we can match on');
 
 /**
@@ -87,6 +119,7 @@ module.exports = {
   name,
   bio,
   languageCodes,
+  languageCodeFilter,
   pagination,
   toSkipTake,
 };

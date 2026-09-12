@@ -13,6 +13,7 @@ const {
   name,
   bio,
   languageCodes,
+  languageCodeFilter,
   pagination,
 } = require('./common');
 
@@ -137,7 +138,7 @@ const settings = {
     .object({
       min_age: z.coerce.number().int().min(18).max(80).optional(),
       max_age: z.coerce.number().int().min(18).max(80).optional(),
-      languages: z.array(z.string().trim()).optional(),
+      languages: languageCodeFilter.optional(),
       voice_calls: z.boolean().optional(),
       video_calls: z.boolean().optional(),
     })
@@ -148,17 +149,12 @@ const settings = {
     }),
 };
 
-// ── Languages & cities ──────────────────────────────────────────────────────
+// ── Cities & languages ──────────────────────────────────────────────────────
+//
+// No language *query* here: the catalogue is not served any more, so there is
+// nothing to search. What remains is the write — which codes a profile speaks.
 
 const reference = {
-  languageQuery: z.object({
-    q: z.string().trim().max(60).optional(),
-    popular_only: z
-      .enum(['true', 'false'])
-      .transform((v) => v === 'true')
-      .optional(),
-  }),
-
   /// A coordinate to resolve. Coerced because it arrives as a query string.
   ///
   /// Both optional: omitting them asks the server to work it out from the
@@ -193,7 +189,6 @@ const reference = {
   }),
 
   setLanguages: z.object({ language_codes: languageCodes }),
-  languageParam: z.object({ code: z.string().trim().min(1) }),
 
   avatarQuery: z.object({
     gender: z.enum(['male', 'female']).optional(),
@@ -213,7 +208,8 @@ const discovery = {
     max_age: z.coerce.number().int().min(18).max(80).optional(),
     languages: z
       .string()
-      .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean))
+      .transform((v) => v.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean))
+      .pipe(languageCodeFilter)
       .optional(),
     online_only: z
       .enum(['true', 'false'])

@@ -297,7 +297,7 @@ async function verificationFeed({ status, userId, skip = 0, take = 25 }) {
   const [rows, total] = await Promise.all([
     prisma.userProfile.findMany({
       where,
-      include: { user: { include: { languages: { include: { language: true } } } }, city: true },
+      include: { user: { include: { languages: true } }, city: true },
       // Oldest request first: this is a queue, and the person who has been
       // waiting longest should be at the top of it.
       orderBy: [{ verificationStatus: 'asc' }, { verificationRequestedAt: 'asc' }],
@@ -735,52 +735,10 @@ async function adjustWallet(userId, { balance = 0, rupees = 0, reason, reviewer 
 
 // ── Catalogue ───────────────────────────────────────────────────────────────
 
-async function languages({ search, includeInactive = true } = {}) {
-  const where = {};
-  if (!includeInactive) where.isActive = true;
-  if (search) {
-    where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { nativeName: { contains: search, mode: 'insensitive' } },
-      { code: { contains: search, mode: 'insensitive' } },
-    ];
-  }
-
-  const rows = await prisma.language.findMany({
-    where,
-    include: { _count: { select: { users: true } } },
-    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-  });
-
-  return rows.map((l) => ({
-    code: l.code,
-    name: l.name,
-    native_name: l.nativeName,
-    is_popular: l.isPopular,
-    is_active: l.isActive,
-    sort_order: l.sortOrder,
-    aliases: l.aliases,
-    user_count: l._count.users,
-  }));
-}
-
-async function upsertLanguage({ code, name, nativeName, isPopular, isActive, sortOrder }) {
-  if (!code?.trim() || !name?.trim()) {
-    throw errors.badRequest('A language needs a code and a name.');
-  }
-  const data = {
-    name: name.trim(),
-    nativeName: (nativeName || name).trim(),
-    isPopular: Boolean(isPopular),
-    isActive: isActive !== false,
-    sortOrder: Number(sortOrder) || 0,
-  };
-  return prisma.language.upsert({
-    where: { code: code.trim() },
-    create: { code: code.trim(), ...data },
-    update: data,
-  });
-}
+// Languages are not here. The catalogue is static reference data the mobile
+// app compiles in (`catalogue/languages.dart`), so there is no table to list
+// and nothing to edit — an "Add language" button that shipped a language no
+// installed app could render was never the affordance it looked like.
 
 async function cities({ search, includeInactive = true } = {}) {
   const where = {};
@@ -946,8 +904,6 @@ module.exports = {
   transactionFeed,
   earningFeed,
   adjustWallet,
-  languages,
-  upsertLanguage,
   cities,
   upsertCity,
   notificationFeed,

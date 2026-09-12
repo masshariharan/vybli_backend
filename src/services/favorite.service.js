@@ -89,7 +89,7 @@ async function listFavorites(userId, { skip, take }) {
           include: {
             profile: { include: { city: true } },
             privacySettings: true,
-            languages: { include: { language: true } },
+            languages: true,
           },
         },
       },

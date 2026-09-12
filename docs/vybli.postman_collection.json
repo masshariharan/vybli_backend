@@ -104,43 +104,6 @@
       "description": "Public — the onboarding screens need these before anyone is signed in.",
       "item": [
         {
-          "name": "Languages",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{base_url}}/languages",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "languages"
-              ]
-            }
-          }
-        },
-        {
-          "name": "Languages — alias search",
-          "description": "\"bangla\" must find Bengali. A language you cannot find by the name you grew up with reads as one the app does not have.",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{base_url}}/languages?q=bangla",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "languages"
-              ],
-              "query": [
-                {
-                  "key": "q",
-                  "value": "bangla"
-                }
-              ]
-            }
-          }
-        },
-        {
           "name": "Cities",
           "request": {
             "method": "GET",

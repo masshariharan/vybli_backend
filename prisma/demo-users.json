@@ -6,8 +6,8 @@
     "gender": "male",
     "cityId": "chennai",
     "languages": [
-      "English",
-      "Tamil"
+      "en",
+      "ta"
     ],
     "bio": "Love meeting new people. Cricket, filter coffee and long talks.",
     "presence": "online",
@@ -33,9 +33,9 @@
     "gender": "female",
     "cityId": "chennai",
     "languages": [
-      "Tamil",
-      "English",
-      "Malayalam"
+      "ta",
+      "en",
+      "ml"
     ],
     "bio": "Bharatanatyam dancer. Ask me for the best food spots in the city.",
     "presence": "online",
@@ -61,9 +61,9 @@
     "gender": "male",
     "cityId": "chennai",
     "languages": [
-      "Tamil",
-      "English",
-      "Hindi"
+      "ta",
+      "en",
+      "hi"
     ],
     "bio": "Startup guy by day, guitarist by night.",
     "presence": "busy",
@@ -88,9 +88,9 @@
     "gender": "female",
     "cityId": "chennai",
     "languages": [
-      "Tamil",
-      "Telugu",
-      "English"
+      "ta",
+      "te",
+      "en"
     ],
     "bio": "New here! Looking for genuine friendships and good conversations.",
     "presence": "offline",
@@ -115,9 +115,9 @@
     "gender": "female",
     "cityId": "bangalore",
     "languages": [
-      "Kannada",
-      "English",
-      "Hindi"
+      "kn",
+      "en",
+      "hi"
     ],
     "bio": "Product designer. Trekking every other weekend.",
     "presence": "online",
@@ -143,9 +143,9 @@
     "gender": "male",
     "cityId": "bangalore",
     "languages": [
-      "English",
-      "Hindi",
-      "Kannada"
+      "en",
+      "hi",
+      "kn"
     ],
     "bio": "Football, F1 and everything tech. Always up for a chat.",
     "presence": "online",
@@ -171,9 +171,9 @@
     "gender": "female",
     "cityId": "bangalore",
     "languages": [
-      "English",
-      "Urdu",
-      "Hindi"
+      "en",
+      "ur",
+      "hi"
     ],
     "bio": "Med student. Tell me your weirdest travel story.",
     "presence": "offline",
@@ -199,9 +199,9 @@
     "gender": "female",
     "cityId": "hyderabad",
     "languages": [
-      "Telugu",
-      "Hindi",
-      "English"
+      "te",
+      "hi",
+      "en"
     ],
     "bio": "Biryani expert. Will happily argue about which place is best.",
     "presence": "online",
@@ -227,8 +227,8 @@
     "gender": "male",
     "cityId": "hyderabad",
     "languages": [
-      "Telugu",
-      "English"
+      "te",
+      "en"
     ],
     "bio": "Photographer. Golden hour is the only hour.",
     "presence": "busy",
@@ -253,9 +253,9 @@
     "gender": "female",
     "cityId": "hyderabad",
     "languages": [
-      "Hindi",
-      "Telugu",
-      "English"
+      "hi",
+      "te",
+      "en"
     ],
     "bio": "Just joined Vybli — say hi!",
     "presence": "online",
@@ -280,9 +280,9 @@
     "gender": "female",
     "cityId": "mumbai",
     "languages": [
-      "English",
-      "Hindi",
-      "Marathi"
+      "en",
+      "hi",
+      "mr"
     ],
     "bio": "Stand-up comic. I promise at least one bad pun per call.",
     "presence": "online",
@@ -308,9 +308,9 @@
     "gender": "male",
     "cityId": "mumbai",
     "languages": [
-      "Hindi",
-      "English",
-      "Gujarati"
+      "hi",
+      "en",
+      "gu"
     ],
     "bio": "Local train survivor. Foodie. Cricket fanatic.",
     "presence": "offline",
@@ -335,9 +335,9 @@
     "gender": "female",
     "cityId": "mumbai",
     "languages": [
-      "English",
-      "Hindi",
-      "Bengali"
+      "en",
+      "hi",
+      "bn"
     ],
     "bio": "Marine drive walks and endless playlists.",
     "presence": "online",
@@ -362,9 +362,9 @@
     "gender": "male",
     "cityId": "delhi",
     "languages": [
-      "Hindi",
-      "English",
-      "Punjabi"
+      "hi",
+      "en",
+      "pa"
     ],
     "bio": "History nerd. Ask me about anything in Old Delhi.",
     "presence": "online",
@@ -389,9 +389,9 @@
     "gender": "female",
     "cityId": "delhi",
     "languages": [
-      "Punjabi",
-      "Hindi",
-      "English"
+      "pa",
+      "hi",
+      "en"
     ],
     "bio": "Fashion student. Big fan of chai, bigger fan of gossip.",
     "presence": "busy",
@@ -416,8 +416,8 @@
     "gender": "male",
     "cityId": "delhi",
     "languages": [
-      "Hindi",
-      "English"
+      "hi",
+      "en"
     ],
     "bio": "Runner. Currently training for my third half marathon.",
     "presence": "offline",
@@ -442,8 +442,8 @@
     "gender": "male",
     "cityId": "coimbatore",
     "languages": [
-      "Tamil",
-      "English"
+      "ta",
+      "en"
     ],
     "bio": "Textile business. Weekend biker on the Ooty road.",
     "presence": "online",
@@ -468,9 +468,9 @@
     "gender": "female",
     "cityId": "coimbatore",
     "languages": [
-      "Tamil",
-      "English",
-      "Malayalam"
+      "ta",
+      "en",
+      "ml"
     ],
     "bio": "Engineering final year. Loves rain and old Ilaiyaraaja songs.",
     "presence": "online",
@@ -495,7 +495,7 @@
     "gender": "male",
     "cityId": "madurai",
     "languages": [
-      "Tamil"
+      "ta"
     ],
     "bio": "Jigarthanda and temple town stories.",
     "presence": "offline",
@@ -520,8 +520,8 @@
     "gender": "female",
     "cityId": "madurai",
     "languages": [
-      "Tamil",
-      "English"
+      "ta",
+      "en"
     ],
     "bio": "Teacher. I collect postcards from everyone I talk to.",
     "presence": "online",
@@ -546,9 +546,9 @@
     "gender": "male",
     "cityId": "kochi",
     "languages": [
-      "Malayalam",
-      "English",
-      "Tamil"
+      "ml",
+      "en",
+      "ta"
     ],
     "bio": "Backwaters, boat rides and beef fry. In that order.",
     "presence": "online",
@@ -573,9 +573,9 @@
     "gender": "female",
     "cityId": "kochi",
     "languages": [
-      "Malayalam",
-      "English",
-      "Hindi"
+      "ml",
+      "en",
+      "hi"
     ],
     "bio": "Architect. Sketching cities one call at a time.",
     "presence": "busy",

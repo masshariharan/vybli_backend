@@ -152,14 +152,12 @@ auth.delete(
 router.use('/auth', auth);
 
 // ── Reference data ──────────────────────────────────────────────────────────
-// Public: the app needs the language and city lists on the onboarding screens,
-// before anyone is signed in.
+// Public: the app needs the city list on the onboarding screens, before anyone
+// is signed in.
+//
+// There is no `/languages` here. That catalogue is static, so it ships inside
+// the app instead of being fetched — see `models/UserLanguage` in the schema.
 
-router.get(
-  '/languages',
-  validate({ query: S.reference.languageQuery }),
-  h(discoveryController.languages)
-);
 router.get(
   '/cities',
   validate({ query: S.reference.cityQuery }),

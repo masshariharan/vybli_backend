@@ -28,7 +28,7 @@ const { emitToUser } = require('../../sockets/bus');
 
 const PROFILE_INCLUDE = {
   profile: { include: { city: true } },
-  languages: { include: { language: true } },
+  languages: true,
 };
 
 /** Trimmed to what a table row renders, so a page of 50 is not a page of 50 profiles. */
@@ -42,7 +42,10 @@ function summarise(user) {
     gender: p?.gender ?? null,
     age: p?.age ?? null,
     city: p?.city ? { id: p.city.id, name: p.city.name, state: p.city.state } : null,
-    languages: (user.languages ?? []).map((l) => l.language.name),
+    // Codes. The catalogue that turned these into names lived in this
+    // database and does not any more — it belongs to the mobile client, which
+    // is the only place a language is rendered to somebody who speaks it.
+    languages: (user.languages ?? []).map((l) => l.languageCode),
     goal: p?.goal ?? null,
     is_earner: p?.isEarner ?? false,
     is_verified: p?.isVerified ?? false,
