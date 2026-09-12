@@ -226,6 +226,26 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
     throw errors.badRequest('Write a message or attach something');
   }
 
+  // A retry of a send that already landed. The first attempt wrote the row and
+  // may have died on the way back, so the client has no way to know — it can
+  // only send again with the same id, and this is what makes that safe.
+  // Returning the original rather than inserting a second copy also means the
+  // recipient is not re-notified for a message they already have.
+  if (clientId) {
+    const already = await prisma.message.findUnique({
+      where: { senderId_clientId: { senderId: user.id, clientId } },
+    });
+    if (already) {
+      return {
+        message: already,
+        conversation: await prisma.conversation.findUnique({
+          where: { id: conversationId },
+          include: CONVERSATION_INCLUDE,
+        }),
+      };
+    }
+  }
+
   const now = new Date();
 
   const [message, updatedConversation] = await prisma.$transaction([
@@ -233,6 +253,7 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
       data: {
         conversationId,
         senderId: user.id,
+        clientId: clientId ?? null,
         text: trimmed,
         status: 'sent',
         attachmentKind: attachment?.kind ?? null,
@@ -269,15 +290,30 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
   });
 
   // A muted thread still delivers; it just does not shout.
+  //
+  // **Not awaited.** The message is already written and already on its way to
+  // the other device — the emits above are what deliver it. `notify` is three
+  // more round trips after that: the recipient's notification settings, a row
+  // insert, and a recount of their unread badge. Holding the sender's request
+  // open for all three is most of the wait between tapping send and the bubble
+  // settling, and it bought nothing: the recipient has the message either way.
+  //
+  // Worse, a throw in there used to fail the *send*. The message was committed
+  // and delivered, and the sender was told "Not sent · Tap to retry" — so a
+  // retry sent it a second time, and the recipient got it twice.
   const muted = side.isA ? updatedConversation.mutedByB : updatedConversation.mutedByA;
   if (!muted) {
-    await notificationService.notify({
-      userId: side.peerId,
-      kind: 'message',
-      title: user.profile?.name ?? 'New message',
-      body: trimmed || attachment?.title || 'Sent an attachment',
-      data: { conversation_id: conversationId, user_id: user.id },
-    });
+    notificationService
+      .notify({
+        userId: side.peerId,
+        kind: 'message',
+        title: user.profile?.name ?? 'New message',
+        body: trimmed || attachment?.title || 'Sent an attachment',
+        data: { conversation_id: conversationId, user_id: user.id },
+      })
+      .catch((err) =>
+        console.error(`[chat] notify failed for message ${message.id}`, err)
+      );
   }
 
   // The sender's side only. A "message received" row on the recipient would

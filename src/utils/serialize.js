@@ -44,17 +44,29 @@ function isNewAccount(createdAt) {
  * favorited them.
  */
 /**
- * `viewerProfile` decides whose rate `voice_rate_per_minute` reports. A call
- * is priced at the *earner's* rate regardless of who initiates it — so a
- * female viewer looking at a male's card needs to see what *she* earns per
- * minute if she calls him, not his own (unused) field, which is never the
- * number either side is actually charged.
+ * `viewerProfile` decides whether there is a rate to report at all.
+ *
+ * A rate exists to tell somebody what a call will cost them, and only one side
+ * of a call is ever charged: the non-earner. So an earner is sent **zero** for
+ * both rates, on every card she looks at — there is no number that is true for
+ * her, because she is never billed for a call, a video call or a message.
+ *
+ * It used to answer an earner with her *own* rates, reasoning that a call is
+ * priced at the earner's rate whoever dials. That is true of the billing and
+ * wrong on the screen: it put "₹12/min · ₹20/min" on the profile of a man she
+ * would never pay anything to call, which reads as a price she is about to be
+ * charged.
+ *
+ * Enforced here rather than hidden in the app, so a client cannot show a
+ * number the server never sanctioned, and so every surface — profile, feed,
+ * chat header — gets the same answer without each having to remember the rule.
  */
 function publicUser(user, { viewer = null, viewerProfile = null, favorited = false } = {}) {
   if (!user) return null;
   const profile = user.profile ?? user;
   const privacy = user.privacySettings ?? {};
-  const rateOwner = viewerProfile?.isEarner ? viewerProfile : profile;
+  // Nothing to charge an earner, so nothing to quote her.
+  const viewerPays = !viewerProfile?.isEarner;
 
   // A viewer always sees their own detail in full, whatever they have hidden
   // from everyone else.
@@ -104,8 +116,12 @@ function publicUser(user, { viewer = null, viewerProfile = null, favorited = fal
 
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
-    voice_rate_per_minute: money(rateOwner.voiceRatePerMinute),
-    video_rate_per_minute: money(rateOwner.videoRatePerMinute),
+    // Both halves of the same rule: nothing to quote unless the viewer is the
+    // one who pays *and* the person they are looking at is the one who earns.
+    voice_rate_per_minute:
+      viewerPays && profile.isEarner ? money(profile.voiceRatePerMinute) : 0,
+    video_rate_per_minute:
+      viewerPays && profile.isEarner ? money(profile.videoRatePerMinute) : 0,
 
     joined_label: joinedLabel(user.createdAt),
   };
@@ -180,8 +196,15 @@ function userSummary(user) {
     video_enabled: profile.videoEnabled ?? true,
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
-    voice_rate_per_minute: money(profile.voiceRatePerMinute),
-    video_rate_per_minute: money(profile.videoRatePerMinute),
+    // Only an earner has a rate worth quoting. A non-earner is never paid for
+    // a call, so their rate columns are meaningless — and a chat header that
+    // printed them put "₹12/min · ₹20/min" over a man the viewer would pay
+    // nothing to call, on the one screen where an earner should see no price
+    // at all. There is no viewer to consult here, and none is needed: a call
+    // always pairs an earner with a non-earner, so a peer who is not an earner
+    // means the viewer is, and the viewer is not being charged.
+    voice_rate_per_minute: profile.isEarner ? money(profile.voiceRatePerMinute) : 0,
+    video_rate_per_minute: profile.isEarner ? money(profile.videoRatePerMinute) : 0,
   };
 }
 

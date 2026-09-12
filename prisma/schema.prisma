@@ -569,6 +569,19 @@ model Message {
   attachmentUrl      String?
   attachmentDuration String?
 
+  /// The sender's own id for this message, for exactly-once delivery.
+  ///
+  /// A send that times out has told the client nothing about whether it
+  /// landed: the request may have died on the way out, or on the way back
+  /// with the row already written. Retrying is the only thing the client can
+  /// do, and without this it wrote a second copy — so a flaky connection
+  /// turned one message into two, on the recipient's screen, permanently.
+  ///
+  /// Unique per sender, so a retry finds the first attempt and returns it
+  /// instead of inserting again. Nullable because it only exists going
+  /// forward; nothing backfills the messages already sent.
+  clientId String?
+
   readAt    DateTime?
   deletedAt DateTime?
   createdAt DateTime  @default(now())
@@ -576,6 +589,9 @@ model Message {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
+  // Scoped to the sender rather than global: the id is generated on a device,
+  // so two accounts can pick the same one and neither should shadow the other.
+  @@unique([senderId, clientId])
   // Paging a thread is always "newest first within this conversation".
   @@index([conversationId, createdAt])
   @@index([senderId])
