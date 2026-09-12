@@ -200,8 +200,12 @@ protection:
   rather than a check that could be raced.
 * Errors we did not raise deliberately become a generic 500. Raw messages leak
   table names and query fragments.
-* Production refuses to boot with `OTP_DEV_MODE=true`, matching JWT secrets, or
-  `CORS_ORIGIN=*`.
+* The server refuses to boot — always, not only "in production" — on matching
+  JWT secrets, a placeholder secret, an unconfigured or `ws://` LiveKit, a
+  missing admin credential, or an admin secret equal to the user one.
+  `CORS_ORIGIN=*` and an unset `PAYMENT_PROVIDER` warn rather than stop it.
+  `OTP_DEV_MODE` and `PAYMENT_PROVIDER` are deliberately yours to set: nothing
+  overrides them by environment, so nothing quietly disagrees with the file.
 
 ---
 
@@ -258,9 +262,10 @@ docker run -d --name vybli-backend -p 4000:4000 \
 
 Secrets are never baked into the image — `.env` is excluded by
 `.dockerignore` on purpose — so every value above is supplied at `docker run`
-time, the same way any orchestrator's secret store would inject them. `NODE_ENV=production`
-turns on every guard in `config/env.js`; the container refuses to boot if any
-of the above are missing, a placeholder, or otherwise unsafe (see
+time, the same way any orchestrator's secret store would inject them. Every
+guard in `config/env.js` is on unconditionally — there is no `NODE_ENV` that
+turns them on or relaxes them — so the container refuses to boot if any of the
+above are missing, a placeholder, or otherwise unsafe (see
 [Security](#security)).
 
 `vybli-backend`, the image above, never carries the Prisma CLI — it lives in
@@ -291,7 +296,7 @@ Honest about what is stubbed, and where the seam is:
 | Area | State | Seam |
 | --- | --- | --- |
 | SMS | Codes logged; returned in dev | `deliver()` in `otp.service.js` |
-| Payments | No provider. `PAYMENT_PROVIDER=none` credits directly in development and **refuses in production** | `purchase()` in `wallet.service.js` |
+| Payments | `PAYMENT_PROVIDER=none` credits the wallet directly with **no payment taken**, wherever it runs — set a real provider before strangers can reach it | `purchase()` in `wallet.service.js` |
 | Payouts | Recorded `pending`, never settled | `withdraw()` in `wallet.service.js` |
 | Media | URLs stored, nothing uploaded | Attachment fields on `Message` |
 | WebRTC | Signalling relayed; no TURN | `call:signal` handler |

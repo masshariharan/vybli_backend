@@ -115,8 +115,11 @@ business, not a question to ask someone who wants to get in.
 { "dial_code": "+91", "phone": "9876543210" }
 → { "expires_at": "…", "is_existing_user": false, "dev_code": "418302" }
 ```
-`dev_code` is returned only when `OTP_DEV_MODE=true`; production refuses to
-boot with it on.
+`dev_code` is returned only when `OTP_DEV_MODE=true`. That is a plain flag you
+control, respected wherever this runs — there is no environment that overrides
+it and none that refuses to start because of it. Turn it off before the OTP
+sign-in path is reachable by anyone you do not trust; the shipped app signs in
+through Firebase and never touches this endpoint.
 
 **POST `/auth/otp/verify`**
 ```jsonc
@@ -429,11 +432,13 @@ scheduler is required. `Earning.callId` is unique — the constraint *is* the
 duplicate-payment guard.
 
 `POST /wallet/purchase` depends on `PAYMENT_PROVIDER`. With `none` — no payment
-service provider wired in — it credits the wallet directly on a development
-machine, labelling the ledger row "no payment taken", and answers
-`503 PAYMENTS_UNAVAILABLE` anywhere else. Production cannot run with `none` at
-all; the server refuses to boot, because the endpoint would otherwise be an
-authenticated way to get coins for free.
+service provider wired in — with `PAYMENT_PROVIDER=none` it credits the wallet
+directly, labelling the ledger row "no payment taken". That is the behaviour
+wherever it runs: the flag is respected as written and nothing overrides it by
+environment. Until a real provider is set, this endpoint is an authenticated
+way to get coins for free, so set one before anyone you do not trust can reach
+it. With a provider configured but its verification failing, the answer is
+`503 PAYMENTS_UNAVAILABLE`.
 
 ---
 
@@ -669,7 +674,7 @@ Honest about what is stubbed, and where the seam is:
 | Area | State | Seam |
 | --- | --- | --- |
 | SMS | Codes logged, returned in dev | `deliver()` in `otp.service.js` |
-| Payments | No provider. `PAYMENT_PROVIDER=none` credits directly in development and **refuses in production** | `purchase()` in `wallet.service.js` |
+| Payments | `PAYMENT_PROVIDER=none` credits the wallet directly with **no payment taken**, wherever it runs — set a real provider before strangers can reach it | `purchase()` in `wallet.service.js` |
 | Payouts | Recorded `pending`, never settled | `withdraw()` in `wallet.service.js` |
 | Attachments | URLs stored, nothing uploaded | Attachment fields on `Message` |
 | Push | In-app only; nothing wakes a closed app | Needs FCM / APNs |

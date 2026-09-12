@@ -437,14 +437,35 @@ async function run() {
     earnerFeed.data?.items?.every((u) => u.is_earner === false)
   );
 
-  // The price on a card is what the *viewer* earns per minute if she calls
-  // that person, not a field on the card's own (non-earner) profile — Arjun
-  // has no real rate of his own, so his card must carry Meera's.
+  // A card carries a price only when the viewer is the one who pays *and* the
+  // person on it is the one who earns. Meera is an earner, so neither half
+  // holds on her own feed and every card on it quotes zero.
+  //
+  // Zero is the contract, not a missing value: the app reads it as "nothing to
+  // charge you" and renders the call button with no price at all
+  // (`CallActionButton`, `showPrice = ratePerMinute > 0`). Quoting Meera's own
+  // rate here — what this used to assert — would put "₹25/min" on a button that
+  // costs her nothing, on the one screen where an earner should see no price.
+  // Her own rate reaches her through `/me`, which has no viewer to discount
+  // against and returns it in full.
   const callerCard = earnerFeed.data.items.find((u) => u.id === caller.id);
   check(
-    'a non-earner\'s card on an earner\'s feed shows her own rate',
-    callerCard?.voice_rate_per_minute === MEERA_RATE,
-    { got: callerCard?.voice_rate_per_minute, expected: MEERA_RATE }
+    'an earner is quoted no price on the cards in her own feed',
+    callerCard?.voice_rate_per_minute === 0 &&
+      callerCard?.video_rate_per_minute === 0,
+    {
+      voice: callerCard?.voice_rate_per_minute,
+      video: callerCard?.video_rate_per_minute,
+    }
+  );
+
+  // The other half of that rule, so the two cannot drift apart: the same
+  // account reading her own profile still sees the rate she earns.
+  const meeraSelf = await get('/me', earner.token);
+  check(
+    'but she still sees her own rate on her own profile',
+    meeraSelf.data?.user?.voice_rate_per_minute === MEERA_RATE,
+    { got: meeraSelf.data?.user?.voice_rate_per_minute, expected: MEERA_RATE }
   );
 
   // ── Friend requests ───────────────────────────────────────────────────────
