@@ -5,18 +5,25 @@ const { createPrismaClient } = require('../src/config/prismaClient');
 const prisma = createPrismaClient();
 
 /**
- * Reference data.
+ * The rows the product cannot sell anything without.
  *
- * What is left is what the server genuinely owns: what a recharge costs and
- * what a VIP plan buys. Both are priced here so a change is a row update
- * rather than a release.
+ * What the server genuinely owns: what a recharge costs and what a VIP plan
+ * buys. Nothing else writes these two tables — there is no admin endpoint and
+ * no panel screen for them — so the constants below are the single definition
+ * of those prices, and this file is the only way they reach Postgres.
  *
- * Neither catalogue is seeded any more, and neither can be. Cities and
- * languages are both static reference data that ships inside the Flutter app,
- * so there is no table here to keep in step with it — the server stores only
- * the id and the codes a profile was saved with. That is also what makes this
- * script optional rather than load-bearing: an unseeded database no longer
- * produces an app that cannot get past onboarding.
+ * **Run automatically, on every boot**, by `docker-entrypoint.sh`, right after
+ * the migrations. Every write is an upsert keyed on a fixed id, so re-running
+ * converges the database onto whatever the deployed image declares: correct on
+ * a fresh environment and on an existing one alike, and safe to run twice.
+ * It used to be a manual `npm run seed`, which is the step that gets
+ * forgotten — the deployed database was never seeded, so the wallet had
+ * nothing to offer and the recharge screen had nothing to show.
+ *
+ * Neither catalogue is here, and neither can be. Cities and languages are
+ * static reference data that ships inside the Flutter app, so there is no
+ * table to keep in step with it — the server stores only the id and the codes
+ * a profile was saved with.
  *
  * Idempotent throughout: every write is an upsert, so this can be re-run after
  * a migration without duplicating anything or clobbering live rows.

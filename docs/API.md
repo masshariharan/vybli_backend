@@ -647,6 +647,10 @@ npm install
 npx prisma migrate deploy
 npm run seed              # 5 coin packages, VIP plans (no catalogues — see above)
 npm run dev
+
+# Deployed, the first two are automatic: `docker-entrypoint.sh` migrates and
+# seeds on every boot, so a fresh environment is never born with an empty
+# price list. Only a local `npm run dev` needs them typed out.
 ```
 
 Tests need the server running:

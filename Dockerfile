@@ -14,24 +14,27 @@
 #              image lean; see the note above `RUN npm ci` below for why a
 #              copy-then-prune approach does not.
 #
-#   `runtime`  The long-running server process, plus the one thing it must
-#              run before it dares to: `npx prisma migrate deploy`. No build
-#              tools, no test suite, no `.env` — but the Prisma CLI and the
-#              migrations directory ARE here, on purpose (see the entrypoint
-#              at the bottom of this file for why).
+#   `runtime`  The long-running server process, plus the two things it runs
+#              before it dares to start: `npx prisma migrate deploy`, and the
+#              seed that puts the recharge packages and VIP plans in place. No
+#              build tools, no test suite, no `.env` — but the Prisma CLI, the
+#              migrations directory and `prisma/seed.js` ARE here, on purpose
+#              (see the entrypoint at the bottom of this file for why).
 #
-# Migrations used to be a separate, manual step — build the `build` stage on
-# its own and run `npx prisma migrate deploy` against it once per release,
-# before traffic reached the new containers. In practice that manual step is
-# the one that gets forgotten: a fresh database wired up and deployed against
-# with nobody having run it first crashes on the very first query, and by
-# design there was no way to run it externally either — Railway's own
-# `DATABASE_URL` points at a private, in-network hostname
-# (`postgres.railway.internal`) that a local machine cannot reach at all. The
-# container itself, running inside that same network, can — so it does, every
-# time it starts, before `node src/server.js` ever runs. `migrate deploy` is
-# idempotent: a boot with nothing pending is a no-op measured in
-# milliseconds.
+# Migrations and seeding used to be separate, manual steps — build the `build`
+# stage on its own and run them against it once per release, before traffic
+# reached the new containers. In practice a manual step is the one that gets
+# forgotten: a fresh database wired up and deployed against with nobody having
+# run the migrations first crashes on the very first query, and one deployed
+# without the seed serves a wallet with nothing to sell. By design there was no
+# way to run either externally, either — Railway's own `DATABASE_URL` points at
+# a private, in-network hostname (`postgres.railway.internal`) that a local
+# machine cannot reach at all. The container itself, running inside that same
+# network, can — so it does, every time it starts, before `node src/server.js`
+# ever runs. Both are idempotent: a boot with nothing pending is a no-op
+# measured in milliseconds. The entrypoint treats them differently in exactly
+# one way — a failed migration stops the boot, a failed seed does not — and
+# says why.
 
 ARG NODE_VERSION=22-bookworm-slim
 

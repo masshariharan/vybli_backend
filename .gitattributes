@@ -1,0 +1,14 @@
+# Line endings for the files Linux executes.
+#
+# This repository is worked on from Windows, where Git's `core.autocrlf`
+# rewrites checkouts to CRLF. That is harmless for JavaScript, and fatal for a
+# shell script the container runs as its entrypoint: a `#!/bin/sh\r` shebang is
+# a path with a carriage return in it, and Docker answers
+# `/bin/sh^M: bad interpreter: No such file or directory` — at boot, on the
+# deployed image, with nothing else to go on.
+#
+# Same family as the `chmod +x` in the Dockerfile, which exists because the
+# executable bit does not survive a Windows checkout either.
+*.sh text eol=lf
+Dockerfile text eol=lf
+docker-entrypoint.sh text eol=lf
