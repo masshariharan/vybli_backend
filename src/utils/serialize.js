@@ -113,6 +113,8 @@ function publicUser(user, { viewer = null, viewerProfile = null, favorited = fal
 
     voice_enabled: profile.voiceEnabled ?? true,
     video_enabled: profile.videoEnabled ?? true,
+    // See the note on the same field in `userSummary`.
+    accepts_messages: privacy.allowMessages !== false,
 
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
@@ -194,6 +196,17 @@ function userSummary(user) {
     is_earner: profile.isEarner ?? false,
     voice_enabled: profile.voiceEnabled ?? true,
     video_enabled: profile.videoEnabled ?? true,
+
+    // Whether this person takes messages at all.
+    //
+    // Sent so the composer can be closed *before* somebody writes into it. It
+    // used to be discoverable only by sending: the message was typed, sent,
+    // refused, and offered back as "Tap to retry" — a retry that could not
+    // ever succeed, because nothing about the refusal was going to change by
+    // trying again. This is the same switch `assertCanMessage` enforces, so
+    // the screen and the server cannot disagree about it.
+    accepts_messages: (user.privacySettings?.allowMessages ?? true) !== false,
+
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
     // Only an earner has a rate worth quoting. A non-earner is never paid for
