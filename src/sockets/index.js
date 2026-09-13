@@ -125,19 +125,39 @@ async function handleConnect(io, socket) {
   // *disconnect* of the socket it had just replaced.
   await profileService.setPresence(userId, 'online');
 
-  const [unread, activeCall] = await Promise.all([
-    chatService.unreadSummary(socket.user),
-    callService.getActive(userId),
-  ]);
+  // Everything below is a convenience; the `connected` event itself is not.
+  //
+  // The client treats that event as the moment it may believe presence again
+  // — until it arrives, it renders every account as offline, because a device
+  // that cannot hear the server cannot honestly claim to know who is online.
+  // So a transient failure reading an unread count or a stale call row must
+  // not withhold it: the connection is real either way, and swallowing the
+  // event over an unread badge left a perfectly connected phone insisting
+  // that nobody was online.
+  let unread = { total: 0 };
+  let activeCall = null;
+  try {
+    [unread, activeCall] = await Promise.all([
+      chatService.unreadSummary(socket.user),
+      callService.getActive(userId),
+    ]);
+  } catch (err) {
+    console.error('[socket] could not read the backlog for', userId, err.message);
+  }
 
-  socket.emit('connected', {
-    user_id: userId,
-    unread,
-    // A client that restarted mid-call rejoins it instead of losing it — with
-    // fresh media credentials, so it rejoins the conversation and not just the
-    // screen.
-    active_call: activeCall ? await callService.withMedia(activeCall, userId) : null,
-  });
+  // A client that restarted mid-call rejoins it instead of losing it — with
+  // fresh media credentials, so it rejoins the conversation and not just the
+  // screen. Minting those talks to LiveKit, so it gets the same treatment.
+  let media = null;
+  if (activeCall) {
+    try {
+      media = await callService.withMedia(activeCall, userId);
+    } catch (err) {
+      console.error('[socket] could not restore call media for', userId, err.message);
+    }
+  }
+
+  socket.emit('connected', { user_id: userId, unread, active_call: media });
 }
 
 /**
