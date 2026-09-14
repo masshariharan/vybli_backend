@@ -1,6 +1,7 @@
 'use strict';
 
 const prisma = require('../config/prisma');
+const env = require('../config/env');
 
 /**
  * The reference data this server still owns.
@@ -44,9 +45,12 @@ function getUserLanguages(userId) {
  * or which side of the marketplace they are on.
  *
  * What remains is only the conditions under which an account is not a member
- * at all: deleted, suspended, still mid-onboarding, or explicitly hidden by
- * its owner. A hidden profile stays out because being counted in a city is
- * still saying that somebody is there.
+ * at all: deleted, suspended, still mid-onboarding, explicitly hidden by its
+ * owner, or not a person. A hidden profile stays out because being counted in
+ * a city is still saying that somebody is there, and a seeded one stays out
+ * because it is nobody — `seed-demo.js` writes 22 fixtures so a developer has
+ * somebody to call, under the same switch discovery reads, so the picker and
+ * the feed agree about who exists.
  *
  * Only cities with somebody in them appear. An absent id means zero, which is
  * the honest encoding and keeps this to the handful of cities that have
@@ -58,6 +62,7 @@ async function cityStats() {
     where: {
       cityId: { not: null },
       onboardingStatus: 'ONBOARDING_COMPLETED',
+      ...(env.demo.showSeededProfiles ? {} : { isDemo: false }),
       user: {
         status: 'active',
         deletedAt: null,
