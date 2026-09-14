@@ -20,7 +20,7 @@ function getUserLanguages(userId) {
 }
 
 /**
- * How many discoverable earners are online, per city id.
+ * How many registered members each city has, per city id.
  *
  * The whole of what this server still knows about cities. The catalogue — id,
  * name, state, coordinates — is compiled into the mobile app, because it is
@@ -29,17 +29,24 @@ function getUserLanguages(userId) {
  * This is the one thing about a city the app cannot work out for itself, and
  * the one thing that actually changes.
  *
- * Who is *registered* there, not who is online there. Presence is deliberately
- * not part of this: a city picker filtered on it empties out the moment nobody
- * happens to be connected, so the whole of India reads as "nobody here" on a
- * quiet evening and there is nowhere to browse to. Somebody choosing a city is
- * choosing where to look, and that is a question about where people live.
+ * A membership count, not a discovery preview. Two filters used to narrow it
+ * to the people a discovery feed would return, and both made the picker
+ * disappear:
  *
- * Everything else discovery requires is still applied — visible, onboarded
- * earners — because those decide whether a profile can be shown at all. A
- * count that included people discovery would never return is the same broken
- * promise in the other direction. It was a written-down number once: "18,210
- * in Bangalore" on a platform with twenty-two accounts.
+ *  * `presence: 'online'` emptied it the moment nobody happened to be
+ *    connected, so the whole of India read as "nobody here" on a quiet
+ *    evening.
+ *  * `isEarner: true` dropped every city whose members are all callers —
+ *    two thirds of the accounts here, and entire cities with them.
+ *
+ * Somebody opening this is choosing where to look, and that is a question
+ * about where people have signed up, not about who is connected this second
+ * or which side of the marketplace they are on.
+ *
+ * What remains is only the conditions under which an account is not a member
+ * at all: deleted, suspended, still mid-onboarding, or explicitly hidden by
+ * its owner. A hidden profile stays out because being counted in a city is
+ * still saying that somebody is there.
  *
  * Only cities with somebody in them appear. An absent id means zero, which is
  * the honest encoding and keeps this to the handful of cities that have
@@ -50,7 +57,6 @@ async function cityStats() {
     by: ['cityId'],
     where: {
       cityId: { not: null },
-      isEarner: true,
       onboardingStatus: 'ONBOARDING_COMPLETED',
       user: {
         status: 'active',

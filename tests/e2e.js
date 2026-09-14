@@ -404,6 +404,21 @@ async function run() {
   // ── Discovery ─────────────────────────────────────────────────────────────
   section('Discovery');
 
+  // The city picker counts members, and the two ways it used to stop doing so.
+  //
+  // A city with only callers in it. Nobody in Madurai is an earner, so the
+  // whole city vanished from the picker while the count was narrowed to the
+  // people a discovery feed would return — and two thirds of the accounts on
+  // this platform are callers, so it took a lot of India with it.
+  const onlyCaller = await createAccount({
+    name: 'Vikram',
+    cityId: 'madurai',
+    gender: 'male',
+  });
+  check('a city can hold only callers', onlyCaller.user.is_earner === false);
+
+  const cityCounts = await get('/cities/stats');
+
   // Registered, not connected.
   //
   // No account in this run has ever opened a socket, so every one of them is
@@ -411,12 +426,25 @@ async function run() {
   // on. It counted only people who were online, so a quiet evening emptied the
   // whole of India and there was nowhere to browse to. Somebody choosing a
   // city is choosing where to *look*, and that is a question about where
-  // people live.
-  const cityCounts = await get('/cities/stats');
+  // people have signed up.
   check(
     "an offline account still puts its city on the picker's list",
     (cityCounts.data?.counts ?? {})[earner.user?.city_id ?? 'chennai'] > 0,
     { counts: cityCounts.data?.counts }
+  );
+
+  check(
+    'a city with no earners in it is still on the list',
+    (cityCounts.data?.counts ?? {}).madurai > 0,
+    { counts: cityCounts.data?.counts }
+  );
+
+  // Both sides of Chennai, counted once each. A membership count that silently
+  // dropped one side would still pass the assertion above.
+  check(
+    'callers and earners are counted together',
+    (cityCounts.data?.counts ?? {}).chennai >= 2,
+    { chennai: (cityCounts.data?.counts ?? {}).chennai }
   );
 
   const feed = await get('/users/discover?scope=myCity&limit=50', caller.token);
