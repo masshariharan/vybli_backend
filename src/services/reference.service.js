@@ -29,10 +29,17 @@ function getUserLanguages(userId) {
  * This is the one thing about a city the app cannot work out for itself, and
  * the one thing that actually changes.
  *
- * Counted against the same predicate discovery uses — online, visible,
- * onboarded earners — so a city that promises people delivers them. It was a
- * written-down number before: "18,210 in Bangalore" on a platform with
- * twenty-two accounts.
+ * Who is *registered* there, not who is online there. Presence is deliberately
+ * not part of this: a city picker filtered on it empties out the moment nobody
+ * happens to be connected, so the whole of India reads as "nobody here" on a
+ * quiet evening and there is nowhere to browse to. Somebody choosing a city is
+ * choosing where to look, and that is a question about where people live.
+ *
+ * Everything else discovery requires is still applied — visible, onboarded
+ * earners — because those decide whether a profile can be shown at all. A
+ * count that included people discovery would never return is the same broken
+ * promise in the other direction. It was a written-down number once: "18,210
+ * in Bangalore" on a platform with twenty-two accounts.
  *
  * Only cities with somebody in them appear. An absent id means zero, which is
  * the honest encoding and keeps this to the handful of cities that have
@@ -44,7 +51,6 @@ async function cityStats() {
     where: {
       cityId: { not: null },
       isEarner: true,
-      presence: 'online',
       onboardingStatus: 'ONBOARDING_COMPLETED',
       user: {
         status: 'active',

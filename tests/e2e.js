@@ -404,6 +404,21 @@ async function run() {
   // ── Discovery ─────────────────────────────────────────────────────────────
   section('Discovery');
 
+  // Registered, not connected.
+  //
+  // No account in this run has ever opened a socket, so every one of them is
+  // `offline` — which is exactly the state the city picker used to disappear
+  // on. It counted only people who were online, so a quiet evening emptied the
+  // whole of India and there was nowhere to browse to. Somebody choosing a
+  // city is choosing where to *look*, and that is a question about where
+  // people live.
+  const cityCounts = await get('/cities/stats');
+  check(
+    "an offline account still puts its city on the picker's list",
+    (cityCounts.data?.counts ?? {})[earner.user?.city_id ?? 'chennai'] > 0,
+    { counts: cityCounts.data?.counts }
+  );
+
   const feed = await get('/users/discover?scope=myCity&limit=50', caller.token);
   check('the feed returns people', feed.data?.items?.length > 0, {
     count: feed.data?.items?.length,
