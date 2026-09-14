@@ -125,9 +125,19 @@ function attachSockets(httpServer) {
   // closes them from this side rather than asking the client to, because the
   // reason for closing is usually that this client is no longer one we accept
   // instructions from.
+  //
+  // A beat later, though, and that delay is the point. The explanation —
+  // `session:revoked`, which is what puts the displaced phone on its login
+  // screen — is emitted immediately before this over the very connection this
+  // closes. Closing it in the same tick races the write: the client would lose
+  // the one message telling it why, and be left to work it out from the next
+  // request it happened to make. Long enough to flush, short enough that a
+  // client ignoring the event is still cut off promptly.
   bus.on(RealtimeEvent.DISCONNECT_USER, ({ userId, reason }) => {
     console.info(`[socket] dropping ${userId}'s connections: ${reason}`);
-    io.in(roomFor(userId)).disconnectSockets(true);
+    setTimeout(() => {
+      io.in(roomFor(userId)).disconnectSockets(true);
+    }, 1_000).unref();
   });
 
   attachAdminNamespace(io);
