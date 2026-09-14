@@ -684,6 +684,9 @@ async function run() {
   // ── Privacy: discovery visibility ─────────────────────────────────────────
   section('Privacy — profile visibility');
 
+  const earnerCity = earner.user?.city_id ?? 'chennai';
+  const countBeforeHiding = (await get('/cities/stats')).data?.counts?.[earnerCity];
+
   await patch('/me/settings/privacy', earner.token, {
     profile_visible_to_everyone: false,
   });
@@ -702,6 +705,25 @@ async function run() {
 
   const friendLookup = await get(`/users/${earner.id}`, caller.token);
   check('but stays visible to an existing friend', friendLookup.success);
+
+  // Hiding yourself does not shrink your city.
+  //
+  // The picker's number is an aggregate: it says a city has members and names
+  // none of them, so counting somebody who has hidden their profile exposes
+  // nothing about them. Dropping them instead would let one person's privacy
+  // setting quietly rewrite a figure describing everybody else living there —
+  // and would let the last member of a city delete it from the picker by
+  // flipping one switch.
+  //
+  // Compared against the count taken before hiding, because this account's
+  // city has other members: asserting the city is merely still present would
+  // pass whether or not this profile was dropped from it.
+  const countWhileHidden = (await get('/cities/stats')).data?.counts?.[earnerCity];
+  check(
+    "a hidden profile still counts toward its city's total",
+    countWhileHidden === countBeforeHiding && countBeforeHiding > 0,
+    { city: earnerCity, before: countBeforeHiding, whileHidden: countWhileHidden }
+  );
 
   await patch('/me/settings/privacy', earner.token, {
     profile_visible_to_everyone: true,

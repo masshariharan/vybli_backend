@@ -100,24 +100,6 @@ const env = {
     max: num('RATE_LIMIT_MAX', 120),
   },
 
-  /**
-   * Seeded profiles.
-   *
-   * `seed-demo.js` writes 22 complete accounts marked `isDemo` so a developer
-   * has somebody to call. They are **not** people, so they must never appear
-   * in a real user's discovery feed by accident — off by default, a plain flag
-   * you turn on deliberately rather than something that happens to be true
-   * because of which environment this looks like it's running in.
-   *
-   * There is deliberately no "answer for themselves" behaviour any more. It
-   * used to exist (`DEMO_AUTO_RESPOND`) and it meant the server sent messages
-   * and accepted calls that no human had authorised, which is indistinguishable
-   * from the product lying to whoever was on the other end.
-   */
-  demo: {
-    showSeededProfiles: bool('DEMO_SHOW_SEEDED_PROFILES', false),
-  },
-
   economy: {
     /// The earner's cut of what a caller actually spent on a call — the
     /// other `1 - earnerShare` stays with the platform. Same 70/30 split as

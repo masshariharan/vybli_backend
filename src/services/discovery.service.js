@@ -1,7 +1,6 @@
 'use strict';
 
 const prisma = require('../config/prisma');
-const env = require('../config/env');
 const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
 const settingsService = require('./settings.service');
@@ -30,18 +29,15 @@ const PROFILE_INCLUDE = {
  * call billing understands (one side earns, the other spends money) — two
  * earners or two non-earners are never shown to each other.
  *
- * Beyond that role split, four conditions, each load-bearing:
+ * Beyond that role split, three conditions, each load-bearing:
  *  * `ONBOARDING_COMPLETED` — a half-built profile has no name or city.
  *  * `profileVisibleToEveryone` — the privacy switch, enforced in the query
  *    rather than filtered afterwards, so it also governs the total count.
  *  * live account — not deleted, not suspended.
- *  * not a seeded profile — `seed-demo.js` writes 22 accounts so a developer
- *    has somebody to call, and they are not people. Production forces
- *    `showSeededProfiles` off, so this predicate is what stops a real user
- *    being offered one. Enforced in the query rather than filtered afterwards,
- *    for the same reason as the privacy switch: it has to govern the count and
- *    the random-match offset too, or the feed reports a total it cannot show
- *    and matching picks a row that gets discarded.
+ *
+ * There was a fourth, excluding seeded demo profiles. The seeder is gone:
+ * every account in this database belongs to somebody who signed up, so there
+ * is no longer a category of row that has to be hidden from real users.
  */
 function visibleWhere(viewer) {
   return {
@@ -51,7 +47,6 @@ function visibleWhere(viewer) {
     profile: {
       isEarner: !viewer.profile?.isEarner,
       onboardingStatus: 'ONBOARDING_COMPLETED',
-      ...(env.demo.showSeededProfiles ? {} : { isDemo: false }),
     },
   };
 }

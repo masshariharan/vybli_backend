@@ -340,15 +340,6 @@ model UserProfile {
 
   onboardingStatus OnboardingStatus @default(PHONE_VERIFIED)
 
-  /// A seeded demo profile.
-  ///
-  /// Nobody is on the other end of one, so with `DEMO_AUTO_RESPOND` on these
-  /// accounts answer for themselves — accepting requests, picking up calls,
-  /// replying to messages. Without that a request to a seeded account hangs
-  /// for ever and the half of the product past the friend gate is unreachable
-  /// on a single device. Inert in production, where the flag is off.
-  isDemo Boolean @default(false)
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -356,7 +347,6 @@ model UserProfile {
 
   @@index([isEarner, cityId, presence])
   @@index([presence])
-  @@index([isDemo])
   @@map("user_profiles")
 }
 

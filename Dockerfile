@@ -65,12 +65,11 @@ RUN npx prisma generate
 # `src/` is not `prisma generate`'s concern, but running this stage directly
 # still wants it: `docker build --target build -t vybli-backend:tools .` then
 # `docker run --rm --env DATABASE_URL="…" vybli-backend:tools node
-# prisma/seed.js` is the way to run a one-off script — the seeders, a
+# prisma/seed.js` is the way to run a one-off script — the seed, a
 # manual `prisma studio` — against a real database without shipping either
-# into `runtime`. `prisma/seed.js` and `prisma/seed-demo.js` build their
-# client through `src/config/prismaClient.js` like everything else does (see
-# that file's own comment), so this needs `src/` on disk to resolve that
-# `require`.
+# into `runtime`. `prisma/seed.js` builds its client through
+# `src/config/prismaClient.js` like everything else does (see that file's own
+# comment), so this needs `src/` on disk to resolve that `require`.
 COPY src ./src
 
 

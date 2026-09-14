@@ -19,8 +19,6 @@
     "test:session": "node tests/session.js",
     "test": "node tests/e2e.js && node tests/sockets.js && node tests/session.js && node tests/admin.js",
     "db:reset": "prisma migrate reset --force",
-    "seed:demo": "node prisma/seed-demo.js",
-    "seed:all": "node prisma/seed.js && node prisma/seed-demo.js",
     "test:admin": "node tests/admin.js",
     "lint": "eslint .",
     "check:livekit": "node scripts/check-livekit.js"

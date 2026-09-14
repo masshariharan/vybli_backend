@@ -1,7 +1,6 @@
 'use strict';
 
 const prisma = require('../config/prisma');
-const env = require('../config/env');
 
 /**
  * The reference data this server still owns.
@@ -30,27 +29,28 @@ function getUserLanguages(userId) {
  * This is the one thing about a city the app cannot work out for itself, and
  * the one thing that actually changes.
  *
- * A membership count, not a discovery preview. Two filters used to narrow it
- * to the people a discovery feed would return, and both made the picker
- * disappear:
+ * Registration, not a discovery preview. This deliberately does **not** ask
+ * the question the feed asks, and every attempt to make it do so emptied the
+ * picker:
  *
  *  * `presence: 'online'` emptied it the moment nobody happened to be
  *    connected, so the whole of India read as "nobody here" on a quiet
  *    evening.
  *  * `isEarner: true` dropped every city whose members are all callers —
  *    two thirds of the accounts here, and entire cities with them.
+ *  * `profileVisibleToEveryone` made one person's privacy setting shrink a
+ *    number describing everybody else in their city.
  *
  * Somebody opening this is choosing where to look, and that is a question
- * about where people have signed up, not about who is connected this second
- * or which side of the marketplace they are on.
+ * about where people have signed up — not who is connected this second, which
+ * side of the marketplace they are on, or whether any one of them wants to be
+ * listed. An aggregate says a city has members; it names nobody, so a hidden
+ * profile is counted without being exposed.
  *
- * What remains is only the conditions under which an account is not a member
- * at all: deleted, suspended, still mid-onboarding, explicitly hidden by its
- * owner, or not a person. A hidden profile stays out because being counted in
- * a city is still saying that somebody is there, and a seeded one stays out
- * because it is nobody — `seed-demo.js` writes 22 fixtures so a developer has
- * somebody to call, under the same switch discovery reads, so the picker and
- * the feed agree about who exists.
+ * Two conditions remain, and both are about whether there is an account at
+ * all rather than what it contains: the account is live (not deleted, not
+ * suspended), and the signup finished. A half-built profile has no name and
+ * no avatar yet, so counting it promises somebody who does not exist.
  *
  * Only cities with somebody in them appear. An absent id means zero, which is
  * the honest encoding and keeps this to the handful of cities that have
@@ -62,11 +62,9 @@ async function cityStats() {
     where: {
       cityId: { not: null },
       onboardingStatus: 'ONBOARDING_COMPLETED',
-      ...(env.demo.showSeededProfiles ? {} : { isDemo: false }),
       user: {
         status: 'active',
         deletedAt: null,
-        privacySettings: { profileVisibleToEveryone: true },
       },
     },
     _count: { cityId: true },

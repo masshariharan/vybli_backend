@@ -13,11 +13,11 @@ the wire format unchanged.
 # and you're set; see its own comments for anything else you want to turn on.
 npm install
 npx prisma migrate deploy
-npm run seed:all          # reference data + the 22 demo profiles
+npm run seed              # the coin packages and VIP plans
 npm run dev               # http://localhost:4000
 ```
 
-`npm run seed` alone loads only what the server genuinely owns — the 5 coin
+`npm run seed` loads only what the server genuinely owns — the 5 coin
 packages and the VIP plans. Neither catalogue is in it: cities and languages are
 both static and ship inside the Flutter app, so the server only ever stores the
 city id and language codes a profile was saved with.
@@ -27,30 +27,20 @@ runs the migrations and then this seed on every boot, so the prices in the
 running image are always the prices in the database. It is only listed here
 because a local `npm run dev` does not go through that entrypoint.
 
-`seed:all` adds the demo accounts below, which is what makes the app usable
-the moment you open it.
+### Accounts to test with
 
-### Demo accounts
+There is no seeder for these any more. `seed-demo.js` wrote 22 fixture profiles
+marked `isDemo`, and every query that could expose one needed a predicate to
+hide it — the discovery feed had one, the per-city member counts did not, and
+for a while the city picker counted people the feed would then refuse to show.
+A category of row that must be hidden everywhere is a rule every future query
+has to remember, and eventually one does not.
 
-`npm run seed:demo` creates 22 profiles as **real accounts** — 17 of them earners
-across 8 cities, with numbers running consecutively from `+91 8800000000`. You can sign
-in as any of them; the OTP is printed by the server. Sign in on a second device and you
-have two real accounts to test between.
-
-**They do not answer for themselves.** `DEMO_AUTO_RESPOND` used to make them accept
-friend requests after ~4s, pick up calls after ~2s and reply to messages, so the whole
-product was reachable on one device. It is gone: the server was sending messages and
-accepting calls that no human had authorised, which is indistinguishable — to whoever
-was on the other end — from the product lying to them. A request to a seeded account
-now waits, exactly as a request to a real person waits.
-
-`DEMO_SHOW_SEEDED_PROFILES` in `.env` decides whether they may appear in a discovery
-feed. It defaults to `false` — they are not people, and a real user must never be
-offered one by accident.
-
-`seed-demo.js` also refuses outright to run with `NODE_ENV=production`, as a manual
-safety valve against re-seeding a live database — set that variable yourself for the
-one command, it has nothing to do with `.env`.
+So sign up the way a user does. `OTP_DEV_MODE=true` in `.env` prints the code to
+the server log instead of sending an SMS, which makes creating an account on a
+second device a few seconds' work. Two real accounts — one Earn Money, one Make
+Friends, since the feed only ever pairs opposite roles — is everything the
+product needs to be reachable end to end.
 
 Full reference: [`docs/API.md`](docs/API.md).
 Postman: [`docs/vybli.postman_collection.json`](docs/vybli.postman_collection.json)
