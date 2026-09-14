@@ -60,11 +60,30 @@ function attachSockets(httpServer) {
         include: {
           profile: true,
           privacySettings: true,
+          // The sign-in this token belongs to — see the same check in
+          // `middleware/auth`. A handshake is authenticated once and never
+          // re-checked, so letting a revoked session open a socket would be
+          // the one door left open after the account moved to another device.
+          ...(payload.sid
+            ? {
+                sessions: {
+                  where: { id: payload.sid },
+                  select: { id: true, revokedAt: true, expiresAt: true },
+                },
+              }
+            : {}),
         },
       });
 
       if (!user || user.deletedAt || user.status !== 'active') {
         return next(new Error('UNAUTHORIZED'));
+      }
+
+      if (payload.sid) {
+        const session = user.sessions?.[0];
+        if (!session || session.revokedAt || session.expiresAt < new Date()) {
+          return next(new Error('UNAUTHORIZED'));
+        }
       }
 
       socket.userId = user.id;
@@ -100,6 +119,15 @@ function attachSockets(httpServer) {
   });
   bus.on(RealtimeEvent.TO_USERS, ({ userIds, event, data }) => {
     for (const id of userIds) io.to(roomFor(id)).emit(event, data);
+  });
+
+  // A session that is over takes its sockets with it. `disconnectSockets`
+  // closes them from this side rather than asking the client to, because the
+  // reason for closing is usually that this client is no longer one we accept
+  // instructions from.
+  bus.on(RealtimeEvent.DISCONNECT_USER, ({ userId, reason }) => {
+    console.info(`[socket] dropping ${userId}'s connections: ${reason}`);
+    io.in(roomFor(userId)).disconnectSockets(true);
   });
 
   attachAdminNamespace(io);

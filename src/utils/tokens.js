@@ -22,9 +22,19 @@ const { errors } = require('./errors');
 const ACCESS_AUDIENCE = 'vybli:access';
 const REFRESH_AUDIENCE = 'vybli:refresh';
 
-function signAccessToken(user) {
+/**
+ * [sessionId] is what ties this token to one sign-in.
+ *
+ * The access token is still verified by signature alone — no database read is
+ * added to the hot path — but carrying the session id means the request
+ * middleware can tell *which* sign-in a token came from, and refuse it once
+ * that sign-in is over. Without it a revoked session's token stayed good until
+ * it expired, so signing in on a new phone left the old one working for
+ * another fifteen minutes.
+ */
+function signAccessToken(user, sessionId) {
   return jwt.sign(
-    { sub: user.id, typ: 'access' },
+    { sub: user.id, sid: sessionId, typ: 'access' },
     env.jwt.secret,
     { expiresIn: env.jwt.expiresIn, audience: ACCESS_AUDIENCE, issuer: 'vybli' }
   );

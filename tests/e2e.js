@@ -1452,18 +1452,44 @@ async function run() {
   // ── Tokens ────────────────────────────────────────────────────────────────
   section('Sessions');
 
+  // Its own account, deliberately.
+  //
+  // These checks *end* the session they run on — rotating the refresh token
+  // retires the one before it, and the logout below retires the lot — and an
+  // access token is now refused the moment its session is over. Run against
+  // `caller`, that left every later section holding a token revoked
+  // underneath it. It only ever appeared to work because the access token
+  // used to ignore revocation entirely, which is the hole this closes.
+  const sessionAccount = await createAccount({
+    name: 'Session Tester',
+    gender: 'male',
+  });
+
   const refreshed = await post('/auth/refresh', null, {
-    refresh_token: caller.refreshToken,
+    refresh_token: sessionAccount.refreshToken,
   });
   check('a refresh token yields a new pair', refreshed.success);
-  check('the refresh token is rotated', refreshed.data?.refresh_token !== caller.refreshToken);
+  check(
+    'the refresh token is rotated',
+    refreshed.data?.refresh_token !== sessionAccount.refreshToken
+  );
 
   const reuse = await post('/auth/refresh', null, {
-    refresh_token: caller.refreshToken,
+    refresh_token: sessionAccount.refreshToken,
   });
   check('the old refresh token is dead after rotation', !reuse.success, {
     error: reuse.error,
   });
+
+  // The access token from the retired session goes with it. Tokens are
+  // verified by signature, so this one is still perfectly well formed and
+  // unexpired — what stops it is that it names a session that is over.
+  const preRotation = await get('/me', sessionAccount.token);
+  check(
+    'an access token outlives its own session no longer',
+    !preRotation.success && preRotation.status === 401,
+    { status: preRotation.status, error: preRotation.error }
+  );
 
   const noToken = await get('/me');
   check('an unauthenticated request is refused', !noToken.success && noToken.status === 401);
@@ -1472,11 +1498,19 @@ async function run() {
   check('a forged token is refused', !junkToken.success && junkToken.status === 401);
 
   const newToken = refreshed.data.access_token;
+  check('the rotated access token works', (await get('/me', newToken)).success);
+
   await post('/auth/logout', newToken, { all_devices: true });
   const afterLogout = await post('/auth/refresh', null, {
     refresh_token: refreshed.data.refresh_token,
   });
   check('logging out kills the session', !afterLogout.success, { error: afterLogout.error });
+  const afterLogoutMe = await get('/me', newToken);
+  check(
+    'and the access token it was holding stops working too',
+    !afterLogoutMe.success && afterLogoutMe.status === 401,
+    { status: afterLogoutMe.status }
+  );
 
   // ── Account deletion ─────────────────────────────────────────────────────
   // `caller`'s session tests just finished above, so its account is free to

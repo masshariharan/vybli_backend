@@ -5,7 +5,7 @@ const { errors } = require('../utils/errors');
 const otpService = require('./otp.service');
 const firebase = require('./firebase.service');
 const activity = require('./activity.service');
-const { emitToAdmin } = require('../sockets/bus');
+const { emitToAdmin, emitToUser, disconnectUser } = require('../sockets/bus');
 const {
   signAccessToken,
   signRefreshToken,
@@ -211,8 +211,20 @@ async function establishSession({ dialCode, phone, firebaseUid, device, ip, via 
 /**
  * Mints an access/refresh pair and records the session.
  *
- * The session row is created first so the refresh token can carry its id —
- * that is what lets one device be revoked without touching the others.
+ * The session row is created first so both tokens can carry its id — that is
+ * what lets one sign-in be revoked, and what lets the request middleware tell
+ * a live token from one belonging to a sign-in that is over.
+ *
+ * **One session per account.** Every other live session is revoked here, so
+ * signing in anywhere ends the sign-in everywhere else. That is the whole of
+ * the rule, kept in the one place a session can be created rather than left
+ * to each sign-in path to remember: a phone number is one person, and an
+ * account they cannot see is an account they cannot tell has been taken.
+ *
+ * Refresh goes through here too, and revoking "every other session" is
+ * exactly right for it as well — rotation has already retired the session
+ * being replaced, and if anything else were somehow live, collapsing to one
+ * is the invariant, not a special case.
  */
 async function issueSession(user, { device, ip } = {}) {
   const session = await prisma.userSession.create({
@@ -227,16 +239,55 @@ async function issueSession(user, { device, ip } = {}) {
   });
 
   const refreshToken = signRefreshToken(user, session.id);
-  await prisma.userSession.update({
-    where: { id: session.id },
-    data: { refreshTokenHash: hashToken(refreshToken) },
-  });
+  const now = new Date();
+
+  const [, evicted] = await prisma.$transaction([
+    prisma.userSession.update({
+      where: { id: session.id },
+      data: { refreshTokenHash: hashToken(refreshToken) },
+    }),
+    // Everything else this account had open, in one statement so there is no
+    // window where two sessions are both live.
+    prisma.userSession.updateMany({
+      where: { userId: user.id, id: { not: session.id }, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
+
+  // Only when something was actually displaced. A first sign-in, and every
+  // routine refresh, evicts nothing and must not tell the account it was
+  // signed out.
+  if (evicted.count > 0) {
+    endDisplacedSessions(user.id);
+  }
 
   return {
-    access_token: signAccessToken(user),
+    access_token: signAccessToken(user, session.id),
     refresh_token: refreshToken,
     token_type: 'Bearer',
   };
+}
+
+/**
+ * Tells the device that just lost the account, and stops listening to it.
+ *
+ * The push is what makes this immediate rather than eventual: the old phone
+ * is holding an access token that is now refused, but it has no reason to try
+ * one until the user touches something. `session:revoked` puts it on the
+ * login screen there and then, which is the difference between "you were
+ * signed out" and a screen that quietly stops working.
+ *
+ * The disconnect follows because a socket outlives the session that
+ * authenticated it. Left open it would keep the displaced device counted as
+ * online — so the account would look reachable on a phone that can no longer
+ * answer anything.
+ */
+function endDisplacedSessions(userId) {
+  emitToUser(userId, 'session:revoked', {
+    reason: 'SIGNED_IN_ELSEWHERE',
+    message: 'You signed in on another device.',
+  });
+  disconnectUser(userId, 'SIGNED_IN_ELSEWHERE');
 }
 
 /**

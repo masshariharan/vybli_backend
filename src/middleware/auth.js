@@ -41,6 +41,18 @@ async function authenticate(req, _res, next) {
       include: {
         profile: true,
         privacySettings: true,
+        // The one sign-in this token belongs to, fetched in the same round
+        // trip as the user rather than a second query on every request.
+        // Filtered to a single id, so this stays a lookup and not a scan of
+        // everything the account has ever opened.
+        ...(payload.sid
+          ? {
+              sessions: {
+                where: { id: payload.sid },
+                select: { id: true, revokedAt: true, expiresAt: true },
+              },
+            }
+          : {}),
       },
     });
 
@@ -48,6 +60,25 @@ async function authenticate(req, _res, next) {
       throw errors.invalidToken('This account no longer exists.');
     }
     if (user.status === 'suspended') throw errors.accountSuspended();
+
+    // One session per account, enforced where it actually matters.
+    //
+    // Revoking the row alone only stops the *refresh* — the access token is
+    // verified by signature and would go on working until it expired, so
+    // signing in on a new phone left the old one usable for another fifteen
+    // minutes. Checking the session here is what makes "signed in elsewhere"
+    // take effect on the very next request.
+    //
+    // A token with no `sid` predates this and is allowed through: it can no
+    // longer be minted, and every one still in circulation expires within the
+    // access token's own lifetime, so the exception closes itself rather than
+    // signing out everybody who was already using the app at deploy time.
+    if (payload.sid) {
+      const session = user.sessions?.[0];
+      if (!session || session.revokedAt || session.expiresAt < new Date()) {
+        throw errors.invalidToken('You signed in on another device.');
+      }
+    }
 
     req.user = user;
     req.userId = user.id;

@@ -27,6 +27,16 @@ const RealtimeEvent = {
   PRESENCE: 'presence',
 
   /**
+   * { userId, reason } — drop every socket this account has open.
+   *
+   * For the moment a session stops being valid: a socket authenticated at
+   * handshake and is never re-checked, so one belonging to a sign-in that is
+   * over would otherwise stay connected and keep the account counted as
+   * online on a device that can no longer act as it.
+   */
+  DISCONNECT_USER: 'disconnectUser',
+
+  /**
    * { event, data } — something happened worth showing the administrator.
    *
    * A separate channel rather than a user id of "admin": these are
@@ -47,6 +57,17 @@ function emitToUsers(userIds, event, data) {
 }
 
 /**
+ * Closes every socket `userId` has open.
+ *
+ * Emitted *after* whatever message explains why, so the explanation is
+ * delivered over the connection that is about to be closed rather than into
+ * one that has already gone.
+ */
+function disconnectUser(userId, reason) {
+  bus.emit(RealtimeEvent.DISCONNECT_USER, { userId, reason });
+}
+
+/**
  * Tells the admin panel something happened.
  *
  * Fire-and-forget, and nothing in the product depends on it: an admin browser
@@ -57,4 +78,11 @@ function emitToAdmin(event, data) {
   bus.emit(RealtimeEvent.TO_ADMIN, { event, data });
 }
 
-module.exports = { bus, RealtimeEvent, emitToUser, emitToUsers, emitToAdmin };
+module.exports = {
+  bus,
+  RealtimeEvent,
+  emitToUser,
+  emitToUsers,
+  emitToAdmin,
+  disconnectUser,
+};

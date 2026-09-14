@@ -2,7 +2,7 @@
   "name": "vybli-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "Backend for the Vybli social calling app — REST + Socket.IO, PostgreSQL via Prisma.",
+  "description": "Backend for the Vybli social calling app \u2014 REST + Socket.IO, PostgreSQL via Prisma.",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
@@ -16,7 +16,8 @@
     "seed": "node prisma/seed.js",
     "test:e2e": "node tests/e2e.js",
     "test:sockets": "node tests/sockets.js",
-    "test": "node tests/e2e.js && node tests/sockets.js && node tests/admin.js",
+    "test:session": "node tests/session.js",
+    "test": "node tests/e2e.js && node tests/sockets.js && node tests/session.js && node tests/admin.js",
     "db:reset": "prisma migrate reset --force",
     "seed:demo": "node prisma/seed-demo.js",
     "seed:all": "node prisma/seed.js && node prisma/seed-demo.js",
