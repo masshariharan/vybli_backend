@@ -158,7 +158,22 @@ async function assertCanCall(user, otherId, type) {
   const enabled = type === 'voice' ? profile.voiceEnabled : profile.videoEnabled;
   if (accepts === false || !enabled) throw errors.callTypeDisabled(type);
 
-  if (profile.presence === 'busy') throw errors.calleeBusy();
+  // Busy is asked of the Call table, not the `presence` cache. That cache is
+  // set to `busy` the instant a call starts ringing and only cleared once the
+  // call's background bookkeeping gets around to it — a client that redials a
+  // moment after a call ended, or one whose peer's bookkeeping is merely
+  // running slow, would otherwise be told "busy" about someone who is not.
+  // The call table is written and read in the same request that decides this,
+  // so there is nothing here for it to lag behind.
+  const liveCall = await prisma.call.findFirst({
+    where: {
+      status: { in: ['ringing', 'connected'] },
+      OR: [{ callerId: otherId }, { calleeId: otherId }],
+    },
+    select: { id: true },
+  });
+  if (liveCall) throw errors.calleeBusy();
+
   if (profile.presence !== 'online') throw errors.calleeOffline();
 
   return other;

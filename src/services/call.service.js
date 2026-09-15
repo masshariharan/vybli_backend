@@ -5,6 +5,7 @@ const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
 const walletService = require('./wallet.service');
 const notificationService = require('./notification.service');
+const profileService = require('./profile.service');
 const livekit = require('./livekit.service');
 const activity = require('./activity.service');
 const { emitToUser, emitToAdmin } = require('../sockets/bus');
@@ -196,11 +197,18 @@ async function assertNotBusy(userId, role) {
   if (live) throw role === 'caller' ? errors.callerBusy() : errors.calleeBusy();
 }
 
+/**
+ * Sets presence for the two people on a call.
+ *
+ * Goes through `profileService.setPresence` — one call per user rather than a
+ * single `updateMany` — because that is the only path that tells a friend
+ * their contact just went busy or came back online. The bulk write this used
+ * to do wrote the column and nothing else: the peer's badge in a chat header
+ * or a discovery card never moved until something unrelated happened to
+ * refetch it.
+ */
 function setPresence(userIds, presence) {
-  return prisma.userProfile.updateMany({
-    where: { userId: { in: userIds } },
-    data: { presence },
-  });
+  return Promise.all(userIds.map((id) => profileService.setPresence(id, presence)));
 }
 
 /**
@@ -223,18 +231,31 @@ async function accept(user, callId) {
 
   clearTimers(callId);
 
+  // The one thing that has to be known before anyone is told this call is
+  // connected: whether it can be paid for at all. A plain read rather than
+  // `billOneMinute`'s transaction — the actual charge still runs through
+  // that, below, and its own atomic guard is what actually protects the
+  // wallet; this is only here to keep the common case (the balance is fine)
+  // from waiting on a transaction it is about to run anyway.
+  const { payerId } = payerAndEarner(call);
+  const rate = Number(call.ratePerMinute);
+  const balance = await walletService.getBalance(payerId);
+  if (rate > 0 && balance < rate) {
+    await finalise(call, { status: 'ended', reason: 'insufficientBalance' });
+    throw errors.insufficientBalance(rate, balance);
+  }
+
   const connected = await prisma.call.update({
     where: { id: callId },
     data: { status: 'connected', connectedAt: new Date() },
     include: CALL_INCLUDE,
   });
 
-  const charged = await billOneMinute(connected);
-  if (!charged) {
-    await end(user, callId, { reason: 'insufficientBalance', force: true });
-    throw errors.insufficientBalance(Number(connected.ratePerMinute), 0);
-  }
-
+  // Fired the instant the row is written, not after the first minute is
+  // actually charged — this is what makes *both* screens show "Connected",
+  // and neither should sit through a wallet transaction and two more writes
+  // first. `finalise`, above, makes the same trade for the same reason when
+  // a call ends.
   emitToUser(connected.callerId, 'call:accepted', {
     call_id: callId,
     connected_at: connected.connectedAt.toISOString(),
@@ -244,26 +265,44 @@ async function accept(user, callId) {
     connected_at: connected.connectedAt.toISOString(),
   });
 
-  activity.recordPair(
-    {
-      userId: connected.calleeId,
-      type: 'call_accepted',
-      relatedUserId: connected.callerId,
-      relatedEntityId: callId,
-      description: `Answered a ${connected.type} call from ${activity.nameOf(connected.caller)}`,
-      status: 'connected',
-    },
-    {
-      userId: connected.callerId,
-      type: 'call_accepted',
-      relatedUserId: connected.calleeId,
-      relatedEntityId: callId,
-      description: `${activity.nameOf(connected.callee)} answered`,
-      status: 'connected',
-    }
-  );
+  // Everything past this point is the actual charge, the activity log and
+  // starting the per-minute ticker — nobody's screen is waiting on any of
+  // it, so it runs in the background instead of holding the response (and
+  // the tap that triggered it) hostage to it. The balance check above
+  // covers the common case; this is what still protects the wallet if it
+  // changed in the instant between that read and this — a second call
+  // answered in the same moment, say — the same way every other charge on
+  // this call already does.
+  billOneMinute(connected)
+    .then((charged) => {
+      if (!charged) {
+        return finalise(connected, {
+          status: 'ended',
+          reason: 'insufficientBalance',
+        });
+      }
+      activity.recordPair(
+        {
+          userId: connected.calleeId,
+          type: 'call_accepted',
+          relatedUserId: connected.callerId,
+          relatedEntityId: callId,
+          description: `Answered a ${connected.type} call from ${activity.nameOf(connected.caller)}`,
+          status: 'connected',
+        },
+        {
+          userId: connected.callerId,
+          type: 'call_accepted',
+          relatedUserId: connected.calleeId,
+          relatedEntityId: callId,
+          description: `${activity.nameOf(connected.callee)} answered`,
+          status: 'connected',
+        }
+      );
+      startBilling(connected);
+    })
+    .catch((err) => console.error(`[call] background accept-billing failed for ${callId}`, err));
 
-  startBilling(connected);
   return connected;
 }
 
@@ -332,11 +371,25 @@ async function finalise(call, { status, reason }) {
   // screen only moves once `call:ended` reaches them below — neither should
   // sit through a LiveKit REST call and four more database writes first,
   // and nothing downstream needs anything but this row.
-  const updated = await prisma.call.update({
-    where: { id: call.id },
-    data: { status, endReason: reason, endedAt, durationSeconds },
-    include: CALL_INCLUDE,
-  });
+  //
+  // Presence goes back to `online` alongside it, not inside the background
+  // bookkeeping below — freeing both people up to be called again is exactly
+  // as urgent as the row saying the call is over, and it used to live in the
+  // fire-and-forget half, where an unrelated failure (LiveKit's REST call,
+  // say) or just ordinary async lag could leave either side wrongly `busy`
+  // for the next call that tried to reach them. Run alongside the row update,
+  // not after it, so this costs nothing extra: `finalise` already returns
+  // only once its slower of two independent writes lands.
+  const [updated] = await Promise.all([
+    prisma.call.update({
+      where: { id: call.id },
+      data: { status, endReason: reason, endedAt, durationSeconds },
+      include: CALL_INCLUDE,
+    }),
+    setPresence([call.callerId, call.calleeId], 'online').catch((err) => {
+      console.error(`[call] presence reset failed for ${call.id}`, err);
+    }),
+  ]);
 
   // Fired the instant the row is written, not after the bookkeeping below —
   // this is what makes the *other* person's screen react, and they should
@@ -354,12 +407,11 @@ async function finalise(call, { status, reason }) {
   emitToUser(call.calleeId, 'call:ended', payload);
 
   // Everything past this point is bookkeeping nobody's screen is waiting on:
-  // closing the LiveKit room, resetting presence, the lifetime-call count,
-  // the earner's credit, a missed-call notification, the activity log, and
-  // the admin feed. None of it needs to finish before either app hears "the
-  // call is over" — that already happened above — so it runs in the
-  // background instead of holding the response (and, for `end`/`reject`, the
-  // person's tap) hostage to it.
+  // closing the LiveKit room, the lifetime-call count, the earner's credit, a
+  // missed-call notification, the activity log, and the admin feed. None of
+  // it needs to finish before either app hears "the call is over" — that
+  // already happened above — so it runs in the background instead of holding
+  // the response (and, for `end`/`reject`, the person's tap) hostage to it.
   //
   // A failure here is logged, not thrown: the call has already ended in the
   // database, and turning a bookkeeping error into a failed hang-up would be
@@ -372,10 +424,10 @@ async function finalise(call, { status, reason }) {
 }
 
 async function finaliseBookkeeping(call, updated, { status, reason, durationSeconds }) {
-  const writes = [
-    livekit.closeRoom(call.id),
-    setPresence([call.callerId, call.calleeId], 'online'),
-  ];
+  // Presence is already back to `online` — `finalise` reset it up front,
+  // alongside the row write, because that is the one piece of this cleanup
+  // urgent enough not to be fire-and-forget. Everything below genuinely is.
+  const writes = [livekit.closeRoom(call.id)];
 
   // Keyed on **what was charged**, not on elapsed time. Billing is per started
   // minute, so a five-second call still costs the caller a full minute — and
