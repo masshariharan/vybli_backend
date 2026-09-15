@@ -674,6 +674,78 @@ function clearTimers(callId) {
   activeTimers.delete(callId);
 }
 
+/**
+ * How long a `ringing` row is given before the sweep below gives up on it.
+ * Padded past `RING_TIMEOUT_MS` on purpose — [scheduleRingTimeout] is the
+ * mechanism that is *supposed* to close an unanswered call, and this only
+ * exists for the times that timer never got the chance to fire.
+ */
+const STALE_RINGING_MS = RING_TIMEOUT_MS + 30_000;
+
+/**
+ * How long a `connected` row is left before the sweep decides nobody is
+ * actually still on it. Deliberately generous — a real call can run for
+ * hours — because this is a last-resort backstop, not the thing that is
+ * meant to end a call: `handleDisconnect`, the LiveKit webhook and the
+ * billing ticker's own `status !== 'connected'` check all close a call long
+ * before this would ever see one.
+ */
+const STALE_CONNECTED_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * Finds and closes out calls that never got the finalising write that was
+ * supposed to end them, and re-checks it on a timer — see [scheduleSweeps].
+ *
+ * `scheduleRingTimeout`, `startBilling`'s own status check, the socket
+ * disconnect handler and `reconcileOnBoot` all exist to make sure a call's
+ * row always ends up saying what actually happened to it. All four are
+ * in-process or event-driven, though, and everything in-process is gone the
+ * moment the process is: a call whose finalising write itself failed (a
+ * transient database error between `clearTimers` and the write it was
+ * guarding), or one whose timer was silently dropped by something other
+ * than a clean restart, is left `ringing` or `connected` forever with
+ * nothing left watching it — which reads to the next caller as "busy",
+ * indefinitely, for someone who is not on any call at all.
+ *
+ * This is what makes that self-heal within a bounded time regardless of how
+ * the row got stuck, rather than staying wrong until the process happens to
+ * restart.
+ */
+async function sweepStaleCalls() {
+  const now = Date.now();
+  const stale = await prisma.call.findMany({
+    where: {
+      OR: [
+        { status: 'ringing', startedAt: { lt: new Date(now - STALE_RINGING_MS) } },
+        { status: 'connected', connectedAt: { lt: new Date(now - STALE_CONNECTED_MS) } },
+      ],
+    },
+    include: CALL_INCLUDE,
+  });
+
+  for (const call of stale) {
+    await finalise(call, {
+      status: call.status === 'connected' ? 'ended' : 'missed',
+      reason: 'networkError',
+    }).catch((err) => console.error(`[call] stale sweep failed for ${call.id}`, err));
+  }
+
+  return stale.length;
+}
+
+/** Runs [sweepStaleCalls] on a timer for the life of the process. */
+function scheduleSweeps() {
+  const timer = setInterval(() => {
+    sweepStaleCalls()
+      .then((n) => {
+        if (n > 0) console.info(`[call] sweep closed ${n} stale call(s)`);
+      })
+      .catch((err) => console.error('[call] stale sweep failed', err));
+    // Unrefed so a lone pending sweep never keeps the process alive on its own.
+  }, 60_000).unref();
+  return timer;
+}
+
 // ── Reads ───────────────────────────────────────────────────────────────────
 
 async function loadCall(callId) {
@@ -818,6 +890,8 @@ module.exports = {
   onMediaDisconnect,
   loadCall,
   reconcileOnBoot,
+  sweepStaleCalls,
+  scheduleSweeps,
   clearTimers,
   CALL_INCLUDE,
 };

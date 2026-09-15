@@ -37,6 +37,15 @@ async function start() {
     console.info(`[boot] closed ${callsClosed} calls left open by a previous run`);
   }
 
+  // The boot reconciliation above only ever runs once, at start-up — it
+  // cannot catch a call that gets orphaned by something other than a clean
+  // restart (a transient write failure mid-hangup, a timer that silently
+  // didn't fire) while this same process keeps running for days. This is
+  // the same cleanup, repeated for the life of the process, so a call stuck
+  // `ringing` or `connected` self-heals on its own rather than reading as
+  // "busy" to whoever tries to reach that person next, indefinitely.
+  callService.scheduleSweeps();
+
   // No host argument, so this binds every interface — loopback and the LAN
   // alike. That is what lets a phone on the same Wi-Fi reach it.
   server.listen(env.port, () => {
