@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
@@ -34,6 +35,25 @@ const activeTimers = new Map();
 
 /** Unanswered calls give up after this long and become missed. */
 const RING_TIMEOUT_MS = 45_000;
+
+/**
+ * callId → this call's in-call chat, on this instance.
+ *
+ * Deliberately never touches Postgres. Every other message in this app is a
+ * row because a chat is a thing people come back to — this is the opposite:
+ * a note passed during one specific call, worth nothing the moment that call
+ * is over, and a database row for it would be one more place a "temporary"
+ * conversation quietly outlived the call it was tied to. Held only long
+ * enough to hand a late joiner (a reconnect mid-call) what they missed, and
+ * dropped the instant `finalise` closes the call out — see there.
+ *
+ * Same scaling note as `activeTimers`: in-process, so a multi-instance
+ * deployment needs this behind a shared store too, keyed the same way.
+ */
+const messagesByCall = new Map();
+
+/** However long a call's chat gets, only the most recent this many survive. */
+const MAX_MESSAGES_PER_CALL = 200;
 
 const USER_INCLUDE = {
   profile: true,
@@ -352,6 +372,57 @@ async function end(user, callId, { reason = 'hungUp', force = false } = {}) {
   return finalise(call, { status: 'ended', reason });
 }
 
+// ── In-call chat ────────────────────────────────────────────────────────────
+//
+// A note passed during the call, not a conversation. See the doc on
+// `messagesByCall` for why this never reaches Postgres.
+
+/**
+ * Sends one message on a live call.
+ *
+ * Only while `connected` — there is no video to talk over yet on a call
+ * still ringing, and nothing left to reach once it has ended. Either side
+ * may send; nothing here asks whether they are friends, the same as nothing
+ * asked before letting them talk over the call itself.
+ */
+async function sendMessage(user, callId, text) {
+  const call = await loadCall(callId);
+  if (call.callerId !== user.id && call.calleeId !== user.id) {
+    throw errors.forbidden('That call is not yours.', 'NOT_CALL_PARTICIPANT');
+  }
+  if (call.status !== 'connected') {
+    throw errors.conflict('That call is not connected.', 'CALL_NOT_CONNECTED');
+  }
+
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) throw errors.badRequest('Write a message');
+
+  const message = {
+    id: crypto.randomUUID(),
+    call_id: callId,
+    sender_id: user.id,
+    text: trimmed,
+    sent_at: new Date().toISOString(),
+  };
+
+  const thread = messagesByCall.get(callId) ?? [];
+  thread.push(message);
+  // Oldest first out — a call chat that ran long is worth its last couple of
+  // hundred lines to a reconnecting client, not its first.
+  if (thread.length > MAX_MESSAGES_PER_CALL) thread.shift();
+  messagesByCall.set(callId, thread);
+
+  const peerId = call.callerId === user.id ? call.calleeId : call.callerId;
+  emitToUser(peerId, 'call:message', message);
+
+  return message;
+}
+
+/** This call's chat so far, for a client that just (re)connected mid-call. */
+function recentMessages(callId) {
+  return messagesByCall.get(callId) ?? [];
+}
+
 /**
  * Closes a call out: duration, stats, earnings, notifications, presence.
  *
@@ -360,6 +431,12 @@ async function end(user, callId, { reason = 'hungUp', force = false } = {}) {
  */
 async function finalise(call, { status, reason }) {
   clearTimers(call.id);
+  // The chat dies with the call — this is what actually makes it temporary,
+  // rather than merely a client that stops rendering it. Dropped up front,
+  // with the timers, rather than in the background bookkeeping below: there
+  // is nothing to await, and no reason to let it outlive the call by even
+  // the length of that background work.
+  messagesByCall.delete(call.id);
 
   const endedAt = new Date();
   const durationSeconds = call.connectedAt
@@ -888,6 +965,8 @@ module.exports = {
   getActive,
   withMedia,
   onMediaDisconnect,
+  sendMessage,
+  recentMessages,
   loadCall,
   reconcileOnBoot,
   sweepStaleCalls,

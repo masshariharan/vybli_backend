@@ -187,15 +187,25 @@ async function handleConnect(io, socket) {
   // fresh media credentials, so it rejoins the conversation and not just the
   // screen. Minting those talks to LiveKit, so it gets the same treatment.
   let media = null;
+  // Whatever this call's in-call chat holds so far — a socket drop and
+  // reconnect must not read as the other person going quiet, the same way
+  // the call itself did not end just because this device's connection did.
+  let callMessages = [];
   if (activeCall) {
     try {
       media = await callService.withMedia(activeCall, userId);
+      callMessages = callService.recentMessages(activeCall.id);
     } catch (err) {
       console.error('[socket] could not restore call media for', userId, err.message);
     }
   }
 
-  socket.emit('connected', { user_id: userId, unread, active_call: media });
+  socket.emit('connected', {
+    user_id: userId,
+    unread,
+    active_call: media,
+    call_messages: callMessages,
+  });
 }
 
 /**
@@ -418,6 +428,18 @@ function registerCalls(io, socket) {
           end_reason: call.endReason,
         },
       };
+    })
+  );
+
+  socket.on(
+    'call:message',
+    wrap(async (payload) => {
+      const message = await callService.sendMessage(
+        socket.user,
+        payload.call_id,
+        payload.text
+      );
+      return { message };
     })
   );
 

@@ -354,6 +354,49 @@ async function run() {
   });
   check('an outsider cannot inject anything', (await hijack) === null);
 
+  // ── In-call chat ──────────────────────────────────────────────────────────
+  section('In-call chat');
+
+  const firstMessageArrived = waitFor(earnerSocket, 'call:message');
+  const sendMessageAck = await emit(callerSocket, 'call:message', {
+    call_id: callId,
+    text: 'Hi 👋',
+  });
+  check('a message can be sent on a live call', sendMessageAck?.success, {
+    ack: sendMessageAck,
+  });
+  const firstMessage = await firstMessageArrived;
+  check('it reaches the other side', Boolean(firstMessage), { got: firstMessage });
+  check('with the text intact', firstMessage?.text === 'Hi 👋', { got: firstMessage });
+  check('and names the sender', firstMessage?.sender_id === caller.id);
+
+  const replyArrived = waitFor(callerSocket, 'call:message');
+  const replyAck = await emit(earnerSocket, 'call:message', {
+    call_id: callId,
+    text: 'Hello 😊',
+  });
+  check('either side can send, not just the caller', replyAck?.success, {
+    ack: replyAck,
+  });
+  const reply = await replyArrived;
+  check('the reply reaches the caller', reply?.text === 'Hello 😊', { got: reply });
+
+  const outsiderMessage = await emit(outsiderSocket, 'call:message', {
+    call_id: callId,
+    text: 'not yours to read',
+  });
+  check(
+    'a stranger cannot send into someone else\'s call chat',
+    !outsiderMessage?.success && outsiderMessage?.error === 'NOT_CALL_PARTICIPANT',
+    { got: outsiderMessage }
+  );
+
+  const blankMessage = await emit(callerSocket, 'call:message', {
+    call_id: callId,
+    text: '   ',
+  });
+  check('a blank message is refused', !blankMessage?.success, { got: blankMessage });
+
   const endedPush = waitFor(earnerSocket, 'call:ended');
   const endAck = await emit(callerSocket, 'call:end', {
     call_id: callId,
@@ -363,6 +406,17 @@ async function run() {
   const endPush = await endedPush;
   check('both sides are told', Boolean(endPush));
   check('the end carries the final cost', endPush?.amount_spent > 0, { got: endPush });
+
+  // The chat was temporary — it does not survive the call it belonged to.
+  const afterEndMessage = await emit(callerSocket, 'call:message', {
+    call_id: callId,
+    text: 'are you still there?',
+  });
+  check(
+    'the chat is gone once the call has ended',
+    !afterEndMessage?.success && afterEndMessage?.error === 'CALL_NOT_CONNECTED',
+    { got: afterEndMessage }
+  );
 
   // ── Wallet push ───────────────────────────────────────────────────────────
   section('Wallet updates');

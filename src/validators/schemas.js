@@ -273,6 +273,7 @@ const calls = {
   history: pagination.extend({
     direction: z.enum(['all', 'incoming', 'outgoing', 'missed']).default('all'),
   }),
+  message: z.object({ text: z.string().trim().min(1).max(1000) }),
 };
 
 // ── Wallet ──────────────────────────────────────────────────────────────────

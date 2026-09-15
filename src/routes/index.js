@@ -447,6 +447,14 @@ calls.post(
   validate({ params: S.calls.callParam }),
   h(callController.token)
 );
+// The REST fallback for in-call chat — the socket path (`call:message`) is
+// the one actually used while connected; this exists for the same reason
+// every other call action has one.
+calls.post(
+  '/:id/message',
+  validate({ params: S.calls.callParam, body: S.calls.message }),
+  h(callController.sendMessage)
+);
 calls.delete(
   '/:id',
   validate({ params: S.calls.callParam }),

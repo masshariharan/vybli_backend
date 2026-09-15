@@ -134,6 +134,16 @@ async function rate(req, res) {
   return ok(res, { call_id: call.id, rating: call.rating }, 'Thanks for rating');
 }
 
+/**
+ * The REST fallback for in-call chat — same as every other call action, for
+ * whenever the socket cannot answer. See `sockets/index.js`'s `call:message`
+ * for the path this actually runs on.
+ */
+async function sendMessage(req, res) {
+  const message = await callService.sendMessage(req.user, req.params.id, req.body.text);
+  return created(res, { message }, 'Sent');
+}
+
 module.exports = {
   start,
   accept,
@@ -146,4 +156,5 @@ module.exports = {
   remove,
   clearHistory,
   rate,
+  sendMessage,
 };
