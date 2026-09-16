@@ -73,10 +73,24 @@ async function authenticate(req, _res, next) {
     // longer be minted, and every one still in circulation expires within the
     // access token's own lifetime, so the exception closes itself rather than
     // signing out everybody who was already using the app at deploy time.
+    //
+    // Three different reasons a session can fail this check used to share one
+    // sentence — "You signed in on another device." — which is only true of
+    // one of them. A session whose `expiresAt` has simply passed, or one this
+    // device cannot find at all (a wiped table, a session deleted with the
+    // account), has nothing to do with a second sign-in, and telling someone
+    // so sent them looking for a login attempt that never happened, on a
+    // device that was never touched.
     if (payload.sid) {
       const session = user.sessions?.[0];
-      if (!session || session.revokedAt || session.expiresAt < new Date()) {
+      if (!session) {
+        throw errors.invalidToken('Your session could not be found. Please sign in again.');
+      }
+      if (session.revokedAt) {
         throw errors.invalidToken('You signed in on another device.');
+      }
+      if (session.expiresAt < new Date()) {
+        throw errors.invalidToken('Your session has expired. Please sign in again.');
       }
     }
 
