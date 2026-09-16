@@ -18,6 +18,8 @@
 
 const BASE = process.env.API_BASE || 'http://localhost:4000/api/v1';
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 let passed = 0;
 let failed = 0;
 const failures = [];
@@ -143,9 +145,16 @@ async function removeCreatedAccounts() {
   }
 }
 
-/** Signs up and runs the whole onboarding, returning a ready account. */
-async function createAccount({ name, cityId = 'chennai', gender = 'female', age = 25 }) {
-  const phone = uniquePhone();
+/**
+ * Signs up and runs the whole onboarding, returning a ready account.
+ *
+ * `phone` is normally generated fresh, but a caller testing what happens when
+ * a number is reused — after the account that had it was deleted — passes
+ * the exact number back in. It is not pushed onto `createdPhones` again in
+ * that case; the first account to claim it already put it there.
+ */
+async function createAccount({ name, cityId = 'chennai', gender = 'female', age = 25, phone: reusePhone }) {
+  const phone = reusePhone ?? uniquePhone();
 
   const requested = await post('/auth/otp/request', null, {
     dial_code: '+91',
@@ -1757,6 +1766,84 @@ async function run() {
     "the deleted account's name still reads correctly in the other side's call history",
     callWithDeletedAccount?.user_name === 'Arjun',
     { got: callWithDeletedAccount?.user_name }
+  );
+
+  // ── Re-registering the same phone number ─────────────────────────────────
+  // WhatsApp-style continuity: `caller` ("Arjun") deleted their account
+  // above. Somebody — presumably the same person — now signs up fresh on
+  // that exact number, and `earner`'s existing thread with "Arjun" is
+  // expected to pick up the new account rather than stay stuck talking to a
+  // name that can never answer again.
+  section('Re-registering a deleted account\'s phone number');
+
+  // The OTP `caller` used to sign up in the first place is still inside its
+  // own resend cooldown — this whole run so far has taken nowhere near that
+  // long in real wall-clock time — and requesting a second code for the same
+  // number before it lapses is refused. A real return visitor would simply
+  // not be back this fast either.
+  const { resendCooldownSeconds } = require('../src/config/env').otp;
+  await sleep((resendCooldownSeconds + 1) * 1000);
+
+  const reborn = await createAccount({
+    name: 'Arjun Reborn',
+    cityId: 'chennai',
+    gender: 'male',
+    phone: caller.phone,
+  });
+  check(
+    'the new signup gets its own id, not the deleted account\'s',
+    reborn.id !== caller.id,
+    { rebornId: reborn.id, oldId: caller.id }
+  );
+
+  const relinkedThread = await get(`/conversations/${conversationId}`, earner.token);
+  check(
+    'the existing conversation now reads as the new account, live',
+    relinkedThread.data?.thread?.user?.id === reborn.id &&
+      relinkedThread.data?.thread?.user?.name === 'Arjun Reborn',
+    {
+      got_id: relinkedThread.data?.thread?.user?.id,
+      got_name: relinkedThread.data?.thread?.user?.name,
+    }
+  );
+  check(
+    'the history already in the thread is untouched by the relink',
+    (relinkedThread.data?.thread?.messages ?? []).some((m) => m.text === 'Good, you?'),
+    { messages: relinkedThread.data?.thread?.messages?.map((m) => m.text) }
+  );
+
+  check(
+    'the relinked thread reads as an accepted conversation, not a fresh request',
+    relinkedThread.data?.thread?.status === 'accepted',
+    { got: relinkedThread.data?.thread?.status }
+  );
+
+  // No second, competing thread for the same pair.
+  const allAccepted = await get('/conversations?filter=accepted&limit=100', earner.token);
+  const threadsWithReborn = (allAccepted.data?.items ?? []).filter(
+    (t) => t.user?.id === reborn.id
+  );
+  check('exactly one conversation exists with the reborn account, not two', threadsWithReborn.length === 1, {
+    count: threadsWithReborn.length,
+  });
+  const threadsStillOnOldId = (allAccepted.data?.items ?? []).filter((t) => t.user?.id === caller.id);
+  check('nothing is left pointing at the deleted account\'s old id', threadsStillOnOldId.length === 0, {
+    count: threadsStillOnOldId.length,
+  });
+
+  // Messaging actually works again — this used to be permanently refused,
+  // "not friends", because the friendship row was deleted with the old
+  // account and nothing ever recreated it.
+  const relinkedReply = await post(`/conversations/${conversationId}/messages`, earner.token, {
+    text: 'Welcome back!',
+  });
+  check('the other side can message the reborn account', relinkedReply.success, {
+    error: relinkedReply.error,
+  });
+
+  check(
+    'the connection status reads as friends again, with no new request sent',
+    (await get('/conversations?filter=requests&limit=100', earner.token)).data?.items?.length === 0
   );
 
   // ── Result ────────────────────────────────────────────────────────────────

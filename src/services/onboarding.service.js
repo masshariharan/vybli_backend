@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const activity = require('./activity.service');
+const relationship = require('./relationship.service');
 const { emitToAdmin } = require('../sockets/bus');
 const { USER_INCLUDE } = require('./auth.service');
 
@@ -259,6 +260,18 @@ async function complete(user) {
       name: profile.name ?? null,
       at: new Date().toISOString(),
     });
+  }
+
+  // Reconnects any conversation a previous, deleted account on this same
+  // phone number left behind — see the doc comment on the function itself
+  // for why this runs here and not at the OTP-verify step that actually
+  // created the account. Not allowed to fail the completion it rides on: a
+  // finished sign-up is the more important outcome, and a fault here leaves
+  // the old threads exactly as they already were rather than half-migrated.
+  try {
+    await relationship.relinkConversationsForPhone(user);
+  } catch (error) {
+    console.error(`[onboarding] relinking previous conversations failed for ${user.id}`, error);
   }
 
   const fresh = await reload(user.id);
