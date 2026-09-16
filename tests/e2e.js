@@ -102,8 +102,39 @@ async function removeCreatedAccounts() {
       select: { id: true },
     });
     if (rows.length === 0) return 0;
+    const ids = rows.map((r) => r.id);
+
+    // `Conversation`, `Message`, `Call` and `Report` now hold their user
+    // relations as `onDelete: Restrict` on purpose — a real account deletion
+    // must never cascade into someone else's chat or call history, which is
+    // exactly what these tables exist to protect. A fixture is not a real
+    // account, though, and this run's whole point is to leave nothing behind,
+    // so its dependants are cleared explicitly, in the order the constraints
+    // now require, rather than leaned on to cascade.
+    await prisma.$transaction([
+      prisma.message.deleteMany({
+        where: {
+          OR: [
+            { senderId: { in: ids } },
+            { conversation: { OR: [{ userAId: { in: ids } }, { userBId: { in: ids } }] } },
+          ],
+        },
+      }),
+      prisma.conversation.deleteMany({
+        where: { OR: [{ userAId: { in: ids } }, { userBId: { in: ids } }] },
+      }),
+      // `Earning` hangs off `Call` with its own cascade, so clearing calls
+      // takes any earnings on them along with it.
+      prisma.call.deleteMany({
+        where: { OR: [{ callerId: { in: ids } }, { calleeId: { in: ids } }] },
+      }),
+      prisma.report.deleteMany({
+        where: { OR: [{ reporterId: { in: ids } }, { reportedId: { in: ids } }] },
+      }),
+    ]);
+
     const { count } = await prisma.user.deleteMany({
-      where: { id: { in: rows.map((r) => r.id) } },
+      where: { id: { in: ids } },
     });
 
     return count;
@@ -1602,7 +1633,7 @@ async function run() {
   );
 
   // A reply, so the conversation has something from *both* sides — deleting
-  // `caller` should blank only the words that were theirs.
+  // `caller` must leave every word of it, theirs included, exactly as it was.
   const earnerReply = await post(`/conversations/${conversationId}/messages`, earner.token, {
     text: 'Good, you?',
   });
@@ -1662,9 +1693,11 @@ async function run() {
         where: { conversationId, senderId: caller.id },
       });
       check(
-        'their own messages are blanked, not deleted',
+        'the deleted account\'s own messages survive untouched — this is the '
+          + 'other side\'s conversation too, and blanking them took the other '
+          + 'side\'s half of it down as collateral',
         theirMessages.length > 0 &&
-          theirMessages.every((m) => m.text === '' && m.deletedAt !== null),
+          theirMessages.every((m) => m.text.length > 0 && m.deletedAt === null),
         { count: theirMessages.length }
       );
 
@@ -1681,12 +1714,50 @@ async function run() {
       const conversation = await db.conversation.findUnique({ where: { id: conversationId } });
       check('the conversation itself still exists', Boolean(conversation));
 
+      const profile = await db.userProfile.findUnique({ where: { userId: caller.id } });
+      check(
+        'the profile keeps its real name and avatar — only reachability ends, '
+          + 'not the identity every past conversation and call still reads live',
+        profile?.name === 'Arjun',
+        { got: profile?.name }
+      );
+
       const report = await db.report.findFirst({ where: { reportedId: caller.id } });
       check('a report naming the deleted account survives', Boolean(report));
     } finally {
       await db.$disconnect();
     }
   }
+
+  // The other side's own view, through the real API — not just the database
+  // — so this actually proves what `earner`'s app would show.
+  const earnerThreadAfterDelete = await get(`/conversations/${conversationId}`, earner.token);
+  check('the other side can still open the conversation', earnerThreadAfterDelete.success, {
+    error: earnerThreadAfterDelete.error,
+  });
+  check(
+    "the deleted account's name still reads correctly in the thread header",
+    earnerThreadAfterDelete.data?.thread?.user?.name === 'Arjun',
+    { got: earnerThreadAfterDelete.data?.thread?.user?.name }
+  );
+  const deletedAccountMessages = (earnerThreadAfterDelete.data?.thread?.messages ?? []).filter(
+    (m) => m.author === 'them'
+  );
+  check(
+    "the deleted account's messages still read with their real text, not blank",
+    deletedAccountMessages.length > 0 && deletedAccountMessages.every((m) => m.text.length > 0),
+    { count: deletedAccountMessages.length }
+  );
+
+  // Same question, asked of call history — `callId` is the call `caller` and
+  // `earner` shared earlier in this run.
+  const earnerCallHistory = await get('/calls/history', earner.token);
+  const callWithDeletedAccount = earnerCallHistory.data?.items?.find((c) => c.id === callId);
+  check(
+    "the deleted account's name still reads correctly in the other side's call history",
+    callWithDeletedAccount?.user_name === 'Arjun',
+    { got: callWithDeletedAccount?.user_name }
+  );
 
   // ── Result ────────────────────────────────────────────────────────────────
   const removed = await removeCreatedAccounts();

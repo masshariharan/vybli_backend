@@ -503,8 +503,13 @@ model Report {
   resolvedAt  DateTime?
   resolvedBy  String?
 
-  reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
-  reported User @relation("Reported", fields: [reportedId], references: [id], onDelete: Cascade)
+  /// `Restrict`, not `Cascade`, on both sides: a report is the *other* party's
+  /// record of what happened, filed by them or naming them, and it has to
+  /// outlive whichever account it is about. Account deletion never hard-deletes
+  /// the `User` row (see `auth.service.deleteAccount`), so this never actually
+  /// fires — it exists so that stays true even if something someday tries.
+  reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  reported User @relation("Reported", fields: [reportedId], references: [id], onDelete: Restrict)
 
   @@index([reportedId, status])
   @@index([reporterId])
@@ -534,8 +539,13 @@ model Conversation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  userA    User      @relation("ConversationUserA", fields: [userAId], references: [id], onDelete: Cascade)
-  userB    User      @relation("ConversationUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  /// `Restrict`, not `Cascade`: a conversation belongs to *both* people in it,
+  /// and one of them closing their account must not take the other's half of
+  /// the thread with it. `deleteAccount` only ever soft-deletes the `User` row
+  /// (`status: 'deleted'`), which never triggers this — the constraint is what
+  /// keeps that true regardless of what any future cleanup job tries to do.
+  userA    User      @relation("ConversationUserA", fields: [userAId], references: [id], onDelete: Restrict)
+  userB    User      @relation("ConversationUserB", fields: [userBId], references: [id], onDelete: Restrict)
   messages Message[]
 
   @@unique([userAId, userBId])
@@ -576,8 +586,13 @@ model Message {
   deletedAt DateTime?
   createdAt DateTime  @default(now())
 
+  // A message's *conversation* going away still takes it with it — that is
+  // the normal shape of deleting a thread (see `friend.service.unfriend`).
+  // Its *sender* going away must not: the sender is only ever one side of the
+  // conversation, and `Restrict` here is what stops that account's closure
+  // from reaching into a thread it no longer owns alone.
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Restrict)
 
   // Scoped to the sender rather than global: the id is generated on a device,
   // so two accounts can pick the same one and neither should shadow the other.
@@ -618,8 +633,11 @@ model Call {
 
   createdAt DateTime @default(now())
 
-  caller  User     @relation("CallCaller", fields: [callerId], references: [id], onDelete: Cascade)
-  callee  User     @relation("CallCallee", fields: [calleeId], references: [id], onDelete: Cascade)
+  /// `Restrict` on both sides — same reasoning as `Conversation.userA`/`userB`
+  /// above: a call is the other party's history too, and their Recent tab
+  /// must survive whichever side of it closes their account.
+  caller  User     @relation("CallCaller", fields: [callerId], references: [id], onDelete: Restrict)
+  callee  User     @relation("CallCallee", fields: [calleeId], references: [id], onDelete: Restrict)
   earning Earning?
 
   // The Recent tab is "my calls, newest first" — both directions, one index

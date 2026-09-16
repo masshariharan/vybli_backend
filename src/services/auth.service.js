@@ -5,7 +5,8 @@ const { errors } = require('../utils/errors');
 const otpService = require('./otp.service');
 const firebase = require('./firebase.service');
 const activity = require('./activity.service');
-const { emitToAdmin, emitToUser, disconnectUser } = require('../sockets/bus');
+const relationship = require('./relationship.service');
+const { emitToAdmin, emitToUser, emitToUsers, disconnectUser } = require('../sockets/bus');
 const {
   signAccessToken,
   signRefreshToken,
@@ -368,26 +369,42 @@ async function logout({ userId, refreshToken, allDevices = false }) {
  *
  * The `User` row itself is kept, tombstoned, rather than removed — Call
  * history, `Report`s filed by or about this person, and the other side of
- * every `Conversation` reference it, and every one of those relations
- * cascades on the schema. Actually deleting the row would silently take
- * someone else's records with it: the other party's half of a chat thread,
- * their call history, an abuse report they filed that still matters after
- * the account it names is gone.
+ * every `Conversation` all reference it, and cascading the row on deletion
+ * would silently take someone else's records with it: the other party's half
+ * of a chat thread, their call history, an abuse report they filed that still
+ * matters after the account it names is gone. `onDelete: Restrict` on those
+ * relations (see `schema.prisma`) is what makes that a schema-enforced
+ * guarantee rather than a promise this function keeps only by never calling
+ * `user.delete`.
  *
  * Everything that belongs to this account alone and nobody else — the
  * wallet and its ledger, what it earned, its sessions, its own activity
- * history — is
- * hard-deleted for real, not flagged. What is shared with someone else is
- * anonymised instead of erased: this account's own words are blanked out of
- * every message it sent (the row and the conversation stay, so the other
- * side's thread does not lose messages or renumber), and its profile is
- * wiped to a placeholder rather than deleted outright, because the schema's
- * shared tables key off `User.id` directly and a missing `UserProfile`
- * would be a null a dozen other code paths do not expect.
+ * history — is hard-deleted for real, not flagged.
+ *
+ * What is shared with someone else is left alone, not anonymised. This used
+ * to blank the text of every message this account had sent and overwrite its
+ * name, bio and avatar with a placeholder — "delete your account" and
+ * "delete your side of every conversation you were ever part of" read as the
+ * same request, but they are not: the messages and the name belong to the
+ * *thread*, which the other person is still reading, not only to the account
+ * that is leaving. Blanking them took the other side's half of a
+ * conversation down with it — the exact record item 2/3/4 of this feature's
+ * requirements say must survive. What actually needs to end is this
+ * account's own *reachability* — nobody can message, call or find it, which
+ * `status: 'deleted'` already enforces everywhere that matters
+ * (`relationship.loadCounterpart` refuses any interaction with it) — not its
+ * past. A profile only reads as "gone" going forward, on the profile screen
+ * itself, which is unreachable for a deleted account regardless of what its
+ * row says.
  */
 async function deleteAccount({ user, reason }) {
   const now = new Date();
   const tombstone = `deleted_${user.id}`;
+
+  // Read before the friendship rows below are dropped — `friendIdsFor`
+  // answers from the very table this transaction is about to empty, and
+  // there would be nobody left to tell afterwards.
+  const friendIds = [...(await relationship.friendIdsFor(user.id))];
 
   await prisma.$transaction([
     // Dead the moment they're revoked — nothing keeps a revoked session row
@@ -406,29 +423,15 @@ async function deleteAccount({ user, reason }) {
     prisma.userLanguage.deleteMany({ where: { userId: user.id } }),
     prisma.userActivity.deleteMany({ where: { userId: user.id } }),
 
-    // This account's own words, blanked out of every message it sent —
-    // matches the same soft-delete `deleteMessage` already does for one
-    // message at a time, just for all of them. The row stays, so a shared
-    // thread keeps its shape for whoever it is shared with.
-    prisma.message.updateMany({
-      where: { senderId: user.id },
-      data: {
-        deletedAt: now,
-        text: '',
-        attachmentKind: null,
-        attachmentTitle: null,
-        attachmentSubtitle: null,
-        attachmentUrl: null,
-        attachmentDuration: null,
-      },
-    }),
-
+    // Reachability, not identity: what stops here is whether this account can
+    // still be found, messaged or called — `name`, `bio` and `avatarId` are
+    // deliberately absent, because every existing conversation and call
+    // record still reads them live off this same row. Presence goes offline
+    // and stays there — nothing updates it again — which is announced to
+    // whatever friends this account still had just below.
     prisma.userProfile.update({
       where: { userId: user.id },
       data: {
-        name: 'Deleted user',
-        bio: '',
-        avatarId: null,
         presence: 'offline',
         lastSeen: now,
         isEarner: false,
@@ -453,7 +456,13 @@ async function deleteAccount({ user, reason }) {
         showOnlineStatus: false,
       },
     }),
-    // Drop the social graph so nobody keeps a live link to the account.
+    // Drop the social graph so nobody keeps a live link to the account —
+    // this ends the *friendship*, not the conversation: `Conversation` rows
+    // are keyed on the pair directly and are untouched here, exactly as
+    // `unfriend` already leaves them alone... except `unfriend` actually
+    // deletes the conversation too. It should: a friendship a person ended on
+    // purpose is not the same event as an account closing down, and the
+    // latter is the one whose whole point is that the thread survives it.
     prisma.friendship.deleteMany({
       where: { OR: [{ userAId: user.id }, { userBId: user.id }] },
     }),
@@ -470,6 +479,19 @@ async function deleteAccount({ user, reason }) {
       },
     }),
   ]);
+
+  // Told the same way any other presence change reaches a friend, so an open
+  // chat or the Home feed does not go on showing someone who just deleted
+  // their account as available to call — in real time, not on whatever
+  // schedule the next poll happens to run on. `friendIds` was read before the
+  // transaction above emptied the table it comes from.
+  if (friendIds.length > 0) {
+    emitToUsers(friendIds, 'presence:changed', {
+      user_id: user.id,
+      status: 'offline',
+      last_seen: now.toISOString(),
+    });
+  }
 
   // The one activity record this account keeps — its own history is gone
   // with everything else above, but the deletion event itself is exactly
