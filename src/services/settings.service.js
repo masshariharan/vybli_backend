@@ -14,8 +14,9 @@ const { emitToUsers } = require('../sockets/bus');
  *    discovery and the call guard actually read. Two fields that could
  *    disagree would mean a profile advertising video while its owner has video
  *    switched off.
- *  * Hiding presence pushes an immediate `offline` to friends. Waiting for the
- *    next natural change would leave the old status on their screens.
+ *  * Hiding presence pushes an immediate `offline` to everyone with an open
+ *    conversation. Waiting for the next natural change would leave the old
+ *    status on their screens.
  */
 
 const camelFromSnake = {
@@ -74,21 +75,22 @@ async function updatePrivacy(userId, payload) {
 }
 
 /**
- * Tells friends that this person's presence just became visible or hidden.
+ * Tells everyone with an open conversation that this person's presence just
+ * became visible or hidden.
  *
  * Hiding sends a synthetic `offline`, which is the honest projection of "you
  * may no longer know". Un-hiding sends the real value back.
  */
 async function broadcastPresenceVisibility(userId, visible) {
-  const friendIds = await relationship.friendIdsFor(userId);
-  if (friendIds.size === 0) return;
+  const peerIds = await relationship.conversationPeerIdsFor(userId);
+  if (peerIds.size === 0) return;
 
   const profile = await prisma.userProfile.findUnique({
     where: { userId },
     select: { presence: true, lastSeen: true },
   });
 
-  emitToUsers([...friendIds], 'presence:changed', {
+  emitToUsers([...peerIds], 'presence:changed', {
     user_id: userId,
     status: visible ? profile?.presence ?? 'offline' : 'offline',
     last_seen: visible ? profile?.lastSeen?.toISOString() ?? null : null,

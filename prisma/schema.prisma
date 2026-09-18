@@ -1,15 +1,13 @@
 // Vybli — database schema.
 //
 // Shaped by the Flutter app's actual screens rather than by a generic social
-// template. Two rules from the product drive most of the modelling and are
-// worth stating up front, because several tables only make sense in their
-// light:
+// template. One rule from the product drives most of the messaging model and
+// is worth stating up front:
 //
-//   1. Only an **Earn Money** profile is discoverable and only it can receive
-//      a friend request. Everyone else browses and sends. So discovery filters
-//      on `isEarner`, and `FriendRequest.addressee` is always an earner.
-//   2. Messaging is unlocked by an **accepted friend request** and nothing
-//      else. A `Conversation` therefore cannot exist without a `Friendship`.
+//   Only an **Earn Money** profile is discoverable and only it can be
+//   messaged. Everyone else browses and starts a chat. So discovery filters
+//   on `isEarner`, and any two eligible accounts can open a `Conversation`
+//   directly — there is no approval step in between.
 //
 // Money is a single currency throughout: plain rupees, `Decimal`. Callers
 // spend rupees from their wallet balance and earners accrue rupees the same
@@ -77,13 +75,6 @@ enum OnboardingStatus {
 enum OtpPurpose {
   login
   deleteAccount
-}
-
-enum FriendRequestStatus {
-  pending
-  accepted
-  rejected
-  cancelled
 }
 
 enum MessageStatus {
@@ -163,8 +154,14 @@ enum VerificationStatus {
 }
 
 enum NotificationKind {
+  /// Unused — kept rather than dropped, same reasoning as
+  /// `OnboardingStatus.VERIFICATION_COMPLETED`: removing a Postgres enum value
+  /// means recreating the whole type, for values that already have historical
+  /// notification rows and that nothing writes any more since the
+  /// friend-request system was removed.
   friendRequest
   friendRequestAccepted
+
   message
   incomingCall
   missedCall
@@ -230,11 +227,6 @@ model User {
   sessions      UserSession[]
   languages     UserLanguage[]
   notifications Notification[]
-
-  sentRequests     FriendRequest[] @relation("RequestsSent")
-  receivedRequests FriendRequest[] @relation("RequestsReceived")
-  friendshipsA     Friendship[]    @relation("FriendshipUserA")
-  friendshipsB     Friendship[]    @relation("FriendshipUserB")
 
   conversationsA Conversation[] @relation("ConversationUserA")
   conversationsB Conversation[] @relation("ConversationUserB")
@@ -417,44 +409,6 @@ model UserLanguage {
 
 // ── Social graph ────────────────────────────────────────────────────────────
 
-model FriendRequest {
-  id          String              @id @default(cuid())
-  requesterId String
-  addresseeId String
-  status      FriendRequestStatus @default(pending)
-  message     String?
-  respondedAt DateTime?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-
-  requester User @relation("RequestsSent", fields: [requesterId], references: [id], onDelete: Cascade)
-  addressee User @relation("RequestsReceived", fields: [addresseeId], references: [id], onDelete: Cascade)
-
-  // One request row per direction per pair. Re-requesting after a rejection
-  // reuses this row rather than stacking duplicates.
-  @@unique([requesterId, addresseeId])
-  @@index([addresseeId, status])
-  @@index([requesterId, status])
-  @@map("friend_requests")
-}
-
-/// Undirected: `userAId` is always the lexicographically smaller id, which is
-/// what lets the unique constraint stop a duplicate friendship being created
-/// from the other side.
-model Friendship {
-  id        String   @id @default(cuid())
-  userAId   String
-  userBId   String
-  createdAt DateTime @default(now())
-
-  userA User @relation("FriendshipUserA", fields: [userAId], references: [id], onDelete: Cascade)
-  userB User @relation("FriendshipUserB", fields: [userBId], references: [id], onDelete: Cascade)
-
-  @@unique([userAId, userBId])
-  @@index([userBId])
-  @@map("friendships")
-}
-
 model Block {
   id        String   @id @default(cuid())
   blockerId String
@@ -519,8 +473,11 @@ model Report {
 
 // ── Messaging ───────────────────────────────────────────────────────────────
 
-/// Exists only once a friendship does. Same normalised-ordering trick as
-/// [Friendship], so two people can never end up with two conversations.
+/// Opened directly between two eligible accounts (see the earner rule at the
+/// top of this file) — there is no request/approval step. Undirected:
+/// `userAId` is always the lexicographically smaller id, which is what lets
+/// the unique constraint stop a duplicate conversation being created from the
+/// other side.
 model Conversation {
   id      String @id @default(cuid())
   userAId String
@@ -528,13 +485,15 @@ model Conversation {
 
   lastMessageAt DateTime?
 
-  /// Per-side unread counters and mute flags. Denormalised because the chat
-  /// list needs them for every row and counting messages per open would be a
-  /// query per conversation.
+  /// Per-side unread counters, mute flags and pin flags. Denormalised because
+  /// the chat list needs them for every row and computing them per open would
+  /// be a query per conversation.
   unreadForA Int     @default(0)
   unreadForB Int     @default(0)
   mutedByA   Boolean @default(false)
   mutedByB   Boolean @default(false)
+  pinnedByA  Boolean @default(false)
+  pinnedByB  Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -587,8 +546,8 @@ model Message {
   createdAt DateTime  @default(now())
 
   // A message's *conversation* going away still takes it with it — that is
-  // the normal shape of deleting a thread (see `friend.service.unfriend`).
-  // Its *sender* going away must not: the sender is only ever one side of the
+  // the normal shape of deleting a thread. Its *sender* going away must not:
+  // the sender is only ever one side of the
   // conversation, and `Restrict` here is what stops that account's closure
   // from reaching into a thread it no longer owns alone.
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -797,9 +756,8 @@ model PrivacySettings {
   allowVoiceCalls          Boolean @default(true)
   allowVideoCalls          Boolean @default(true)
 
-  /// Full opt-out from messaging: no conversations, no friend requests (they
-  /// exist only to unlock messaging), nothing sent or received. Calls are
-  /// unaffected.
+  /// Full opt-out from messaging: no conversations, nothing sent or
+  /// received. Calls are unaffected.
   allowMessages Boolean @default(true)
 
   updatedAt DateTime @updatedAt
@@ -887,12 +845,6 @@ enum ActivityType {
   language_updated
   location_updated
   onboarding_step
-  friend_request
-  friend_request_accepted
-  friend_request_rejected
-  friend_request_cancelled
-  friendship_created
-  friendship_removed
   message_sent
   message_read
   conversation_started
@@ -908,6 +860,18 @@ enum ActivityType {
   /// Unused since manual verification replaced voice re-submission — nothing
   /// writes this any more.
   reverification_requested
+
+  /// Unused — kept rather than dropped, same reasoning as
+  /// `reverification_requested` above: these already have historical rows in
+  /// `user_activities`, and nothing writes them any more since the
+  /// friend-request system was removed in favour of chatting directly.
+  friend_request
+  friend_request_accepted
+  friend_request_rejected
+  friend_request_cancelled
+  friendship_created
+  friendship_removed
+
   wallet_activity
   earning
   transaction
@@ -932,8 +896,8 @@ model UserActivity {
   userId String
   type   ActivityType
 
-  /// The other person, where the activity involves one — the friend who was
-  /// asked, the peer on the call, the account that was blocked.
+  /// The other person, where the activity involves one — the peer a chat
+  /// was started with, the peer on the call, the account that was blocked.
   relatedUserId String?
 
   /// The row this is about: a call id, a message id, a transaction id. Not a

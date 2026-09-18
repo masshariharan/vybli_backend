@@ -145,30 +145,15 @@ const errors = {
       details: { retry_after_seconds: seconds },
     }),
 
-  /** Friend requests */
-  requestToSelf: () =>
-    new AppError('You cannot send a request to yourself.', {
-      status: 400,
-      code: 'REQUEST_TO_SELF',
-    }),
-  requestExists: () =>
-    new AppError('A friend request already exists.', {
-      status: 409,
-      code: 'FRIEND_REQUEST_EXISTS',
-    }),
-  alreadyFriends: () =>
-    new AppError('You are already friends.', {
-      status: 409,
-      code: 'ALREADY_FRIENDS',
-    }),
+  /** Starting a chat */
   notAnEarner: () =>
     new AppError(
-      'Only Earn Money profiles can receive friend requests.',
+      'Only Earn Money profiles can be messaged.',
       { status: 400, code: 'RECIPIENT_NOT_EARNER' }
     ),
   senderIsEarner: () =>
     new AppError(
-      'Earn Money accounts receive friend requests rather than send them.',
+      'Earn Money accounts receive chats rather than start them.',
       { status: 400, code: 'SENDER_IS_EARNER' }
     ),
 
@@ -180,11 +165,6 @@ const errors = {
     }),
 
   /** Messaging */
-  notFriends: () =>
-    new AppError('You can message someone once they accept your friend request.', {
-      status: 403,
-      code: 'NOT_FRIENDS',
-    }),
   messagingDisabledByMe: () =>
     new AppError('Messaging is switched off in your privacy settings.', {
       status: 403,

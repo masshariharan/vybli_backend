@@ -64,7 +64,7 @@ function summarise(user) {
     // Counted in the same query rather than N+1'd per row.
     counts: user._count
       ? {
-          friends: (user._count.friendshipsA ?? 0) + (user._count.friendshipsB ?? 0),
+          chats: (user._count.conversationsA ?? 0) + (user._count.conversationsB ?? 0),
           calls: (user._count.callsMade ?? 0) + (user._count.callsReceived ?? 0),
           messages: user._count.messages ?? 0,
           reports_against: user._count.reportsAgainst ?? 0,
@@ -85,8 +85,8 @@ function summarise(user) {
 const LIST_COUNTS = {
   _count: {
     select: {
-      friendshipsA: true,
-      friendshipsB: true,
+      conversationsA: true,
+      conversationsB: true,
       callsMade: true,
       callsReceived: true,
       messages: true,
@@ -268,15 +268,6 @@ async function overview(userId) {
   if (!user) throw errors.notFound('User', 'USER_NOT_FOUND');
 
   const [
-    friendsA,
-    friendsB,
-    sentRequests,
-    receivedRequests,
-    acceptedRequests,
-    rejectedRequests,
-    receivedAccepted,
-    receivedRejected,
-    receivedPending,
     conversations,
     messages,
     voiceCalls,
@@ -300,22 +291,6 @@ async function overview(userId) {
     lastPayout,
     lastActivity,
   ] = await Promise.all([
-    prisma.friendship.count({ where: { userAId: userId } }),
-    prisma.friendship.count({ where: { userBId: userId } }),
-    prisma.friendRequest.count({ where: { requesterId: userId } }),
-    prisma.friendRequest.count({ where: { addresseeId: userId } }),
-    prisma.friendRequest.count({
-      where: { OR: [{ requesterId: userId }, { addresseeId: userId }], status: 'accepted' },
-    }),
-    prisma.friendRequest.count({
-      where: { OR: [{ requesterId: userId }, { addresseeId: userId }], status: 'rejected' },
-    }),
-    // Split by direction too — the "requests this person received and how
-    // they answered" ratio on the Overview screen reads oddly if it is
-    // secretly counting requests *they* sent as well.
-    prisma.friendRequest.count({ where: { addresseeId: userId, status: 'accepted' } }),
-    prisma.friendRequest.count({ where: { addresseeId: userId, status: 'rejected' } }),
-    prisma.friendRequest.count({ where: { addresseeId: userId, status: 'pending' } }),
     prisma.conversation.count({ where: { OR: [{ userAId: userId }, { userBId: userId }] } }),
     prisma.message.count({ where: { senderId: userId } }),
     prisma.call.count({
@@ -416,14 +391,6 @@ async function overview(userId) {
         }
       : null,
     stats: {
-      friends: friendsA + friendsB,
-      requests_sent: sentRequests,
-      requests_received: receivedRequests,
-      requests_accepted: acceptedRequests,
-      requests_rejected: rejectedRequests,
-      requests_received_accepted: receivedAccepted,
-      requests_received_rejected: receivedRejected,
-      requests_received_pending: receivedPending,
       conversations,
       messages_sent: messages,
       voice_calls: voiceCalls,
@@ -461,104 +428,10 @@ async function overview(userId) {
 }
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
-
-const peer = (row, userId) => (row.userAId === userId ? row.userB : row.userA);
-
-async function friends(userId, { skip = 0, take = 25 } = {}) {
-  const where = { OR: [{ userAId: userId }, { userBId: userId }] };
-  const [rows, total] = await Promise.all([
-    prisma.friendship.findMany({
-      where,
-      include: {
-        userA: { include: PROFILE_INCLUDE },
-        userB: { include: PROFILE_INCLUDE },
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take,
-    }),
-    prisma.friendship.count({ where }),
-  ]);
-
-  // The last thing that happened between the two, which is what tells an
-  // operator whether a friendship is live or historical.
-  const items = await Promise.all(
-    rows.map(async (row) => {
-      const other = peer(row, userId);
-      const [lastMessage, lastCall] = await Promise.all([
-        prisma.message.findFirst({
-          where: {
-            conversation: {
-              OR: [
-                { userAId: userId, userBId: other.id },
-                { userAId: other.id, userBId: userId },
-              ],
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-          select: { createdAt: true },
-        }),
-        prisma.call.findFirst({
-          where: {
-            OR: [
-              { callerId: userId, calleeId: other.id },
-              { callerId: other.id, calleeId: userId },
-            ],
-          },
-          orderBy: { createdAt: 'desc' },
-          select: { createdAt: true },
-        }),
-      ]);
-
-      const interactions = [lastMessage?.createdAt, lastCall?.createdAt].filter(Boolean);
-      return {
-        friendship_id: row.id,
-        friend: summarise(other),
-        since: row.createdAt.toISOString(),
-        last_interaction: interactions.length
-          ? new Date(Math.max(...interactions.map((d) => d.getTime()))).toISOString()
-          : null,
-      };
-    })
-  );
-
-  return { items, total };
-}
-
-async function requests(userId, { direction = 'all', status, skip = 0, take = 25 } = {}) {
-  const where = {};
-  if (direction === 'sent') where.requesterId = userId;
-  else if (direction === 'received') where.addresseeId = userId;
-  else where.OR = [{ requesterId: userId }, { addresseeId: userId }];
-  if (status) where.status = status;
-
-  const [rows, total] = await Promise.all([
-    prisma.friendRequest.findMany({
-      where,
-      include: {
-        requester: { include: PROFILE_INCLUDE },
-        addressee: { include: PROFILE_INCLUDE },
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take,
-    }),
-    prisma.friendRequest.count({ where }),
-  ]);
-
-  return {
-    items: rows.map((r) => ({
-      id: r.id,
-      direction: r.requesterId === userId ? 'sent' : 'received',
-      counterpart: summarise(r.requesterId === userId ? r.addressee : r.requester),
-      status: r.status,
-      message: r.message,
-      created_at: r.createdAt.toISOString(),
-      responded_at: r.respondedAt?.toISOString() ?? null,
-    })),
-    total,
-  };
-}
+//
+// A user's chats are already covered by `admin/messages.service.listConversations`
+// (the `/users/:id/messages` route) — no separate tab needed here now that
+// there is no friend/request graph distinct from an open conversation.
 
 async function calls(userId, { type, status, from, to, search, skip = 0, take = 25 } = {}) {
   const where = { OR: [{ callerId: userId }, { calleeId: userId }] };
@@ -1079,8 +952,6 @@ module.exports = {
   list,
   overview,
   signOutEverywhere,
-  friends,
-  requests,
   calls,
   timeline,
   wallet,

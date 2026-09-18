@@ -13,8 +13,8 @@ const { emitToUser, emitToAdmin } = require('../sockets/bus');
  * is the whole point: hiding someone's card while leaving their conversation
  * live, their messages arriving and their calls ringing is not a block, and it
  * was exactly the gap the client had before its audit. So a block also ends
- * any live call between the two, drops the friendship, and withdraws any
- * pending request.
+ * any live call between the two, and every read/write on their conversation
+ * — `assertCanInteract` and `getThread` both check it on every request.
  */
 
 async function block(user, targetId) {
@@ -27,24 +27,7 @@ async function block(user, targetId) {
   });
   if (existing) return { blocked: true, alreadyBlocked: true, user: target };
 
-  const [userAId, userBId] = relationship.orderPair(user.id, targetId);
-
-  await prisma.$transaction([
-    prisma.block.create({ data: { blockerId: user.id, blockedId: targetId } }),
-    // The relationship goes with it. A friendship you cannot use is a lie the
-    // profile screen would have to render.
-    prisma.friendship.deleteMany({ where: { userAId, userBId } }),
-    prisma.friendRequest.updateMany({
-      where: {
-        status: 'pending',
-        OR: [
-          { requesterId: user.id, addresseeId: targetId },
-          { requesterId: targetId, addresseeId: user.id },
-        ],
-      },
-      data: { status: 'cancelled', respondedAt: new Date() },
-    }),
-  ]);
+  await prisma.block.create({ data: { blockerId: user.id, blockedId: targetId } });
 
   // A call in progress ends now — waiting for it to finish would mean the
   // block does nothing about the very thing prompting it. Required lazily to
@@ -77,11 +60,8 @@ async function block(user, targetId) {
 }
 
 /**
- * Unblocks. Deliberately does **not** restore anything.
- *
- * The friendship and the conversation were deleted by the block. Bringing them
- * back would resurrect a relationship the user explicitly ended; they can send
- * a fresh request like anyone else.
+ * Unblocks. Only lifts the block itself — the conversation, if there is one,
+ * simply becomes reachable again.
  */
 async function unblock(user, targetId) {
   const { count } = await prisma.block.deleteMany({

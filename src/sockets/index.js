@@ -250,13 +250,14 @@ function registerPresence(io, socket) {
   /**
    * Presence for a set of people — the chat list needs it for every row.
    *
-   * Only friends are answered. Letting anyone poll presence for an arbitrary
-   * id would make "show online status" meaningless to anyone determined.
+   * Only people with an open conversation are answered. Letting anyone poll
+   * presence for an arbitrary id would make "show online status" meaningless
+   * to anyone determined.
    */
   socket.on('presence:query', async ({ user_ids: ids = [] } = {}, ack) => {
     try {
-      const friendIds = await relationship.friendIdsFor(socket.userId);
-      const allowed = ids.filter((id) => friendIds.has(id) || id === socket.userId);
+      const peerIds = await relationship.conversationPeerIdsFor(socket.userId);
+      const allowed = ids.filter((id) => peerIds.has(id) || id === socket.userId);
 
       const profiles = await prisma.userProfile.findMany({
         where: { userId: { in: allowed } },

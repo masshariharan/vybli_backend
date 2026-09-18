@@ -17,15 +17,9 @@ async function updateMe(req, res) {
   return ok(res, { user: serialize.myProfile(user) }, 'Profile updated');
 }
 
-/**
- * Someone else's profile.
- *
- * Ships the relationship alongside it so the client can pick its primary
- * button — Add Friend / Requested / Accept / Message — without a second
- * round trip to work out where the two of them stand.
- */
+/** Someone else's profile. */
 async function getPublic(req, res) {
-  const [{ user, connectionStatus }, favorited] = await Promise.all([
+  const [{ user }, favorited] = await Promise.all([
     profileService.getPublicProfile(req.user, req.params.id),
     favoriteService.isFavorite(req.userId, req.params.id),
   ]);
@@ -37,7 +31,6 @@ async function getPublic(req, res) {
         viewerProfile: req.user.profile,
         favorited,
       }),
-      connection_status: connectionStatus,
     },
     'Profile'
   );

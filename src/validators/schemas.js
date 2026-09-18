@@ -6,6 +6,7 @@ const {
   dialCode,
   otpCode,
   cuid,
+  idParam,
   gender,
   callType,
   discoveryScope,
@@ -199,19 +200,10 @@ const discovery = {
   }),
 };
 
-// ── Friend requests ─────────────────────────────────────────────────────────
+// ── Users ───────────────────────────────────────────────────────────────────
 
-const friends = {
-  send: z.object({
-    user_id: cuid,
-    message: z.string().trim().max(300).optional(),
-  }),
-  requestParam: z.object({ id: cuid }),
-  userParam: z.object({ id: cuid }),
-  list: pagination.extend({
-    direction: z.enum(['incoming', 'outgoing', 'all']).default('all'),
-    status: z.enum(['pending', 'accepted', 'rejected', 'cancelled']).optional(),
-  }),
+const users = {
+  idParam,
 };
 
 // ── Messaging ───────────────────────────────────────────────────────────────
@@ -219,10 +211,7 @@ const friends = {
 const chat = {
   conversationParam: z.object({ id: cuid }),
 
-  list: pagination.extend({
-    // The app's Chats screen has two tabs backed by these.
-    filter: z.enum(['accepted', 'requests', 'all']).default('accepted'),
-  }),
+  list: pagination,
 
   history: pagination.extend({
     // Cursor paging for a thread: messages arrive while you scroll, and
@@ -251,6 +240,7 @@ const chat = {
     }),
 
   mute: z.object({ muted: z.boolean() }),
+  pin: z.object({ pinned: z.boolean() }),
 };
 
 // ── Calls ───────────────────────────────────────────────────────────────────
@@ -347,7 +337,7 @@ module.exports = {
   settings,
   reference,
   discovery,
-  friends,
+  users,
   chat,
   calls,
   wallet,

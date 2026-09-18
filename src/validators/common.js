@@ -29,6 +29,9 @@ const otpCode = z
 
 const cuid = z.string().trim().min(1, 'Required');
 
+/** A bare `{ id }` route param — reused by every `/:id`-shaped endpoint. */
+const idParam = z.object({ id: cuid });
+
 const gender = z.enum(['male', 'female']);
 
 const goal = z.enum(['makeFriends', 'earnMoney']);
@@ -128,6 +131,7 @@ module.exports = {
   dialCode,
   otpCode,
   cuid,
+  idParam,
   gender,
   goal,
   callType,

@@ -401,10 +401,9 @@ async function deleteAccount({ user, reason }) {
   const now = new Date();
   const tombstone = `deleted_${user.id}`;
 
-  // Read before the friendship rows below are dropped — `friendIdsFor`
-  // answers from the very table this transaction is about to empty, and
-  // there would be nobody left to tell afterwards.
-  const friendIds = [...(await relationship.friendIdsFor(user.id))];
+  // Read before the profile below goes offline for good — there would be
+  // nobody left to tell afterwards otherwise.
+  const peerIds = [...(await relationship.conversationPeerIdsFor(user.id))];
 
   await prisma.$transaction([
     // Dead the moment they're revoked — nothing keeps a revoked session row
@@ -428,7 +427,7 @@ async function deleteAccount({ user, reason }) {
     // deliberately absent, because every existing conversation and call
     // record still reads them live off this same row. Presence goes offline
     // and stays there — nothing updates it again — which is announced to
-    // whatever friends this account still had just below.
+    // whoever this account still had an open conversation with, just below.
     prisma.userProfile.update({
       where: { userId: user.id },
       data: {
@@ -456,19 +455,6 @@ async function deleteAccount({ user, reason }) {
         showOnlineStatus: false,
       },
     }),
-    // Drop the social graph so nobody keeps a live link to the account —
-    // this ends the *friendship*, not the conversation: `Conversation` rows
-    // are keyed on the pair directly and are untouched here, exactly as
-    // `unfriend` already leaves them alone... except `unfriend` actually
-    // deletes the conversation too. It should: a friendship a person ended on
-    // purpose is not the same event as an account closing down, and the
-    // latter is the one whose whole point is that the thread survives it.
-    prisma.friendship.deleteMany({
-      where: { OR: [{ userAId: user.id }, { userBId: user.id }] },
-    }),
-    prisma.friendRequest.deleteMany({
-      where: { OR: [{ requesterId: user.id }, { addresseeId: user.id }] },
-    }),
     prisma.user.update({
       where: { id: user.id },
       data: {
@@ -480,13 +466,13 @@ async function deleteAccount({ user, reason }) {
     }),
   ]);
 
-  // Told the same way any other presence change reaches a friend, so an open
-  // chat or the Home feed does not go on showing someone who just deleted
-  // their account as available to call — in real time, not on whatever
-  // schedule the next poll happens to run on. `friendIds` was read before the
-  // transaction above emptied the table it comes from.
-  if (friendIds.length > 0) {
-    emitToUsers(friendIds, 'presence:changed', {
+  // Told the same way any other presence change reaches an open conversation,
+  // so an open chat or the Home feed does not go on showing someone who just
+  // deleted their account as available to call — in real time, not on
+  // whatever schedule the next poll happens to run on. `peerIds` was read
+  // before the transaction above took the profile offline for good.
+  if (peerIds.length > 0) {
+    emitToUsers(peerIds, 'presence:changed', {
       user_id: user.id,
       status: 'offline',
       last_seen: now.toISOString(),

@@ -206,7 +206,7 @@ const post = (path, token, body) => api('POST', path, { token, body });
   section('Individual user');
 
   const TABS = [
-    'activity', 'friends', 'requests', 'messages', 'calls', 'verification',
+    'activity', 'messages', 'calls', 'verification',
     'wallet', 'transactions', 'earnings', 'reports', 'blocks', 'notifications', 'history',
   ];
   let tabsOk = true;
@@ -220,7 +220,7 @@ const post = (path, token, body) => api('POST', path, { token, body });
   check(`all ${TABS.length} per-user tabs respond`, tabsOk);
 
   const overview = await get(`/admin/users/${sample.id}`, token);
-  check('the overview carries the full statistics block', typeof overview.data?.stats?.friends === 'number');
+  check('the overview carries the full statistics block', typeof overview.data?.stats?.conversations === 'number');
   check('and the last activity, or null', 'last_activity' in overview.data);
 
   // ── Conversations ─────────────────────────────────────────────────────────
@@ -345,7 +345,7 @@ const post = (path, token, body) => api('POST', path, { token, body });
 
   const ENDPOINTS = [
     'activity?limit=3', 'calls?limit=3', 'calls/live', 'livekit/rooms',
-    'friend-requests?limit=3', 'blocks?limit=3', 'wallets?limit=3',
+    'blocks?limit=3', 'wallets?limit=3',
     'transactions?limit=3', 'earnings?limit=3',
     'notifications?limit=3', 'messages/stats', 'audit-logs?limit=3',
   ];

@@ -228,27 +228,6 @@ router.get(
   })
 );
 
-router.get(
-  '/users/:id/friends',
-  h(async (req, res) => {
-    const p = page(req);
-    return listed(res, await users.friends(req.params.id, p), p, 'Friends');
-  })
-);
-
-router.get(
-  '/users/:id/requests',
-  h(async (req, res) => {
-    const p = page(req);
-    const result = await users.requests(req.params.id, {
-      ...p,
-      direction: str(req.query.direction) ?? 'all',
-      status: str(req.query.status),
-    });
-    return listed(res, result, p, 'Friend requests');
-  })
-);
-
 /** The user's conversations. Opening one is a separate, audited call. */
 router.get(
   '/users/:id/messages',
@@ -530,23 +509,6 @@ router.get('/calls/live', h(async (_req, res) => ok(res, await platform.liveCall
 router.get(
   '/livekit/rooms',
   h(async (_req, res) => ok(res, await platform.livekitRooms(), 'LiveKit rooms'))
-);
-
-// ── Friend requests ─────────────────────────────────────────────────────────
-
-router.get(
-  '/friend-requests',
-  h(async (req, res) => {
-    const p = page(req);
-    const result = await platform.friendRequestFeed({
-      ...p,
-      ...range(req),
-      status: str(req.query.status),
-      userId: str(req.query.user_id),
-      search: str(req.query.search),
-    });
-    return listed(res, result, p, 'Friend requests');
-  })
 );
 
 // ── Verification ────────────────────────────────────────────────────────────

@@ -7,18 +7,18 @@ const { emitToUser } = require('../sockets/bus');
 /**
  * "May A do this to B?" — asked in exactly one place.
  *
- * Messaging, calling and friend requests each have their own rules, but they
- * share most of them: blocking, account status, and the other person's privacy
- * settings. Answering those questions per feature is how a check ends up
- * enforced on three paths and forgotten on the fourth — which is precisely
- * what happened in the client, where the chat header could start a call with
- * none of the checks the feed applied.
+ * Messaging and calling each have their own rules, but they share most of
+ * them: blocking, account status, and the other person's privacy settings.
+ * Answering those questions per feature is how a check ends up enforced on
+ * three paths and forgotten on the fourth — which is precisely what happened
+ * in the client, where the chat header could start a call with none of the
+ * checks the feed applied.
  *
  * Everything here is server-side and unconditional. The client hides what it
  * can, but hiding is presentation; this is enforcement.
  */
 
-/** Friendship rows store the smaller id first, so lookups are deterministic. */
+/** Conversation rows store the smaller id first, so lookups are deterministic. */
 function orderPair(a, b) {
   return a < b ? [a, b] : [b, a];
 }
@@ -35,15 +35,6 @@ async function isBlockedEitherWay(userId, otherId) {
     select: { id: true },
   });
   return Boolean(block);
-}
-
-async function areFriends(userId, otherId) {
-  const [userAId, userBId] = orderPair(userId, otherId);
-  const friendship = await prisma.friendship.findUnique({
-    where: { userAId_userBId: { userAId, userBId } },
-    select: { id: true },
-  });
-  return Boolean(friendship);
 }
 
 /**
@@ -85,15 +76,14 @@ async function assertCanInteract(userId, otherId) {
 }
 
 /**
- * Can `user` send a friend request to `otherId`?
+ * Can `user` open a brand-new conversation with `otherId`?
  *
- * Beyond the shared checks: both sides must have messaging on, because a
- * friend request exists only to unlock messaging and unlocking nothing is not
- * a thing to ask for. The recipient must be an Earn Money profile and the
- * sender must not be one — the app's rule, and the reason an earner account
- * has no received-requests list of its own.
+ * Beyond the shared checks: both sides must have messaging on, and the
+ * recipient must be an Earn Money profile while the sender must not be one —
+ * the app's rule, and the reason an earner account never initiates a chat of
+ * its own, only receives one.
  */
-async function assertCanSendFriendRequest(user, otherId) {
+async function assertCanStartConversation(user, otherId) {
   const other = await assertCanInteract(user.id, otherId);
 
   if (user.privacySettings && user.privacySettings.allowMessages === false) {
@@ -111,9 +101,9 @@ async function assertCanSendFriendRequest(user, otherId) {
 /**
  * Can `user` message `otherId`?
  *
- * Friendship first, then both privacy switches. Checked on every send, not
- * only when a conversation is opened: either side can switch messaging off
- * while a thread is on screen, and the next message has to see that.
+ * Just the shared checks plus both privacy switches. Checked on every send,
+ * not only when a conversation is opened: either side can switch messaging
+ * off while a thread is on screen, and the next message has to see that.
  */
 async function assertCanMessage(user, otherId) {
   const other = await assertCanInteract(user.id, otherId);
@@ -124,7 +114,6 @@ async function assertCanMessage(user, otherId) {
   if (other.privacySettings && other.privacySettings.allowMessages === false) {
     throw errors.messagingDisabledByThem();
   }
-  if (!(await areFriends(user.id, otherId))) throw errors.notFriends();
 
   return other;
 }
@@ -132,9 +121,8 @@ async function assertCanMessage(user, otherId) {
 /**
  * Can `user` call `otherId` on `type`?
  *
- * Note what is *not* required: friendship. Calling a stranger is the product —
- * it is what discovery is for and what money pays for. Messaging one is what
- * the friend gate exists to prevent.
+ * Note what is *not* required: an existing conversation. Calling a stranger
+ * is the product — it is what discovery is for and what money pays for.
  *
  * A call must pair an earner with a non-earner: that is the only shape the
  * billing side understands (one party earns, the other spends money), and it
@@ -198,40 +186,23 @@ async function blockedIdsFor(userId) {
   return ids;
 }
 
-/** Everyone `userId` is friends with. */
-async function friendIdsFor(userId) {
-  const rows = await prisma.friendship.findMany({
+/** Everyone `userId` has an open conversation with. */
+async function conversationPeerIdsFor(userId) {
+  const rows = await prisma.conversation.findMany({
     where: { OR: [{ userAId: userId }, { userBId: userId }] },
     select: { userAId: true, userBId: true },
   });
   return new Set(rows.map((r) => (r.userAId === userId ? r.userBId : r.userAId)));
 }
 
-/**
- * Where `userId` stands with `otherId`, in the four states the profile button
- * renders: none / requestSent / requestReceived / friends.
- *
- * Blocking collapses to `none` — a FRIEND badge and a live Message button on
- * someone you just blocked is a contradiction.
- */
-async function connectionStatus(userId, otherId) {
-  if (userId === otherId) return 'none';
-  if (await isBlockedEitherWay(userId, otherId)) return 'none';
-  if (await areFriends(userId, otherId)) return 'friends';
-
-  const request = await prisma.friendRequest.findFirst({
-    where: {
-      status: 'pending',
-      OR: [
-        { requesterId: userId, addresseeId: otherId },
-        { requesterId: otherId, addresseeId: userId },
-      ],
-    },
-    select: { requesterId: true },
+/** True if the two already have an open conversation. */
+async function hasConversation(userId, otherId) {
+  const [userAId, userBId] = orderPair(userId, otherId);
+  const conversation = await prisma.conversation.findUnique({
+    where: { userAId_userBId: { userAId, userBId } },
+    select: { id: true },
   });
-
-  if (!request) return 'none';
-  return request.requesterId === userId ? 'requestSent' : 'requestReceived';
+  return Boolean(conversation);
 }
 
 /**
@@ -242,19 +213,17 @@ async function connectionStatus(userId, otherId) {
  * `User.id` — see the note there — so a second signup on the same number is,
  * correctly, a different account with a different id from day one. Left at
  * that, though, every conversation the old account was ever part of becomes
- * permanently unreachable: `Conversation` rows are keyed on that old id, its
- * `Friendship` rows were hard-deleted at delete time, and neither is ever
- * created again on its own — the person on the other end would need to
- * re-discover this "stranger" and send a brand new friend request, with no
- * sign anywhere that it is the same phone number as before. That is not what
+ * permanently unreachable: `Conversation` rows are keyed on that old id and
+ * nothing ever re-points them on its own — the person on the other end
+ * would need to re-discover this "stranger" and start a brand new chat, with
+ * no sign anywhere that it is the same phone number as before. That is not what
  * this app promises: item 2 of the requirements this satisfies says an
  * existing conversation must be *updated*, not abandoned in favour of a
  * fresh one.
  *
  * So the id stays new, but the *thread* does not: every `Conversation` the
  * phone number's previous owner(s) left behind is re-pointed at the new
- * account, and the `Friendship` that unlocked it is recreated, in the same
- * transaction. Nothing about the messages already in those threads changes —
+ * account. Nothing about the messages already in those threads changes —
  * they keep whatever the deleted account's row still says about who sent
  * them (see `deleteAccount`'s own note on why that row is never renamed) —
  * only which *live* account the thread now continues with.
@@ -297,44 +266,37 @@ async function relinkConversationsForPhone(user) {
       const newAccountIsA = userAId === user.id;
 
       // A conversation for this exact pair may already exist — the new
-      // account already reached this same peer through the ordinary
-      // friend-request flow before this ran, or a second deleted account
-      // under the same number also talked to them. Two rows can never share
-      // one `[userAId, userBId]` pair, so the older thread is left exactly
-      // where it is, as history, rather than risk either side's messages to
-      // resolve a collision automatically.
+      // account already reached this same peer directly before this ran, or a
+      // second deleted account under the same number also talked to them. Two
+      // rows can never share one `[userAId, userBId]` pair, so the older
+      // thread is left exactly where it is, as history, rather than risk
+      // either side's messages to resolve a collision automatically.
       const existing = await prisma.conversation.findUnique({
         where: { userAId_userBId: { userAId, userBId } },
       });
       if (existing) continue;
 
-      // The peer's own unread count and mute preference are theirs regardless
-      // of who the thread continues with, so they carry over. The new
-      // account's side starts clean — the old account's leftover unread
-      // count and mute flag described a person who is not this one.
+      // The peer's own unread count, mute and pin preferences are theirs
+      // regardless of who the thread continues with, so they carry over. The
+      // new account's side starts clean — the old account's leftover unread
+      // count, mute flag and pin flag described a person who is not this one.
       const peerUnread = peerWasA ? conversation.unreadForA : conversation.unreadForB;
       const peerMuted = peerWasA ? conversation.mutedByA : conversation.mutedByB;
+      const peerPinned = peerWasA ? conversation.pinnedByA : conversation.pinnedByB;
 
-      await prisma.$transaction([
-        prisma.conversation.update({
-          where: { id: conversation.id },
-          data: {
-            userAId,
-            userBId,
-            unreadForA: newAccountIsA ? 0 : peerUnread,
-            unreadForB: newAccountIsA ? peerUnread : 0,
-            mutedByA: newAccountIsA ? false : peerMuted,
-            mutedByB: newAccountIsA ? peerMuted : false,
-          },
-        }),
-        // What actually unlocks messaging again — `assertCanMessage` checks
-        // this table, not the conversation's mere existence.
-        prisma.friendship.upsert({
-          where: { userAId_userBId: { userAId, userBId } },
-          create: { userAId, userBId },
-          update: {},
-        }),
-      ]);
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          userAId,
+          userBId,
+          unreadForA: newAccountIsA ? 0 : peerUnread,
+          unreadForB: newAccountIsA ? peerUnread : 0,
+          mutedByA: newAccountIsA ? false : peerMuted,
+          mutedByB: newAccountIsA ? peerMuted : false,
+          pinnedByA: newAccountIsA ? false : peerPinned,
+          pinnedByB: newAccountIsA ? peerPinned : false,
+        },
+      });
 
       // Told the moment it happens, not left for the peer's next unrelated
       // refresh to notice — the same immediacy `presence:changed` gives an
@@ -350,14 +312,13 @@ async function relinkConversationsForPhone(user) {
 module.exports = {
   orderPair,
   isBlockedEitherWay,
-  areFriends,
   loadCounterpart,
   assertCanInteract,
-  assertCanSendFriendRequest,
+  assertCanStartConversation,
   assertCanMessage,
   assertCanCall,
   blockedIdsFor,
-  friendIdsFor,
-  connectionStatus,
+  conversationPeerIdsFor,
+  hasConversation,
   relinkConversationsForPhone,
 };

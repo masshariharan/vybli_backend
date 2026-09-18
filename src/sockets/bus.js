@@ -5,8 +5,8 @@ const { EventEmitter } = require('events');
 /**
  * One-way channel from the services to the socket layer.
  *
- * A service that accepts a friend request needs to push it to the other
- * person's phone, but importing the Socket.IO server into the service would
+ * A service that sends a chat message needs to push it to the other person's
+ * phone, but importing the Socket.IO server into the service would
  * make the dependency circular — the socket handlers call the same services.
  * Services emit here instead and the socket layer subscribes, so the domain
  * logic stays testable without a running server and works identically whether

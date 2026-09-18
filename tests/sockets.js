@@ -71,8 +71,32 @@ async function removeCreatedAccounts() {
       select: { id: true },
     });
     if (rows.length === 0) return 0;
+    const ids = rows.map((r) => r.id);
+
+    // `Conversation`, `Message` and `Call` hold their user relations as
+    // `onDelete: Restrict` on purpose, so a real account deletion never
+    // cascades into someone else's chat or call history. A fixture is not a
+    // real account, though, and this run's whole point is to leave nothing
+    // behind, so its dependants are cleared explicitly first.
+    await prisma.$transaction([
+      prisma.message.deleteMany({
+        where: {
+          OR: [
+            { senderId: { in: ids } },
+            { conversation: { OR: [{ userAId: { in: ids } }, { userBId: { in: ids } }] } },
+          ],
+        },
+      }),
+      prisma.conversation.deleteMany({
+        where: { OR: [{ userAId: { in: ids } }, { userBId: { in: ids } }] },
+      }),
+      prisma.call.deleteMany({
+        where: { OR: [{ callerId: { in: ids } }, { calleeId: { in: ids } }] },
+      }),
+    ]);
+
     const { count } = await prisma.user.deleteMany({
-      where: { id: { in: rows.map((r) => r.id) } },
+      where: { id: { in: ids } },
     });
     return count;
   } finally {
@@ -213,35 +237,26 @@ async function run() {
     { got: online.data?.user?.status }
   );
 
-  // ── Friend request over the wire ──────────────────────────────────────────
-  section('Friend requests');
+  // ── Chat, opened directly ────────────────────────────────────────────────
+  // No request/approval step any more — opening a chat with an eligible
+  // earner creates the conversation on the spot, over plain REST, with
+  // nothing pushed over the socket for the open itself (only messages,
+  // typing and read receipts are real-time events).
+  section('Chat');
 
-  const requestArrived = waitFor(earnerSocket, 'friend:request');
-  const req = await api('POST', '/friends/requests', {
+  const noPushOnOpen = waitFor(earnerSocket, 'notification:new', 1000);
+  const opened = await api('POST', `/users/${earner.id}/conversation`, {
     token: caller.token,
-    body: { user_id: earner.id, message: 'Hello!' },
   });
-  const pushed = await requestArrived;
-  check('a friend request is pushed to the recipient', Boolean(pushed), {
-    got: pushed,
+  check('opening a chat succeeds immediately, no approval step', opened.success, {
+    error: opened.error,
   });
-  check('the push carries the sender', pushed?.user?.id === caller.id);
-
-  const notified = await waitFor(earnerSocket, 'notification:new', 1000);
-  check('a notification arrives with it', notified === null || Boolean(notified));
-
-  const acceptArrived = waitFor(callerSocket, 'friend:accepted');
-  const accepted = await api('POST', `/friends/requests/${req.data.request.id}/accept`, {
-    token: earner.token,
-  });
-  const acceptPush = await acceptArrived;
-  check('acceptance is pushed back to the sender', Boolean(acceptPush));
+  const conversationId = opened.data?.thread?.id;
+  check('it hands back a usable conversation id', Boolean(conversationId));
   check(
-    'and carries the conversation to open',
-    acceptPush?.conversation_id === accepted.data.conversation_id
+    'nothing is pushed over the socket just from opening a chat',
+    (await noPushOnOpen) === null
   );
-
-  const conversationId = accepted.data.conversation_id;
 
   // ── Messaging ─────────────────────────────────────────────────────────────
   section('Messaging');

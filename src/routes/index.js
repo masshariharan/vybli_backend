@@ -18,7 +18,6 @@ const authController = require('../controllers/auth.controller');
 const onboardingController = require('../controllers/onboarding.controller');
 const profileController = require('../controllers/profile.controller');
 const discoveryController = require('../controllers/discovery.controller');
-const friendController = require('../controllers/friend.controller');
 const favoriteController = require('../controllers/favorite.controller');
 const chatController = require('../controllers/chat.controller');
 const callController = require('../controllers/call.controller');
@@ -289,61 +288,20 @@ users.post(
 );
 users.get(
   '/:id',
-  validate({ params: S.friends.userParam }),
+  validate({ params: S.users.idParam }),
   h(profileController.getPublic)
 );
-users.get(
-  '/:id/connection',
-  validate({ params: S.friends.userParam }),
-  h(friendController.status)
-);
-users.get(
+// Opens (creating if needed) the conversation with this person — the
+// profile's Chat button. No approval step: eligibility is enforced inside
+// `chatService.openOrCreate`.
+users.post(
   '/:id/conversation',
-  validate({ params: S.friends.userParam }),
-  h(chatController.findWithUser)
+  writeLimiter,
+  validate({ params: S.users.idParam }),
+  h(chatController.openConversation)
 );
 
 router.use('/users', users);
-
-// ── Friends ─────────────────────────────────────────────────────────────────
-
-const friends = express.Router();
-friends.use(authenticate, requireOnboarded);
-
-friends.get('/', validate({ query: S.pagination }), h(friendController.listFriends));
-friends.get(
-  '/requests',
-  validate({ query: S.friends.list }),
-  h(friendController.listRequests)
-);
-friends.post(
-  '/requests',
-  writeLimiter,
-  validate({ body: S.friends.send }),
-  h(friendController.send)
-);
-friends.post(
-  '/requests/:id/accept',
-  validate({ params: S.friends.requestParam }),
-  h(friendController.accept)
-);
-friends.post(
-  '/requests/:id/reject',
-  validate({ params: S.friends.requestParam }),
-  h(friendController.reject)
-);
-friends.delete(
-  '/requests/:id',
-  validate({ params: S.friends.requestParam }),
-  h(friendController.cancel)
-);
-friends.delete(
-  '/:id',
-  validate({ params: S.friends.userParam }),
-  h(friendController.unfriend)
-);
-
-router.use('/friends', friends);
 
 // ── Favourites ──────────────────────────────────────────────────────────────
 
@@ -392,6 +350,11 @@ chat.patch(
   '/:id/mute',
   validate({ params: S.chat.conversationParam, body: S.chat.mute }),
   h(chatController.setMuted)
+);
+chat.patch(
+  '/:id/pin',
+  validate({ params: S.chat.conversationParam, body: S.chat.pin }),
+  h(chatController.setPinned)
 );
 chat.delete(
   '/messages/:id',

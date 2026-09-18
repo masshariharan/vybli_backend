@@ -551,62 +551,32 @@ async function run() {
     { got: meeraSelf.data?.user?.voice_rate_per_minute, expected: MEERA_RATE }
   );
 
-  // ── Friend requests ───────────────────────────────────────────────────────
-  section('Friend requests');
+  // ── Chat ──────────────────────────────────────────────────────────────────
+  // There is no request/approval step any more: any eligible pair can open a
+  // conversation directly, and doing so twice is idempotent rather than an
+  // error.
+  section('Chat');
 
-  const toSelf = await post('/friends/requests', caller.token, { user_id: caller.id });
-  check('you cannot friend yourself', !toSelf.success, { error: toSelf.error });
+  const toSelf = await post(`/users/${caller.id}/conversation`, caller.token);
+  check('you cannot chat with yourself', !toSelf.success, { error: toSelf.error });
 
-  const fromEarner = await post('/friends/requests', earner.token, {
-    user_id: caller.id,
-  });
+  const fromEarner = await post(`/users/${caller.id}/conversation`, earner.token);
   check(
-    'an earner cannot send a friend request',
+    'an earner cannot start a chat',
     !fromEarner.success && fromEarner.error === 'SENDER_IS_EARNER',
     { error: fromEarner.error }
   );
 
-  const req = await post('/friends/requests', caller.token, {
-    user_id: earner.id,
-    message: 'Hi Meera! Would love to connect.',
-  });
-  check('a request to an earner is accepted', req.success, { error: req.error });
-  const requestId = req.data?.request?.id;
+  const opened = await post(`/users/${earner.id}/conversation`, caller.token);
+  check('opening a chat with an earner succeeds', opened.success, { error: opened.error });
+  const conversationId = opened.data?.thread?.id;
+  check('opening creates the conversation', Boolean(conversationId));
 
-  const dup = await post('/friends/requests', caller.token, { user_id: earner.id });
+  const reopened = await post(`/users/${earner.id}/conversation`, caller.token);
   check(
-    'a duplicate request is refused',
-    !dup.success && dup.error === 'FRIEND_REQUEST_EXISTS',
-    { error: dup.error }
-  );
-
-  const beforeAccept = await get(`/users/${earner.id}/connection`, caller.token);
-  check(
-    'the sender sees requestSent',
-    beforeAccept.data?.connection_status === 'requestSent',
-    { got: beforeAccept.data?.connection_status }
-  );
-
-  const inbox = await get('/friends/requests?direction=incoming', earner.token);
-  check('the earner sees it in their inbox', inbox.data?.items?.length === 1);
-
-  // Messaging before acceptance is the rule the whole gate exists for.
-  const convoBefore = await get(`/users/${earner.id}/conversation`, caller.token);
-  check(
-    'no conversation exists before acceptance',
-    convoBefore.data?.conversation_id === null
-  );
-
-  const accepted = await post(`/friends/requests/${requestId}/accept`, earner.token);
-  check('the request can be accepted', accepted.success);
-  const conversationId = accepted.data?.conversation_id;
-  check('accepting creates the conversation', Boolean(conversationId));
-
-  const afterAccept = await get(`/users/${earner.id}/connection`, caller.token);
-  check(
-    'both sides are now friends',
-    afterAccept.data?.connection_status === 'friends',
-    { got: afterAccept.data?.connection_status }
+    'opening again returns the same conversation, not a new one',
+    reopened.success && reopened.data?.thread?.id === conversationId,
+    { got: reopened.data?.thread?.id, expected: conversationId }
   );
 
   // ── Messaging ─────────────────────────────────────────────────────────────
@@ -615,8 +585,8 @@ async function run() {
   const thread = await get(`/conversations/${conversationId}`, caller.token);
   check('the thread opens', thread.success);
   check(
-    'the request message became the first message',
-    thread.data?.thread?.messages?.length >= 1,
+    'a freshly opened chat starts with no messages',
+    thread.data?.thread?.messages?.length === 0,
     { count: thread.data?.thread?.messages?.length }
   );
 
@@ -641,7 +611,7 @@ async function run() {
 
   // A third party must not be able to read the thread. Male, like `caller` —
   // so it also doubles below as a same-role pair for the recipient-side
-  // friend-request check, and later as a second non-earner a busy `earner`
+  // chat-eligibility check, and later as a second non-earner a busy `earner`
   // can still legitimately ring.
   const outsider = await createAccount({
     name: 'Karthik',
@@ -662,11 +632,9 @@ async function run() {
   );
   check('and cannot be written to', !strangerMsg.success);
 
-  const toNonEarner = await post('/friends/requests', caller.token, {
-    user_id: outsider.id,
-  });
+  const toNonEarner = await post(`/users/${outsider.id}/conversation`, caller.token);
   check(
-    'a request to a non-earner is refused',
+    'starting a chat with a non-earner is refused',
     !toNonEarner.success && toNonEarner.error === 'RECIPIENT_NOT_EARNER',
     { error: toNonEarner.error }
   );
@@ -688,6 +656,33 @@ async function run() {
     'reading the thread clears the badge',
     unreadAfter.data?.unread_messages === 0,
     { got: unreadAfter.data?.unread_messages }
+  );
+
+  // ── Pin chat ──────────────────────────────────────────────────────────────
+  section('Pin chat');
+
+  const pinned = await patch(`/conversations/${conversationId}/pin`, caller.token, {
+    pinned: true,
+  });
+  check(
+    'a chat can be pinned',
+    pinned.success && pinned.data?.pinned === true,
+    { error: pinned.error }
+  );
+
+  const listAfterPin = await get('/conversations', caller.token);
+  check(
+    'a pinned chat is marked pinned in the list',
+    listAfterPin.data?.items?.find((t) => t.id === conversationId)?.pinned === true
+  );
+
+  const unpinned = await patch(`/conversations/${conversationId}/pin`, caller.token, {
+    pinned: false,
+  });
+  check(
+    'a chat can be unpinned',
+    unpinned.success && unpinned.data?.pinned === false,
+    { error: unpinned.error }
   );
 
   // ── Privacy: Allow Messages ───────────────────────────────────────────────
@@ -743,8 +738,8 @@ async function run() {
     { error: strangerLookup.error }
   );
 
-  const friendLookup = await get(`/users/${earner.id}`, caller.token);
-  check('but stays visible to an existing friend', friendLookup.success);
+  const knownLookup = await get(`/users/${earner.id}`, caller.token);
+  check('but stays visible to someone with an open conversation', knownLookup.success);
 
   // Hiding yourself does not shrink your city.
   //
@@ -1421,11 +1416,11 @@ async function run() {
   const blockRes = await post('/moderation/block', caller.token, { user_id: earner.id });
   check('a user can be blocked', blockRes.success);
 
-  const afterBlock = await get(`/users/${earner.id}/connection`, caller.token);
+  const afterBlock = await get(`/users/${earner.id}`, caller.token);
   check(
-    'blocking collapses the relationship to none',
-    afterBlock.data?.connection_status === 'none',
-    { got: afterBlock.data?.connection_status }
+    'blocking makes the profile unreachable',
+    !afterBlock.success,
+    { error: afterBlock.error }
   );
 
   const blockedMsg = await post(
@@ -1484,8 +1479,8 @@ async function run() {
     count: notifs.data?.items?.length,
   });
   check(
-    'the friend request produced one',
-    notifs.data?.items?.some((n) => n.kind === 'friendRequest')
+    'a sent message produced one',
+    notifs.data?.items?.some((n) => n.kind === 'message')
   );
 
   const count = await get('/notifications/unread-count', earner.token);
@@ -1622,23 +1617,16 @@ async function run() {
   // delete for real without disturbing anything earlier in the run.
   section('Account deletion');
 
-  // Blocking earlier dropped the friendship — blocking always does — so it
-  // needs rebuilding before `earner` can reply. `caller` is the only side
-  // allowed to send the request (an earner can't, per "Friend requests"
-  // above), and accepting the same pair again is expected to hand back the
-  // same conversation rather than a second one.
-  const reRequest = await post('/friends/requests', caller.token, { user_id: earner.id });
-  check('the friendship can be rebuilt after blocking', reRequest.success, {
-    error: reRequest.error,
-  });
-  const reAccept = await post(
-    `/friends/requests/${reRequest.data?.request?.id}/accept`,
-    earner.token
-  );
+  // Blocking earlier never touched the conversation itself — only messaging
+  // and calling were refused while blocked (see "Blocking" above). Now that
+  // `caller` has unblocked `earner`, opening the chat again is expected to
+  // hand back the same conversation rather than a second one, with no rebuild
+  // step required.
+  const reopenedAfterUnblock = await post(`/users/${earner.id}/conversation`, caller.token);
   check(
-    'accepting it again returns the same conversation as before',
-    reAccept.data?.conversation_id === conversationId,
-    { got: reAccept.data?.conversation_id, expected: conversationId }
+    'unblocking reopens the same conversation, not a new one',
+    reopenedAfterUnblock.success && reopenedAfterUnblock.data?.thread?.id === conversationId,
+    { got: reopenedAfterUnblock.data?.thread?.id, expected: conversationId }
   );
 
   // A reply, so the conversation has something from *both* sides — deleting
@@ -1812,39 +1800,34 @@ async function run() {
     { messages: relinkedThread.data?.thread?.messages?.map((m) => m.text) }
   );
 
-  check(
-    'the relinked thread reads as an accepted conversation, not a fresh request',
-    relinkedThread.data?.thread?.status === 'accepted',
-    { got: relinkedThread.data?.thread?.status }
-  );
-
   // No second, competing thread for the same pair.
-  const allAccepted = await get('/conversations?filter=accepted&limit=100', earner.token);
-  const threadsWithReborn = (allAccepted.data?.items ?? []).filter(
+  const allThreads = await get('/conversations?limit=100', earner.token);
+  const threadsWithReborn = (allThreads.data?.items ?? []).filter(
     (t) => t.user?.id === reborn.id
   );
   check('exactly one conversation exists with the reborn account, not two', threadsWithReborn.length === 1, {
     count: threadsWithReborn.length,
   });
-  const threadsStillOnOldId = (allAccepted.data?.items ?? []).filter((t) => t.user?.id === caller.id);
+  const threadsStillOnOldId = (allThreads.data?.items ?? []).filter((t) => t.user?.id === caller.id);
   check('nothing is left pointing at the deleted account\'s old id', threadsStillOnOldId.length === 0, {
     count: threadsStillOnOldId.length,
   });
+  check(
+    'the relinked conversation is not pinned by default',
+    threadsWithReborn[0]?.pinned === false,
+    { got: threadsWithReborn[0]?.pinned }
+  );
 
   // Messaging actually works again — this used to be permanently refused,
   // "not friends", because the friendship row was deleted with the old
-  // account and nothing ever recreated it.
+  // account and nothing ever recreated it. Now there is no friendship gate at
+  // all, so this just works off the re-pointed conversation.
   const relinkedReply = await post(`/conversations/${conversationId}/messages`, earner.token, {
     text: 'Welcome back!',
   });
   check('the other side can message the reborn account', relinkedReply.success, {
     error: relinkedReply.error,
   });
-
-  check(
-    'the connection status reads as friends again, with no new request sent',
-    (await get('/conversations?filter=requests&limit=100', earner.token)).data?.items?.length === 0
-  );
 
   // ── Result ────────────────────────────────────────────────────────────────
   const removed = await removeCreatedAccounts();

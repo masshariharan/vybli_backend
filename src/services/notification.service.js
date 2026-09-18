@@ -20,8 +20,6 @@ const activity = require('./activity.service');
 
 /** Which settings column governs which kind. */
 const SETTING_FOR_KIND = {
-  friendRequest: 'newMatches',
-  friendRequestAccepted: 'newMatches',
   message: 'messages',
   incomingCall: 'incomingCalls',
   missedCall: 'missedCalls',

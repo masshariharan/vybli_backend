@@ -64,10 +64,10 @@ function record({
 /**
  * Records the same event for both sides of an interaction.
  *
- * A friend request is one action but two histories: it appears as "sent to X"
- * on one timeline and "received from Y" on the other. Recording only the
- * actor's half leaves the other account's history with holes exactly where
- * somebody did something to them.
+ * Starting a chat is one action but two histories: it appears as "started a
+ * chat with X" on one timeline and "a chat was started with you" on the
+ * other. Recording only the actor's half leaves the other account's history
+ * with holes exactly where somebody did something to them.
  */
 function recordPair(actor, subject) {
   return Promise.all([record(actor), record(subject)]);

@@ -11,11 +11,11 @@ const serialize = require('../utils/serialize');
 /**
  * One-to-one messaging.
  *
- * Every send re-checks friendship, blocking and both privacy switches. Not
- * once when the conversation opens — either side can switch messaging off or
- * block while a thread is on screen, and the very next message has to see
- * that. The cost is one extra read per send; the alternative is a thread that
- * keeps working after the other person has closed the door.
+ * Every send re-checks blocking and both privacy switches. Not once when the
+ * conversation opens — either side can switch messaging off or block while a
+ * thread is on screen, and the very next message has to see that. The cost is
+ * one extra read per send; the alternative is a thread that keeps working
+ * after the other person has closed the door.
  */
 
 const USER_INCLUDE = {
@@ -38,6 +38,7 @@ function sideOf(conversation, userId) {
     unreadField: isA ? 'unreadForA' : 'unreadForB',
     peerUnreadField: isA ? 'unreadForB' : 'unreadForA',
     mutedField: isA ? 'mutedByA' : 'mutedByB',
+    pinnedField: isA ? 'pinnedByA' : 'pinnedByB',
   };
 }
 
@@ -56,53 +57,26 @@ async function getConversationOr404(conversationId, userId) {
 }
 
 /**
- * The Chats screen.
+ * The Chats screen: every conversation this account is part of, pinned ones
+ * first.
  *
- * Two tabs, one query each. `accepted` is real conversations; `requests` is
- * the pending gate, which has no conversation row yet and is therefore built
- * from friend requests instead.
+ * Which side's `pinnedByA`/`pinnedByB` flag applies depends on the row, so
+ * the pinned-first ordering is done in memory after a single ordered fetch
+ * rather than in the query — Node's array sort is stable, so within each
+ * group (pinned, then not) rows keep the `lastMessageAt desc` order the query
+ * already gave them.
  *
- * With messaging off the answer is an empty list for both — not an error. The
- * client renders its "Messaging is off" state, and a 403 here would turn a
- * setting into a failure.
+ * With messaging off the answer is an empty list — not an error. The client
+ * renders its "Messaging is off" state, and a 403 here would turn a setting
+ * into a failure.
  */
-async function listThreads(user, { filter, skip, take }) {
+async function listThreads(user, { skip, take }) {
   if (user.privacySettings?.allowMessages === false) {
     return { rows: [], total: 0, messagingDisabled: true };
   }
 
   const blockedIds = await relationship.blockedIdsFor(user.id);
   const blocked = [...blockedIds];
-
-  if (filter === 'requests') {
-    const where = {
-      status: 'pending',
-      OR: [
-        { requesterId: user.id },
-        // Only earners have an inbound side at all.
-        ...(user.profile?.isEarner ? [{ addresseeId: user.id }] : []),
-      ],
-    };
-    if (blocked.length > 0) {
-      where.NOT = [{ requesterId: { in: blocked } }, { addresseeId: { in: blocked } }];
-    }
-
-    const [rows, total] = await Promise.all([
-      prisma.friendRequest.findMany({
-        where,
-        include: {
-          requester: { include: USER_INCLUDE },
-          addressee: { include: USER_INCLUDE },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take,
-      }),
-      prisma.friendRequest.count({ where }),
-    ]);
-
-    return { rows, total, kind: 'requests' };
-  }
 
   const where = {
     OR: [{ userAId: user.id }, { userBId: user.id }],
@@ -111,23 +85,21 @@ async function listThreads(user, { filter, skip, take }) {
     where.NOT = [{ userAId: { in: blocked } }, { userBId: { in: blocked } }];
   }
 
-  const [rows, total] = await Promise.all([
-    prisma.conversation.findMany({
-      where,
-      include: {
-        ...CONVERSATION_INCLUDE,
-        // Only the latest, for the preview line. Loading a whole thread per
-        // row to show one line would be pathological on a long list.
-        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
-      },
-      orderBy: [{ lastMessageAt: 'desc' }, { createdAt: 'desc' }],
-      skip,
-      take,
-    }),
-    prisma.conversation.count({ where }),
-  ]);
+  const all = await prisma.conversation.findMany({
+    where,
+    include: {
+      ...CONVERSATION_INCLUDE,
+      // Only the latest, for the preview line. Loading a whole thread per
+      // row to show one line would be pathological on a long list.
+      messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+    },
+    orderBy: [{ lastMessageAt: 'desc' }, { createdAt: 'desc' }],
+  });
 
-  return { rows, total, kind: 'conversations' };
+  const isPinned = (c) => (c.userAId === user.id ? c.pinnedByA : c.pinnedByB);
+  const sorted = [...all].sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)));
+
+  return { rows: sorted.slice(skip, skip + take), total: sorted.length };
 }
 
 /**
@@ -389,14 +361,21 @@ async function setMuted(user, conversationId, muted) {
   });
 }
 
-/**
- * The Chats badge: unread messages plus requests awaiting a decision.
- *
- * A request you *sent* is not counted — nothing is waiting on you there.
- */
+/** Pins or unpins a thread for this side only — the other person's list is unaffected. */
+async function setPinned(user, conversationId, pinned) {
+  const conversation = await getConversationOr404(conversationId, user.id);
+  const side = sideOf(conversation, user.id);
+  return prisma.conversation.update({
+    where: { id: conversationId },
+    data: { [side.pinnedField]: pinned },
+    include: CONVERSATION_INCLUDE,
+  });
+}
+
+/** The Chats badge: unread messages across every open conversation. */
 async function unreadSummary(user) {
   if (user.privacySettings?.allowMessages === false) {
-    return { unread_messages: 0, pending_requests: 0, total: 0 };
+    return { unread_messages: 0, total: 0 };
   }
 
   const blockedIds = await relationship.blockedIdsFor(user.id);
@@ -417,30 +396,51 @@ async function unreadSummary(user) {
     0
   );
 
-  const pendingRequests = user.profile?.isEarner
-    ? await prisma.friendRequest.count({
-        where: {
-          addresseeId: user.id,
-          status: 'pending',
-          ...(blocked.length > 0 ? { requesterId: { notIn: blocked } } : {}),
-        },
-      })
-    : 0;
-
-  return {
-    unread_messages: unreadMessages,
-    pending_requests: pendingRequests,
-    total: unreadMessages + pendingRequests,
-  };
+  return { unread_messages: unreadMessages, total: unreadMessages };
 }
 
-/** Finds the thread with one person, for a profile's Message button. */
-async function findWithUser(user, otherId) {
+/**
+ * Opens the conversation with `otherId`, creating it on the spot if these two
+ * have never talked before — there is no approval step, only the
+ * earner-direction and privacy checks `assertCanStartConversation` runs.
+ * Idempotent: calling it again for the same pair just returns the existing
+ * thread.
+ */
+async function openOrCreate(user, otherId) {
+  await relationship.assertCanStartConversation(user, otherId);
+
   const [userAId, userBId] = relationship.orderPair(user.id, otherId);
-  return prisma.conversation.findUnique({
+  const existing = await prisma.conversation.findUnique({
     where: { userAId_userBId: { userAId, userBId } },
+  });
+
+  const conversation = await prisma.conversation.upsert({
+    where: { userAId_userBId: { userAId, userBId } },
+    create: { userAId, userBId },
+    update: {},
     include: CONVERSATION_INCLUDE,
   });
+
+  if (!existing) {
+    activity.recordPair(
+      {
+        userId: user.id,
+        type: 'conversation_started',
+        relatedUserId: otherId,
+        relatedEntityId: conversation.id,
+        description: 'Started a chat',
+      },
+      {
+        userId: otherId,
+        type: 'conversation_started',
+        relatedUserId: user.id,
+        relatedEntityId: conversation.id,
+        description: 'A chat was started with you',
+      }
+    );
+  }
+
+  return conversation;
 }
 
 module.exports = {
@@ -450,8 +450,9 @@ module.exports = {
   sendMessage,
   deleteMessage,
   setMuted,
+  setPinned,
   unreadSummary,
-  findWithUser,
+  openOrCreate,
   getConversationOr404,
   sideOf,
   CONVERSATION_INCLUDE,

@@ -232,56 +232,6 @@ async function livekitRooms() {
   };
 }
 
-// ── Friend requests ─────────────────────────────────────────────────────────
-
-async function friendRequestFeed({ status, userId, from, to, search, skip = 0, take = 25 }) {
-  const where = {};
-  if (status) where.status = status;
-  if (userId) where.OR = [{ requesterId: userId }, { addresseeId: userId }];
-  if (from || to) {
-    where.createdAt = {};
-    if (from) where.createdAt.gte = new Date(from);
-    if (to) where.createdAt.lte = new Date(to);
-  }
-  if (search) {
-    where.AND = [
-      {
-        OR: [
-          { requester: { profile: { name: { contains: search, mode: 'insensitive' } } } },
-          { addressee: { profile: { name: { contains: search, mode: 'insensitive' } } } },
-        ],
-      },
-    ];
-  }
-
-  const [rows, total] = await Promise.all([
-    prisma.friendRequest.findMany({
-      where,
-      include: {
-        requester: { include: PROFILE_INCLUDE },
-        addressee: { include: PROFILE_INCLUDE },
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take,
-    }),
-    prisma.friendRequest.count({ where }),
-  ]);
-
-  return {
-    items: rows.map((r) => ({
-      id: r.id,
-      requester: summarise(r.requester),
-      addressee: summarise(r.addressee),
-      status: r.status,
-      message: r.message,
-      created_at: r.createdAt.toISOString(),
-      responded_at: r.respondedAt?.toISOString() ?? null,
-    })),
-    total,
-  };
-}
-
 // ── Verification ────────────────────────────────────────────────────────────
 //
 // Manual and administrator-driven, off the profile directly — there is no
@@ -849,7 +799,6 @@ module.exports = {
   callFeed,
   liveCalls,
   livekitRooms,
-  friendRequestFeed,
   verificationFeed,
   decideVerification,
   reportFeed,

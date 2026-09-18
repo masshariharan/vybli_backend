@@ -70,7 +70,7 @@ async function favoriteIdsFor(userId) {
 /**
  * Everyone this account has favorited, most recently favorited first.
  *
- * Blocked people are excluded the same way discovery and the friends list
+ * Blocked people are excluded the same way discovery and the Chats screen
  * exclude them: a favourite you can no longer interact with is not something
  * the Favourites tab should still offer to call.
  */

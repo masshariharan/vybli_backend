@@ -221,8 +221,9 @@ async function assertNotBusy(userId, role) {
  * Sets presence for the two people on a call.
  *
  * Goes through `profileService.setPresence` — one call per user rather than a
- * single `updateMany` — because that is the only path that tells a friend
- * their contact just went busy or came back online. The bulk write this used
+ * single `updateMany` — because that is the only path that tells the other
+ * side of an open conversation that their contact just went busy or came back
+ * online. The bulk write this used
  * to do wrote the column and nothing else: the peer's badge in a chat header
  * or a discovery card never moved until something unrelated happened to
  * refetch it.
@@ -382,8 +383,8 @@ async function end(user, callId, { reason = 'hungUp', force = false } = {}) {
  *
  * Only while `connected` — there is no video to talk over yet on a call
  * still ringing, and nothing left to reach once it has ended. Either side
- * may send; nothing here asks whether they are friends, the same as nothing
- * asked before letting them talk over the call itself.
+ * may send; nothing here asks whether they have a conversation open, the same
+ * as nothing asked before letting them talk over the call itself.
  */
 async function sendMessage(user, callId, text) {
   const call = await loadCall(callId);

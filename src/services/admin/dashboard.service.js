@@ -63,13 +63,6 @@ async function overview() {
     suspendedUsers,
     earnerUsers,
 
-    totalRequests,
-    pendingRequests,
-    acceptedRequests,
-    rejectedRequests,
-    cancelledRequests,
-    totalFriendships,
-
     activeCalls,
     voiceCalls,
     videoCalls,
@@ -109,13 +102,6 @@ async function overview() {
     prisma.userProfile.count({ where: { verificationStatus: 'pending' } }),
     prisma.user.count({ where: { status: 'suspended', deletedAt: null } }),
     prisma.userProfile.count({ where: { isEarner: true } }),
-
-    prisma.friendRequest.count(),
-    prisma.friendRequest.count({ where: { status: 'pending' } }),
-    prisma.friendRequest.count({ where: { status: 'accepted' } }),
-    prisma.friendRequest.count({ where: { status: 'rejected' } }),
-    prisma.friendRequest.count({ where: { status: 'cancelled' } }),
-    prisma.friendship.count(),
 
     prisma.call.count({ where: { status: { in: ['ringing', 'connected'] } } }),
     prisma.call.count({ where: { type: 'voice' } }),
@@ -165,14 +151,6 @@ async function overview() {
       pending_verification: pendingVerification,
       suspended: suspendedUsers,
       earners: earnerUsers,
-    },
-    friends: {
-      total_requests: totalRequests,
-      pending: pendingRequests,
-      accepted: acceptedRequests,
-      rejected: rejectedRequests,
-      cancelled: cancelledRequests,
-      friendships: totalFriendships,
     },
     communication: {
       active_calls: activeCalls,
@@ -263,18 +241,6 @@ const SERIES = {
     prisma.$queryRaw`
       SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::int AS value
       FROM user_activities WHERE type = 'login' AND "createdAt" >= ${from} AND "createdAt" < ${to}
-      GROUP BY 1 ORDER BY 1`,
-
-  friend_requests: (from, to) =>
-    prisma.$queryRaw`
-      SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::int AS value
-      FROM friend_requests WHERE "createdAt" >= ${from} AND "createdAt" < ${to}
-      GROUP BY 1 ORDER BY 1`,
-
-  friendships: (from, to) =>
-    prisma.$queryRaw`
-      SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::int AS value
-      FROM friendships WHERE "createdAt" >= ${from} AND "createdAt" < ${to}
       GROUP BY 1 ORDER BY 1`,
 
   voice_calls: (from, to) =>

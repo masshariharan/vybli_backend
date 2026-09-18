@@ -30,9 +30,10 @@ async function getMyProfile(userId) {
  * Someone else's profile.
  *
  * Hidden profiles stay reachable by direct link for people who already have a
- * relationship: hiding removes you from *discovery*, and a friend opening the
- * chat header should not hit a wall. A stranger who guessed the id gets a
- * not-found, which is also the honest answer to "is this person on Vybli".
+ * conversation open with them: hiding removes you from *discovery*, and
+ * opening the chat header should not hit a wall. A stranger who guessed the
+ * id gets a not-found, which is also the honest answer to "is this person on
+ * Vybli".
  */
 async function getPublicProfile(viewer, targetId) {
   const target = await relationship.loadCounterpart(targetId);
@@ -43,18 +44,13 @@ async function getPublicProfile(viewer, targetId) {
 
   const hidden = target.privacySettings?.profileVisibleToEveryone === false;
   if (hidden && viewer.id !== targetId) {
-    const known =
-      (await relationship.areFriends(viewer.id, targetId)) ||
-      (await relationship.connectionStatus(viewer.id, targetId)) !== 'none';
+    const known = await relationship.hasConversation(viewer.id, targetId);
     if (!known) throw errors.notFound('That person', 'USER_NOT_FOUND');
   }
 
-  const [status, languages] = await Promise.all([
-    relationship.connectionStatus(viewer.id, targetId),
-    prisma.userLanguage.findMany({ where: { userId: targetId } }),
-  ]);
+  const languages = await prisma.userLanguage.findMany({ where: { userId: targetId } });
 
-  return { user: { ...target, languages }, connectionStatus: status };
+  return { user: { ...target, languages } };
 }
 
 /**
@@ -134,8 +130,9 @@ async function updateProfile(user, payload) {
  *
  * **Idempotent, and that is load-bearing.** Setting a status the profile
  * already has does nothing and tells nobody: no write, no admin event, no
- * `presence:changed` for their friends. That is what lets the socket layer
- * call this unconditionally on every connect, which is the only way to be
+ * `presence:changed` for anyone with an open conversation. That is what lets
+ * the socket layer call this unconditionally on every connect, which is the
+ * only way to be
  * sure a connected account is marked online. It used to guard the call with
  * "is this the only socket in the room", so a reconnect that raced an old,
  * not-yet-reaped socket skipped the update and left somebody offline to
@@ -146,9 +143,9 @@ async function updateProfile(user, payload) {
  * both read "offline", both decide they had changed something, and both
  * announce it.
  *
- * Only friends are notified. Broadcasting to everyone who has ever viewed a
- * profile would be a firehose, and friends are the only people with a surface
- * that shows live presence.
+ * Only people with an open conversation are notified. Broadcasting to
+ * everyone who has ever viewed a profile would be a firehose, and a chat
+ * thread is the only surface that shows live presence.
  */
 async function setPresence(userId, status) {
   const { count } = await prisma.userProfile.updateMany({
@@ -189,9 +186,9 @@ async function setPresence(userId, status) {
   // Hiding presence means nobody is told about the change — publishing it and
   // trusting each client to ignore it would leak exactly what was hidden.
   if (privacy?.showOnlineStatus !== false) {
-    const friendIds = await relationship.friendIdsFor(userId);
-    if (friendIds.size > 0) {
-      emitToUsers([...friendIds], 'presence:changed', {
+    const peerIds = await relationship.conversationPeerIdsFor(userId);
+    if (peerIds.size > 0) {
+      emitToUsers([...peerIds], 'presence:changed', {
         user_id: userId,
         status: profile.presence,
         last_seen: profile.lastSeen?.toISOString() ?? null,

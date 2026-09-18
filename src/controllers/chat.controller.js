@@ -6,21 +6,15 @@ const { ok, created, paginated } = require('../utils/respond');
 const { q } = require('../middleware/validate');
 const { toSkipTake } = require('../validators/common');
 
-/**
- * The Chats screen.
- *
- * Both tabs come through here. `requests` returns pending friend requests
- * shaped as threads, because that is how the app models them — a conversation
- * at an earlier status rather than a different kind of object.
- */
+/** The Chats screen: every open conversation, pinned ones first. */
 async function listThreads(req, res) {
   const params = q(req);
   const { skip, take } = toSkipTake(params);
 
-  const { rows, total, kind, messagingDisabled } = await chatService.listThreads(
-    req.user,
-    { filter: params.filter, skip, take }
-  );
+  const { rows, total, messagingDisabled } = await chatService.listThreads(req.user, {
+    skip,
+    take,
+  });
 
   // Messaging off is an empty list with a reason, not an error — the client
   // has a state for it, and a 403 would turn a setting into a failure.
@@ -43,12 +37,9 @@ async function listThreads(req, res) {
     );
   }
 
-  const items =
-    kind === 'requests'
-      ? rows.map((r) => serialize.requestThread(r, req.userId))
-      : rows.map((c) =>
-          serialize.chatThread(c, req.userId, { messages: c.messages ?? [] })
-        );
+  const items = rows.map((c) =>
+    serialize.chatThread(c, req.userId, { messages: c.messages ?? [] })
+  );
 
   return paginated(res, items, { page: params.page, limit: params.limit, total });
 }
@@ -116,24 +107,32 @@ async function setMuted(req, res) {
   );
 }
 
+async function setPinned(req, res) {
+  const conversation = await chatService.setPinned(
+    req.user,
+    req.params.id,
+    req.body.pinned
+  );
+  return ok(
+    res,
+    { conversation_id: conversation.id, pinned: req.body.pinned },
+    req.body.pinned ? 'Chat pinned' : 'Chat unpinned'
+  );
+}
+
 /** The Chats tab badge. */
 async function unreadSummary(req, res) {
   const summary = await chatService.unreadSummary(req.user);
   return ok(res, summary, 'Unread summary');
 }
 
-/** Finds the thread with one person, for a profile's Message button. */
-async function findWithUser(req, res) {
-  const conversation = await chatService.findWithUser(req.user, req.params.id);
+/** Opens (creating if needed) the conversation with one person — the Chat button. */
+async function openConversation(req, res) {
+  const conversation = await chatService.openOrCreate(req.user, req.params.id);
   return ok(
     res,
-    {
-      conversation_id: conversation?.id ?? null,
-      thread: conversation
-        ? serialize.chatThread(conversation, req.userId, { messages: [] })
-        : null,
-    },
-    conversation ? 'Conversation' : 'No conversation yet'
+    { thread: serialize.chatThread(conversation, req.userId, { messages: [] }) },
+    'Conversation'
   );
 }
 
@@ -144,6 +143,7 @@ module.exports = {
   markRead,
   deleteMessage,
   setMuted,
+  setPinned,
   unreadSummary,
-  findWithUser,
+  openConversation,
 };

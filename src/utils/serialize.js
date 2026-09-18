@@ -9,7 +9,7 @@ const avatarCatalog = require('../config/avatarCatalog');
  * Keys are **snake_case** because that is what the Flutter models already
  * parse — `VybliUser.fromJson` reads `city_id`, `voice_rate_per_minute`,
  * `is_earner`. Enum values are sent as their **exact Dart enum names**
- * (`makeFriends`, `pendingOutgoing`, `voice`), because the client resolves
+ * (`makeFriends`, `sending`, `voice`), because the client resolves
  * them with `values.byName(...)`. Both are load-bearing: rename a key here and
  * the field silently becomes null in the app rather than failing loudly.
  *
@@ -269,62 +269,20 @@ function message(row, viewerId) {
   };
 }
 
-/**
- * A conversation in the shape `ChatThread` expects.
- *
- * The app models a pending friend request and an open conversation as the same
- * object at different `status` values, so this collapses both into one thread:
- * `pendingIncoming` / `pendingOutgoing` / `accepted`.
- */
-function chatThread(conversation, viewerId, { request = null, messages = [] } = {}) {
+/** A conversation in the shape `ChatThread` expects. */
+function chatThread(conversation, viewerId, { messages = [] } = {}) {
   const isA = conversation?.userAId === viewerId;
   const peer = isA ? conversation?.userB : conversation?.userA;
-
-  let status = 'accepted';
-  if (request && request.status === 'pending') {
-    status = request.requesterId === viewerId ? 'pendingOutgoing' : 'pendingIncoming';
-  }
 
   return {
     id: conversation.id,
     user: userSummary(peer),
-    status,
     unread_count: isA ? conversation.unreadForA : conversation.unreadForB,
     is_muted: isA ? conversation.mutedByA : conversation.mutedByB,
+    pinned: isA ? conversation.pinnedByA : conversation.pinnedByB,
     is_typing: false, // Live-only; the socket layer owns it.
     last_message_at: iso(conversation.lastMessageAt),
     messages: messages.map((m) => message(m, viewerId)),
-  };
-}
-
-/**
- * A thread that exists only as a pending request — there is no conversation
- * row yet, because one is created on accept.
- */
-function requestThread(request, viewerId) {
-  const outgoing = request.requesterId === viewerId;
-  const peer = outgoing ? request.addressee : request.requester;
-  return {
-    id: `req_${request.id}`,
-    request_id: request.id,
-    user: userSummary(peer),
-    status: outgoing ? 'pendingOutgoing' : 'pendingIncoming',
-    unread_count: 0,
-    is_muted: false,
-    is_typing: false,
-    last_message_at: iso(request.createdAt),
-    messages: request.message
-      ? [
-          {
-            id: `req_msg_${request.id}`,
-            text: request.message,
-            author: outgoing ? 'me' : 'them',
-            sent_at: iso(request.createdAt),
-            status: 'sent',
-            attachment: null,
-          },
-        ]
-      : [],
   };
 }
 
@@ -475,19 +433,6 @@ function notification(row) {
   };
 }
 
-function friendRequest(row, viewerId) {
-  const outgoing = row.requesterId === viewerId;
-  return {
-    id: row.id,
-    direction: outgoing ? 'outgoing' : 'incoming',
-    status: row.status,
-    message: row.message ?? null,
-    user: userSummary(outgoing ? row.addressee : row.requester),
-    created_at: iso(row.createdAt),
-    responded_at: iso(row.respondedAt),
-  };
-}
-
 function privacySettings(row) {
   return {
     profile_visible_to_everyone: row.profileVisibleToEveryone,
@@ -529,7 +474,6 @@ module.exports = {
   avatar,
   message,
   chatThread,
-  requestThread,
   callRecord,
   activeCall,
   walletSummary,
@@ -539,7 +483,6 @@ module.exports = {
   vipPlan,
   earning,
   notification,
-  friendRequest,
   privacySettings,
   notificationSettings,
   discoverySettings,
