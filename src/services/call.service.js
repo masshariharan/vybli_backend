@@ -6,6 +6,7 @@ const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
 const walletService = require('./wallet.service');
 const notificationService = require('./notification.service');
+const push = require('./push.service');
 const profileService = require('./profile.service');
 const livekit = require('./livekit.service');
 const activity = require('./activity.service');
@@ -142,6 +143,30 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
   // tap Answer to fetch a token is the difference between "hello?" and two
   // seconds of silence.
   emitToUser(calleeId, 'call:incoming', await withMedia(call, calleeId));
+
+  // And to the phone, for the case the socket cannot reach: app closed,
+  // swiped away, or the process asleep. This is the whole difference between
+  // a calling app and one that only works while you are already looking at
+  // it — without it the ring lands in a closed app and nobody ever learns the
+  // call happened until they open Vybli and find a missed call.
+  //
+  // Data-only and short-lived, so the client can draw a real ringing screen
+  // with Answer and Decline on it, and so a phone that rejoins the network
+  // two minutes from now does not start ringing at a call that is over. See
+  // `push.service`.
+  //
+  // Through `notificationService` rather than straight at `push`, so the
+  // callee's `incomingCalls` setting is honoured by the same code path as
+  // every other kind — see the note there.
+  notificationService
+    .ring(calleeId, {
+      callId: call.id,
+      type,
+      callerId: user.id,
+      callerName: user.profile?.name ?? 'Someone',
+      avatarUrl: call.caller?.profile?.avatarUrl ?? null,
+    })
+    .catch((err) => console.error(`[push] ring for call ${call.id}`, err));
   emitToUser(user.id, 'call:ringing', await withMedia(call, user.id));
 
   activity.recordPair(
@@ -483,6 +508,14 @@ async function finalise(call, { status, reason }) {
   };
   emitToUser(call.callerId, 'call:ended', payload);
   emitToUser(call.calleeId, 'call:ended', payload);
+
+  // Take the ring down on every phone that is still showing it. A call
+  // cancelled, declined elsewhere, or answered on another device leaves the
+  // rest ringing at something that no longer exists — and answering that
+  // lands on an error rather than a conversation.
+  push
+    .sendCallCancelled(call.calleeId, { callId: call.id, reason: status })
+    .catch((err) => console.error(`[push] cancel for call ${call.id}`, err));
 
   // Everything past this point is bookkeeping nobody's screen is waiting on:
   // closing the LiveKit room, the lifetime-call count, the earner's credit, a

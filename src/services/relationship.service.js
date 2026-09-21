@@ -78,10 +78,20 @@ async function assertCanInteract(userId, otherId) {
 /**
  * Can `user` open a brand-new conversation with `otherId`?
  *
- * Beyond the shared checks: both sides must have messaging on, and the
- * recipient must be an Earn Money profile while the sender must not be one —
- * the app's rule, and the reason an earner account never initiates a chat of
- * its own, only receives one.
+ * Beyond the shared checks: both sides must have messaging on, and the pair
+ * must be one Earn Money account and one Make Friends account — the same
+ * shape `assertCanCall` requires, and for the same reason. Two earners, or
+ * two Make Friends accounts, are not a pairing this app connects.
+ *
+ * **Either side may open it.** This used to be one-directional: the earner
+ * was allowed to receive a chat and never to start one. Nothing downstream
+ * needed that — `assertCanMessage`, which runs on every single send, has
+ * never cared who opened the thread, and a conversation is one row for the
+ * pair rather than one per direction, so an earner writing first produces
+ * exactly the thread the other order would have. All the restriction
+ * achieved was a Chat button missing from half the profiles in the app: an
+ * earner looking at someone she had just spoken to could call him back but
+ * could not write to him, with nothing on screen to say why.
  */
 async function assertCanStartConversation(user, otherId) {
   const other = await assertCanInteract(user.id, otherId);
@@ -92,8 +102,10 @@ async function assertCanStartConversation(user, otherId) {
   if (other.privacySettings && other.privacySettings.allowMessages === false) {
     throw errors.messagingDisabledByThem();
   }
-  if (user.profile?.isEarner) throw errors.senderIsEarner();
-  if (!other.profile?.isEarner) throw errors.notAnEarner();
+  if (!other.profile) throw errors.notFound('That person', 'USER_NOT_FOUND');
+  if (Boolean(user.profile?.isEarner) === Boolean(other.profile.isEarner)) {
+    throw errors.chatRoleMismatch();
+  }
 
   return other;
 }

@@ -160,6 +160,15 @@ module.exports = {
   verifyPhoneToken,
   splitE164,
   normalise,
+  /**
+   * The initialised Admin app, or null when Firebase is unconfigured.
+   *
+   * Exported for `push.service`, which needs the same app this module already
+   * builds rather than a second one — `initializeApp` twice under the default
+   * name throws, and two named apps would mean two credential loads and two
+   * connection pools for one project.
+   */
+  app: client,
   get configured() {
     return env.firebase.configured;
   },

@@ -334,6 +334,20 @@ if (env.corsOrigin.includes('*')) {
       'once that has a domain.'
   );
 }
+if (env.firebase.configured && !env.firebase.hasServiceAccount) {
+  // Worth saying out loud, because everything *else* Firebase does here works
+  // without it. Sign-in verifies a token against Google's public certificates
+  // and needs no credential at all, so a deployment with only
+  // FIREBASE_PROJECT_ID set looks entirely healthy — people sign in, calls
+  // connect, messages arrive — right up until a phone is asleep, at which
+  // point notifications simply do not happen and nothing in the logs connects
+  // the two.
+  console.warn(
+    '[boot] FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY are not set. Push ' +
+      'notifications are disabled: calls and messages will only reach phones ' +
+      'that currently have the app open and connected.'
+  );
+}
 if (!env.payments.configured) {
   // Not a boot-time throw: `wallet.service.purchase` already refuses the
   // request at runtime once a provider is configured (`creditsWithoutPayment`

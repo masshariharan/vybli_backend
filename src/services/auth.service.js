@@ -331,12 +331,29 @@ async function refresh({ refreshToken, device, ip }) {
 }
 
 /** Ends one session, or every session for the user. */
-async function logout({ userId, refreshToken, allDevices = false }) {
+async function logout({ userId, refreshToken, allDevices = false, deviceToken = null }) {
   activity.record({
     userId,
     type: 'logout',
     description: allDevices ? 'Signed out of every device' : 'Signed out',
   });
+
+  // Stop notifying this phone before the session is even revoked. Leaving the
+  // token behind is how the next person to sign in on a shared handset starts
+  // receiving the previous account's messages — the push has no session in it
+  // to go stale, so nothing else would ever stop it.
+  //
+  // "Everywhere" drops every phone; otherwise only the one signing out, which
+  // is the whole point of the client sending its own token.
+  if (allDevices) {
+    await prisma.deviceToken
+      .deleteMany({ where: { userId } })
+      .catch((err) => console.error('[push] could not clear tokens on logout', err));
+  } else if (deviceToken) {
+    await prisma.deviceToken
+      .deleteMany({ where: { userId, token: deviceToken } })
+      .catch((err) => console.error('[push] could not clear token on logout', err));
+  }
 
   if (allDevices) {
     const { count } = await prisma.userSession.updateMany({

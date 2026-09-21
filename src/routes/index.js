@@ -22,7 +22,12 @@ const favoriteController = require('../controllers/favorite.controller');
 const chatController = require('../controllers/chat.controller');
 const callController = require('../controllers/call.controller');
 const walletController = require('../controllers/wallet.controller');
-const { notifications, moderation, verification } = require('../controllers/misc.controller');
+const {
+  notifications,
+  devices,
+  moderation,
+  verification,
+} = require('../controllers/misc.controller');
 const livekitController = require('../controllers/livekit.controller');
 const adminRoutes = require('./admin');
 
@@ -494,6 +499,22 @@ notifs.post(
 );
 
 router.use('/notifications', notifs);
+
+// ── Devices ─────────────────────────────────────────────────────────────────
+//
+// Push tokens. `authenticate` only — deliberately not `requireOnboarded`: a
+// call cannot arrive before onboarding is finished, but the *token* is
+// available the moment the app launches, and refusing it until the profile is
+// complete means the first thing a new account misses is the notification
+// telling them somebody replied.
+
+const devs = express.Router();
+devs.use(authenticate);
+
+devs.post('/', validate({ body: S.devices.register }), h(devices.register));
+devs.delete('/', validate({ body: S.devices.unregister }), h(devices.unregister));
+
+router.use('/devices', devs);
 
 // ── Moderation ──────────────────────────────────────────────────────────────
 

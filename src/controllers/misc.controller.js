@@ -1,6 +1,7 @@
 'use strict';
 
 const notificationService = require('../services/notification.service');
+const pushService = require('../services/push.service');
 const moderationService = require('../services/moderation.service');
 const verificationService = require('../services/verification.service');
 const serialize = require('../utils/serialize');
@@ -9,10 +10,10 @@ const { q } = require('../middleware/validate');
 const { toSkipTake } = require('../validators/common');
 
 /**
- * Notifications, moderation and verification status.
+ * Notifications, devices, moderation and verification status.
  *
- * Three small surfaces sharing one file rather than three files of forty
- * lines each — none of them has enough behaviour to earn its own.
+ * Small surfaces sharing one file rather than four files of forty lines each
+ * — none of them has enough behaviour to earn its own.
  */
 
 // ── Notifications ───────────────────────────────────────────────────────────
@@ -46,6 +47,37 @@ const notifications = {
   async markAllRead(req, res) {
     const count = await notificationService.markAllRead(req.userId);
     return ok(res, { marked: count, unread_count: 0 }, 'All caught up');
+  },
+};
+
+// ── Devices ─────────────────────────────────────────────────────────────────
+
+/**
+ * Where to reach this account's phones when no socket is open.
+ *
+ * Registration is idempotent and called on **every launch**, not once at
+ * sign-up. FCM rotates tokens on its own schedule — a reinstall, a restore
+ * to a new phone, a clear of app data — and a token registered once at
+ * sign-up quietly stops working some weeks later, which presents as "I stopped
+ * getting notifications" with nothing in any log to say why.
+ */
+const devices = {
+  async register(req, res) {
+    await pushService.register(req.userId, {
+      token: req.body.token,
+      platform: req.body.platform,
+      deviceName: req.body.device_name ?? null,
+    });
+    // `enabled` travels back so a client can tell "the server took my token"
+    // apart from "the server has no way to send anything" — the second is a
+    // deployment that is missing its service account, and it is otherwise
+    // indistinguishable from silence.
+    return ok(res, { registered: true, push_enabled: pushService.enabled() }, 'Device registered');
+  },
+
+  async unregister(req, res) {
+    const removed = await pushService.unregister(req.userId, req.body.token);
+    return ok(res, { removed }, 'Device removed');
   },
 };
 
@@ -108,4 +140,4 @@ const verification = {
   },
 };
 
-module.exports = { notifications, moderation, verification };
+module.exports = { notifications, devices, moderation, verification };

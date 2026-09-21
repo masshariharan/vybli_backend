@@ -5,6 +5,7 @@ const { errors } = require('../utils/errors');
 const { emitToUser } = require('../sockets/bus');
 const serialize = require('../utils/serialize');
 const activity = require('./activity.service');
+const push = require('./push.service');
 
 /**
  * Notifications.
@@ -41,6 +42,31 @@ async function wants(userId, kind) {
 }
 
 /**
+ * Rings a phone that is not currently connected.
+ *
+ * Deliberately **not** [notify]: a ring is not a notification. It writes no
+ * row — the call log is the record, and a "someone called" entry alongside it
+ * would double every call in the Notifications tab — and it has to be
+ * data-only so the client can draw Answer and Decline on it.
+ *
+ * What it does share is the rule that matters: the `incomingCalls` setting is
+ * honoured here rather than at the call site, exactly like every other kind.
+ * That was the hole in the first version of this — the ring was pushed
+ * straight from `call.service`, so an account that had switched incoming-call
+ * notifications off still had its phone ring.
+ *
+ * Note what is *not* suppressed: the socket. Someone with the app open still
+ * sees the call arrive, because the setting governs being interrupted when
+ * you are not looking, not whether people can reach you at all. Refusing
+ * calls outright is `allowVoiceCalls` / `allowVideoCalls`, which is a
+ * different switch on a different screen.
+ */
+async function ring(userId, call) {
+  if (!(await wants(userId, 'incomingCall'))) return null;
+  return push.sendCall(userId, call);
+}
+
+/**
  * Records a notification and delivers it live.
  *
  * Returns null when the user has that kind switched off — callers do not
@@ -59,6 +85,31 @@ async function notify({ userId, kind, title, body = '', data = null }) {
   // The badge count travels with it, so the client never has to re-count.
   const unread = await unreadCount(userId);
   emitToUser(userId, 'notification:count', { unread_count: unread });
+
+  // And to the phone itself, for the case the socket cannot cover: the app
+  // closed, swiped away, or asleep.
+  //
+  // Sent unconditionally rather than only when no socket is connected. A
+  // connected socket does not mean anybody is looking — Android keeps the
+  // connection alive for a while after the app is backgrounded, and "deliver
+  // only if disconnected" is exactly the rule that makes a notification go
+  // missing in the seconds that matter most. The client suppresses the
+  // banner while it is genuinely in the foreground, where it is showing the
+  // message itself; it is the only party that knows.
+  //
+  // Not awaited, and its failure cannot reach the caller: the notification is
+  // already written and already delivered over the socket, and a push that
+  // did not send is not a reason for a message to report itself unsent.
+  push
+    .sendNotification(userId, {
+      title,
+      body,
+      data: { kind, notification_id: row.id, ...(data ?? {}) },
+      // One row per conversation rather than one per message. Twenty from the
+      // same person replace each other; twenty from twenty people do not.
+      collapseKey: data?.conversation_id ? `chat_${data.conversation_id}` : null,
+    })
+    .catch((err) => console.error(`[push] ${kind} notification for ${userId}`, err));
 
   // Only account-level ones reach the timeline. Every message and every call
   // already sends a notification, so mirroring all of them would bury the
@@ -124,4 +175,4 @@ async function markAllRead(userId) {
   return count;
 }
 
-module.exports = { notify, list, unreadCount, markRead, markAllRead };
+module.exports = { ring, notify, list, unreadCount, markRead, markAllRead };

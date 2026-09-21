@@ -551,6 +551,54 @@ async function run() {
     { got: meeraSelf.data?.user?.voice_rate_per_minute, expected: MEERA_RATE }
   );
 
+  // ── Devices ───────────────────────────────────────────────────────────────
+  // Where to reach a phone that is not holding a socket open. Registration is
+  // called on every launch, so the thing worth pinning is that repeating it is
+  // free and that a token follows whoever is signed in on that handset.
+  section('Devices');
+
+  const fakeToken = `e2e-token-${Date.now()}`;
+  const registered = await post('/devices', caller.token, {
+    token: fakeToken,
+    platform: 'android',
+    device_name: 'e2e handset',
+  });
+  check('a device can register for notifications', registered.success, {
+    error: registered.error,
+  });
+
+  const reRegistered = await post('/devices', caller.token, { token: fakeToken });
+  check('registering the same token again is not an error', reRegistered.success, {
+    error: reRegistered.error,
+  });
+
+  // The same handset, now signed in as somebody else. The row has to move: a
+  // phone belongs to whoever is signed in on it, and leaving the old row would
+  // send the previous account's messages to the new one's screen.
+  const moved = await post('/devices', earner.token, { token: fakeToken });
+  check('the same token registered by another account moves to them', moved.success, {
+    error: moved.error,
+  });
+
+  const notMine = await del('/devices', caller.token, { token: fakeToken });
+  check(
+    'and the previous owner can no longer unregister it',
+    notMine.success && notMine.data?.removed === 0,
+    { got: notMine.data?.removed, expected: 0 }
+  );
+
+  const dropped = await del('/devices', earner.token, { token: fakeToken });
+  check(
+    'the account it moved to can',
+    dropped.success && dropped.data?.removed === 1,
+    { got: dropped.data?.removed, expected: 1 }
+  );
+
+  const rubbish = await post('/devices', caller.token, { token: 'x' });
+  check('a token too short to be real is refused', !rubbish.success, {
+    error: rubbish.error,
+  });
+
   // ── Chat ──────────────────────────────────────────────────────────────────
   // There is no request/approval step any more: any eligible pair can open a
   // conversation directly, and doing so twice is idempotent rather than an
@@ -560,10 +608,13 @@ async function run() {
   const toSelf = await post(`/users/${caller.id}/conversation`, caller.token);
   check('you cannot chat with yourself', !toSelf.success, { error: toSelf.error });
 
+  // Either side may open the thread. An earner used to be allowed to receive
+  // a chat and never to start one, which left her with no way to write to
+  // someone she had just been on a call with.
   const fromEarner = await post(`/users/${caller.id}/conversation`, earner.token);
   check(
-    'an earner cannot start a chat',
-    !fromEarner.success && fromEarner.error === 'SENDER_IS_EARNER',
+    'an earner can start a chat with a Make Friends account',
+    fromEarner.success,
     { error: fromEarner.error }
   );
 
@@ -571,6 +622,11 @@ async function run() {
   check('opening a chat with an earner succeeds', opened.success, { error: opened.error });
   const conversationId = opened.data?.thread?.id;
   check('opening creates the conversation', Boolean(conversationId));
+  check(
+    'and it is one thread for the pair, whichever side opened it',
+    fromEarner.data?.thread?.id === conversationId,
+    { got: fromEarner.data?.thread?.id, expected: conversationId }
+  );
 
   const reopened = await post(`/users/${earner.id}/conversation`, caller.token);
   check(
@@ -632,11 +688,13 @@ async function run() {
   );
   check('and cannot be written to', !strangerMsg.success);
 
-  const toNonEarner = await post(`/users/${outsider.id}/conversation`, caller.token);
+  // Both Make Friends accounts: the one pairing chat still refuses, exactly
+  // as a call between the same two would.
+  const toSameRole = await post(`/users/${outsider.id}/conversation`, caller.token);
   check(
-    'starting a chat with a non-earner is refused',
-    !toNonEarner.success && toNonEarner.error === 'RECIPIENT_NOT_EARNER',
-    { error: toNonEarner.error }
+    'starting a chat with someone on the same side is refused',
+    !toSameRole.success && toSameRole.error === 'CHAT_ROLE_MISMATCH',
+    { error: toSameRole.error }
   );
 
   // Unread accounting. A fresh message is needed here because opening the

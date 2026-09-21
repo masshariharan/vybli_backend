@@ -247,6 +247,8 @@ model User {
   activities        UserActivity[] @relation("ActivityUser")
   relatedActivities UserActivity[] @relation("ActivityRelatedUser")
 
+  devices DeviceToken[]
+
   // Phone is unique only among live accounts — a deleted account keeps its row
   // (history references it) but frees the number, which a plain @unique cannot
   // express. Enforced by a partial index in migration `phone_unique_active`.
@@ -358,6 +360,42 @@ model UserSession {
 
   @@index([userId, revokedAt])
   @@map("user_sessions")
+}
+
+/// Where to reach a phone that is not currently holding a socket open.
+///
+/// A push token, one row per install. It is **not** a session: the two have
+/// different lifetimes and conflating them is the usual way an app ends up
+/// either silent or notifying a phone somebody signed out of months ago.
+///
+///  * A token outlives a session. Sign out and back in on the same phone and
+///    FCM still hands the app the same token — which is why `token` is unique
+///    on its own and carries the user id as a mutable column rather than
+///    being keyed by the pair. Registering an existing token for a different
+///    account **moves** it, because the phone now belongs to that account.
+///  * A session outlives a token. FCM rotates tokens on reinstall, restore
+///    and its own schedule, so the client re-registers on every launch and on
+///    every rotation, and `lastSeenAt` is what says which rows are still
+///    real.
+///
+/// Rows are deleted, never marked dead: a token FCM has rejected as
+/// unregistered has no second life, and keeping it only means paying for a
+/// failed send on every notification for ever.
+model DeviceToken {
+  id         String   @id @default(cuid())
+  userId     String
+  /// The FCM registration token. Unique across the table — see above.
+  token      String   @unique
+  platform   String   @default("android")
+  /// Free-text, for support ("which phone is this?"). Never matched on.
+  deviceName String?
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
 }
 
 /// Codes are stored hashed — a leaked table must not let anyone sign in as

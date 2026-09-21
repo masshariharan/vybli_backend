@@ -146,15 +146,10 @@ const errors = {
     }),
 
   /** Starting a chat */
-  notAnEarner: () =>
+  chatRoleMismatch: () =>
     new AppError(
-      'Only Earn Money profiles can be messaged.',
-      { status: 400, code: 'RECIPIENT_NOT_EARNER' }
-    ),
-  senderIsEarner: () =>
-    new AppError(
-      'Earn Money accounts receive chats rather than start them.',
-      { status: 400, code: 'SENDER_IS_EARNER' }
+      'A chat must connect an Earn Money account with a Make Friends account.',
+      { status: 400, code: 'CHAT_ROLE_MISMATCH' }
     ),
 
   /** Blocking */

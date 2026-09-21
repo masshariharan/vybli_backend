@@ -95,6 +95,7 @@ async function logout(req, res) {
     userId: req.userId,
     refreshToken: req.body.refresh_token,
     allDevices: req.body.all_devices,
+    deviceToken: req.body.device_token,
   });
   return ok(res, result, 'Signed out');
 }

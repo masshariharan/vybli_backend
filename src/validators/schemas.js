@@ -56,6 +56,10 @@ const auth = {
     // Absent means "this device only, using the access token's session".
     refresh_token: z.string().trim().optional(),
     all_devices: z.boolean().default(false),
+    // The push token to forget on the way out. Sent by the device signing
+    // out, so the next person to sign in on this phone does not inherit the
+    // previous account's notifications.
+    device_token: z.string().trim().max(512).optional(),
   }),
 
   deleteAccount: z.object({
@@ -324,6 +328,24 @@ const notifications = {
   param: z.object({ id: cuid }),
 };
 
+// ── Devices ─────────────────────────────────────────────────────────────────
+
+const devices = {
+  register: z.object({
+    // An FCM registration token. Long, opaque and not worth pattern-matching
+    // — the format is Google's and has changed before; a bad one fails at
+    // send time and is pruned there.
+    token: z.string().trim().min(10).max(512),
+    platform: z.enum(['android', 'ios']).default('android'),
+    // For support, so "which of my phones is this?" has an answer. Never
+    // matched on, so anything the client sends is fine.
+    device_name: z.string().trim().max(120).optional(),
+  }),
+  unregister: z.object({
+    token: z.string().trim().min(10).max(512),
+  }),
+};
+
 // ── Favourites ──────────────────────────────────────────────────────────────
 
 const favorites = {
@@ -343,6 +365,7 @@ module.exports = {
   wallet,
   moderation,
   notifications,
+  devices,
   favorites,
   pagination,
 };
