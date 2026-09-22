@@ -250,7 +250,11 @@ async function handleDisconnect(io, socket) {
   const activeCall = await callService.getActive(userId);
   if (activeCall) {
     await callService
-      .end({ id: userId }, activeCall.id, { reason: 'networkError', force: true })
+      .end({ id: userId }, activeCall.id, {
+        reason: 'networkError',
+        force: true,
+        disconnectedUserId: userId,
+      })
       .catch(() => {});
   }
 

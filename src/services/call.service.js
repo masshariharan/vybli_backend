@@ -144,6 +144,7 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
   // Busy is set on both sides now, not on connect — a second caller must not
   // get through to a phone that is already ringing.
   await setPresence([user.id, calleeId], 'busy');
+  announceCallPresence(call, { callerStatus: 'busy', calleeStatus: 'busy' });
 
   if (calleeReachable) {
     // Both sides get their join credentials with the ring, so the callee's
@@ -302,6 +303,42 @@ function setPresence(userIds, presence) {
 }
 
 /**
+ * Tells each side of a call about the other's presence directly.
+ *
+ * `profileService.setPresence` only announces to people with an *open
+ * conversation* — right for chat, where that is the only surface showing
+ * live presence, but two people on a call are exactly as entitled to know
+ * about each other as two people mid-conversation, whether or not they have
+ * ever exchanged a single message. Without this, a call between two people
+ * who have only ever called each other left both sides' screens holding
+ * whatever "busy"/"online" they last fetched — correct in the database,
+ * stale on screen, sometimes indefinitely.
+ *
+ * Takes the privacy settings straight off the call row rather than querying
+ * again — `start` and `finalise` both already load `caller`/`callee` with
+ * `privacySettings` via `CALL_INCLUDE`.
+ */
+function announceCallPresence(call, { callerStatus, calleeStatus }) {
+  const at = new Date().toISOString();
+  const callerHidden = call.caller?.privacySettings?.showOnlineStatus === false;
+  const calleeHidden = call.callee?.privacySettings?.showOnlineStatus === false;
+  if (calleeStatus && !calleeHidden) {
+    emitToUser(call.callerId, 'presence:changed', {
+      user_id: call.calleeId,
+      status: calleeStatus,
+      last_seen: at,
+    });
+  }
+  if (callerStatus && !callerHidden) {
+    emitToUser(call.calleeId, 'presence:changed', {
+      user_id: call.callerId,
+      status: callerStatus,
+      last_seen: at,
+    });
+  }
+}
+
+/**
  * Answers. Billing starts here, with the first minute.
  *
  * If that first charge fails — the caller spent their balance elsewhere
@@ -421,7 +458,11 @@ async function cancel(user, callId) {
 }
 
 /** Either side hanging up on a live call. */
-async function end(user, callId, { reason = 'hungUp', force = false } = {}) {
+async function end(
+  user,
+  callId,
+  { reason = 'hungUp', force = false, disconnectedUserId } = {}
+) {
   const call = await loadCall(callId);
 
   if (!force && call.callerId !== user.id && call.calleeId !== user.id) {
@@ -436,10 +477,11 @@ async function end(user, callId, { reason = 'hungUp', force = false } = {}) {
     return finalise(call, {
       status: isCaller ? 'cancelled' : 'rejected',
       reason: isCaller ? 'cancelled' : 'rejected',
+      disconnectedUserId,
     });
   }
 
-  return finalise(call, { status: 'ended', reason });
+  return finalise(call, { status: 'ended', reason, disconnectedUserId });
 }
 
 // ── In-call chat ────────────────────────────────────────────────────────────
@@ -499,7 +541,7 @@ function recentMessages(callId) {
  * The one exit for every ending — hang-up, decline, timeout, out of balance — so
  * none of the bookkeeping can be attached to one path and missed on another.
  */
-async function finalise(call, { status, reason }) {
+async function finalise(call, { status, reason, disconnectedUserId }) {
   clearTimers(call.id);
   // The chat dies with the call — this is what actually makes it temporary,
   // rather than merely a client that stops rendering it. Dropped up front,
@@ -527,16 +569,42 @@ async function finalise(call, { status, reason }) {
   // for the next call that tried to reach them. Run alongside the row update,
   // not after it, so this costs nothing extra: `finalise` already returns
   // only once its slower of two independent writes lands.
+  //
+  // `disconnectedUserId` — set only when this call is ending *because* that
+  // person's last socket just dropped (`handleDisconnect`) — is excluded
+  // here on purpose. Marking them `online` would be a lie the database
+  // itself would hold for the instant before `handleDisconnect`'s own
+  // trailing write corrects it to `offline`, and `announceCallPresence`
+  // below would have already told the other side the wrong thing before
+  // that correction ever reaches them — the other side would still be
+  // correctly informed of this person's offline status.
+  const backOnline = [call.callerId, call.calleeId].filter(
+    (id) => id !== disconnectedUserId
+  );
   const [updated] = await Promise.all([
     prisma.call.update({
       where: { id: call.id },
       data: { status, endReason: reason, endedAt, durationSeconds },
       include: CALL_INCLUDE,
     }),
-    setPresence([call.callerId, call.calleeId], 'online').catch((err) => {
-      console.error(`[call] presence reset failed for ${call.id}`, err);
-    }),
+    (backOnline.length ? setPresence(backOnline, 'online') : Promise.resolve()).catch(
+      (err) => {
+        console.error(`[call] presence reset failed for ${call.id}`, err);
+      }
+    ),
   ]);
+
+  // See `announceCallPresence` — this is what actually moves a stale "Busy"
+  // on the other side's screen the instant the call ends, rather than
+  // leaving it to whatever next re-fetches that profile. The disconnecting
+  // party (if any) is reported `offline`, not `online` — the true status
+  // `handleDisconnect` is about to set for them regardless, told to a call
+  // partner who might not share a conversation and would otherwise never
+  // hear it at all.
+  announceCallPresence(updated, {
+    callerStatus: call.callerId === disconnectedUserId ? 'offline' : 'online',
+    calleeStatus: call.calleeId === disconnectedUserId ? 'offline' : 'online',
+  });
 
   // Fired the instant the row is written, not after the bookkeeping below —
   // this is what makes the *other* person's screen react, and they should

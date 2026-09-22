@@ -556,6 +556,86 @@ async function run() {
 
   sleeperSocket.close();
 
+  // ── Presence during calls ────────────────────────────────────────────────
+  // `profileService.setPresence` only announces to people with an *open
+  // conversation* — right for chat, wrong for two people who have only ever
+  // called each other, which is exactly what these two accounts are.
+  section('Presence during calls');
+
+  const ringer = await createAccount({ goal: 'makeFriends', name: 'Priya' });
+  const ringee = await createAccount({ goal: 'earnMoney', name: 'Divya' });
+  await api('POST', '/wallet/purchase', {
+    token: ringer.token,
+    body: { package_id: 'pkg_1000' },
+  });
+
+  const ringerSocket = await connect(ringer.token);
+  const ringeeSocket = await connect(ringee.token);
+
+  const ringerToldBusy = waitFor(ringerSocket, 'presence:changed', 4000);
+  const ringeeToldBusy = waitFor(ringeeSocket, 'presence:changed', 4000);
+  const startAck2 = await emit(ringerSocket, 'call:start', {
+    user_id: ringee.id,
+    type: 'voice',
+  });
+  check('a call between strangers still starts', startAck2?.success, { ack: startAck2 });
+  const callId2 = startAck2.data.call.id;
+
+  const busyToRinger = await ringerToldBusy;
+  check(
+    'the caller hears the callee went busy, despite no conversation',
+    busyToRinger?.user_id === ringee.id && busyToRinger?.status === 'busy',
+    { got: busyToRinger }
+  );
+  const busyToRingee = await ringeeToldBusy;
+  check(
+    'and the callee hears the caller went busy too',
+    busyToRingee?.user_id === ringer.id && busyToRingee?.status === 'busy',
+    { got: busyToRingee }
+  );
+
+  const ringerToldOnline = waitFor(ringerSocket, 'presence:changed', 4000);
+  const ringeeToldOnline = waitFor(ringeeSocket, 'presence:changed', 4000);
+  const cancelAck = await emit(ringerSocket, 'call:cancel', { call_id: callId2 });
+  check('the call can be cancelled', cancelAck?.success, { ack: cancelAck });
+
+  const onlineToRinger = await ringerToldOnline;
+  check(
+    'ending it tells the caller the callee is online again, immediately',
+    onlineToRinger?.user_id === ringee.id && onlineToRinger?.status === 'online',
+    { got: onlineToRinger }
+  );
+  const onlineToRingee = await ringeeToldOnline;
+  check(
+    'and tells the callee the caller is online again',
+    onlineToRingee?.user_id === ringer.id && onlineToRingee?.status === 'online',
+    { got: onlineToRingee }
+  );
+
+  // A disconnect mid-call must report the disconnecting side as *offline*,
+  // not the generic "call over" online — otherwise a call-only peer is told
+  // something false that nothing ever corrects for them.
+  const startAck3 = await emit(ringerSocket, 'call:start', {
+    user_id: ringee.id,
+    type: 'voice',
+  });
+  check('another call can start right after', startAck3?.success, { ack: startAck3 });
+  const acceptAck3 = await emit(ringeeSocket, 'call:accept', {
+    call_id: startAck3.data.call.id,
+  });
+  check('and be answered', acceptAck3?.success, { ack: acceptAck3 });
+
+  const ringerToldOffline = waitFor(ringerSocket, 'presence:changed', 4000);
+  ringeeSocket.close();
+  const offlineNotice = await ringerToldOffline;
+  check(
+    'the caller learns the callee actually went offline, not "online"',
+    offlineNotice?.user_id === ringee.id && offlineNotice?.status === 'offline',
+    { got: offlineNotice }
+  );
+
+  ringerSocket.close();
+
   // ── Presence on disconnect ────────────────────────────────────────────────
   section('Disconnect');
 
