@@ -178,9 +178,32 @@ async function handleConnect(io, socket) {
     [unread, activeCall] = await Promise.all([
       chatService.unreadSummary(socket.user),
       callService.getActive(userId),
+      // Everything still sitting at `sent` for this user, across every
+      // conversation, becomes `delivered` the moment they have a socket
+      // again — this is the only place a message sent while they were
+      // fully offline ever gets revisited.
+      chatService.markDelivered(socket.user).catch((err) => {
+        console.error('[socket] delivery sweep failed for', userId, err.message);
+      }),
     ]);
   } catch (err) {
     console.error('[socket] could not read the backlog for', userId, err.message);
+  }
+
+  // A call that started while this user had no live socket never got its
+  // `call:incoming` — the caller is still showing "Calling". This connection
+  // *is* that ring landing, so treat it exactly like one: tell the caller it
+  // is now really ringing (inside `markRingDelivered`), and tell this socket
+  // it has an incoming call, the same as if it had arrived live.
+  let justDelivered = false;
+  if (
+    activeCall &&
+    activeCall.calleeId === userId &&
+    activeCall.status === 'ringing' &&
+    !activeCall.ringDeliveredAt
+  ) {
+    activeCall = await callService.markRingDelivered(activeCall.id);
+    justDelivered = true;
   }
 
   // A client that restarted mid-call rejoins it instead of losing it — with
@@ -195,6 +218,9 @@ async function handleConnect(io, socket) {
     try {
       media = await callService.withMedia(activeCall, userId);
       callMessages = callService.recentMessages(activeCall.id);
+      // Same event a live ring sends, so this socket needs no code path of
+      // its own to show the incoming-call screen — it is just late.
+      if (justDelivered) socket.emit('call:incoming', media);
     } catch (err) {
       console.error('[socket] could not restore call media for', userId, err.message);
     }
@@ -327,6 +353,20 @@ function registerChat(io, socket) {
       ack?.({ success: true });
     } catch (err) {
       ack?.({ success: false, error: err.code ?? 'INTERNAL_ERROR' });
+    }
+  });
+
+  /**
+   * The client's live ack that it actually rendered a `message:new` — this is
+   * the second tick. No ack, no `try/catch` reply expected: a missed delivery
+   * ack just means the reconnect sweep in `handleConnect` catches it later.
+   */
+  socket.on('message:delivered', async ({ message_id: messageId } = {}) => {
+    if (!messageId) return;
+    try {
+      await chatService.markDelivered(socket.user, { messageIds: [messageId] });
+    } catch (err) {
+      console.error('[socket] message:delivered failed', err);
     }
   });
 

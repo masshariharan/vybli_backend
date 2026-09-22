@@ -338,6 +338,7 @@ function activeCall(row, viewerId) {
     is_random: row.isRandom,
     rate_per_minute: money(row.ratePerMinute),
     started_at: iso(row.startedAt),
+    ring_delivered_at: iso(row.ringDeliveredAt),
     connected_at: iso(row.connectedAt),
     ended_at: iso(row.endedAt),
     duration_seconds: row.durationSeconds ?? 0,

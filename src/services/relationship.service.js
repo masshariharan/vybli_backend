@@ -175,7 +175,10 @@ async function assertCanCall(user, otherId, type) {
   });
   if (liveCall) throw errors.calleeBusy();
 
-  if (profile.presence !== 'online') throw errors.calleeOffline();
+  // Deliberately not gated on presence. A call to someone offline still
+  // starts — the caller sees "Calling" rather than an outright refusal, and
+  // `call.service.js::start` is what actually decides whether to ring them
+  // now or wait for `handleConnect` to deliver it once they reconnect.
 
   return other;
 }

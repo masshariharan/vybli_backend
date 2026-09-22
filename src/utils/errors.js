@@ -177,11 +177,6 @@ const errors = {
       status: 403,
       code: 'CALL_TYPE_DISABLED',
     }),
-  calleeOffline: () =>
-    new AppError('This person is offline right now.', {
-      status: 409,
-      code: 'CALLEE_OFFLINE',
-    }),
   calleeBusy: () =>
     new AppError('This person is on another call right now.', {
       status: 409,

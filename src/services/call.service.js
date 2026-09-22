@@ -122,6 +122,12 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
     if (balance < ratePerMinute) throw errors.insufficientBalance(ratePerMinute, balance);
   }
 
+  // Whether the callee's phone can actually be rung right now. A cache, not
+  // the truth — `handleConnect`'s own check when they next open a socket is
+  // what corrects it if this is stale — but it is enough to decide what the
+  // *caller* sees in the meantime: a real ring landing, or just an attempt.
+  const calleeReachable = callee.profile?.presence === 'online';
+
   const call = await prisma.call.create({
     data: {
       callerId: user.id,
@@ -130,6 +136,7 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
       status: 'ringing',
       isRandom,
       ratePerMinute,
+      ringDeliveredAt: calleeReachable ? new Date() : null,
     },
     include: CALL_INCLUDE,
   });
@@ -138,11 +145,17 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
   // get through to a phone that is already ringing.
   await setPresence([user.id, calleeId], 'busy');
 
-  // Both sides get their join credentials with the ring, so the callee's media
-  // is already connecting while the phone is still buzzing. Waiting until they
-  // tap Answer to fetch a token is the difference between "hello?" and two
-  // seconds of silence.
-  emitToUser(calleeId, 'call:incoming', await withMedia(call, calleeId));
+  if (calleeReachable) {
+    // Both sides get their join credentials with the ring, so the callee's
+    // media is already connecting while the phone is still buzzing. Waiting
+    // until they tap Answer to fetch a token is the difference between
+    // "hello?" and two seconds of silence.
+    emitToUser(calleeId, 'call:incoming', await withMedia(call, calleeId));
+  }
+  // If they are not reachable now, nothing is lost: `handleConnect` sends
+  // this same `call:incoming` (and upgrades the caller from "Calling" to
+  // "Ringing") the moment their socket does come up, via `markRingDelivered`
+  // below — as long as that happens before the ring times out.
 
   // And to the phone, for the case the socket cannot reach: app closed,
   // swiped away, or the process asleep. This is the whole difference between
@@ -157,7 +170,10 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
   //
   // Through `notificationService` rather than straight at `push`, so the
   // callee's `incomingCalls` setting is honoured by the same code path as
-  // every other kind — see the note there.
+  // every other kind — see the note there. Sent regardless of `calleeReachable`:
+  // a phone can hold a websocket open while backgrounded and still need the
+  // push to actually wake and re-ring it, and a phone with no socket at all
+  // is exactly who this is for.
   notificationService
     .ring(calleeId, {
       callId: call.id,
@@ -167,7 +183,16 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
       avatarUrl: call.caller?.profile?.avatarUrl ?? null,
     })
     .catch((err) => console.error(`[push] ring for call ${call.id}`, err));
-  emitToUser(user.id, 'call:ringing', await withMedia(call, user.id));
+
+  // `call:ringing` promises the caller their ring actually landed somewhere —
+  // reserve it for when that is true. Otherwise this is only an attempt, and
+  // `call:calling` says so; `markRingDelivered` sends the real `call:ringing`
+  // later if the callee shows up before the timeout.
+  emitToUser(
+    user.id,
+    calleeReachable ? 'call:ringing' : 'call:calling',
+    await withMedia(call, user.id)
+  );
 
   activity.recordPair(
     {
@@ -229,6 +254,25 @@ async function withMedia(call, viewerId) {
     displayName: viewer?.profile?.name,
   });
   return payload;
+}
+
+/**
+ * The ring actually landed on the callee's device — either it did at `start`
+ * (handled inline there) or, for a callee who was offline then, the moment
+ * `handleConnect` sees them come back with this call still `ringing`.
+ *
+ * Only stamps and tells the caller once — `handleConnect` already guards on
+ * `!ringDeliveredAt` before calling this, but a call can only ever be
+ * delivered once regardless of how many devices reconnect.
+ */
+async function markRingDelivered(callId) {
+  const call = await prisma.call.update({
+    where: { id: callId },
+    data: { ringDeliveredAt: new Date() },
+    include: CALL_INCLUDE,
+  });
+  emitToUser(call.callerId, 'call:ringing', await withMedia(call, call.callerId));
+  return call;
 }
 
 async function assertNotBusy(userId, role) {
@@ -998,6 +1042,7 @@ module.exports = {
   rate,
   getActive,
   withMedia,
+  markRingDelivered,
   onMediaDisconnect,
   sendMessage,
   recentMessages,

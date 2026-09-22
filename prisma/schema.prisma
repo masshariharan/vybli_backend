@@ -579,9 +579,10 @@ model Message {
   /// forward; nothing backfills the messages already sent.
   clientId String?
 
-  readAt    DateTime?
-  deletedAt DateTime?
-  createdAt DateTime  @default(now())
+  deliveredAt DateTime?
+  readAt      DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
 
   // A message's *conversation* going away still takes it with it — that is
   // the normal shape of deleting a thread. Its *sender* going away must not:
@@ -612,6 +613,11 @@ model Call {
   isRandom Boolean @default(false)
 
   startedAt   DateTime  @default(now())
+  /// Set the moment the callee's device actually receives the live ring —
+  /// not the same as `startedAt`, which only means the row was created. A
+  /// callee who was offline when the call started gets this stamped later,
+  /// if they come online before the ring times out; see `call.service.js`.
+  ringDeliveredAt DateTime?
   connectedAt DateTime?
   endedAt     DateTime?
 

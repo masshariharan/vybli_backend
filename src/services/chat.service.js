@@ -180,6 +180,62 @@ async function markRead(user, conversationId) {
 }
 
 /**
+ * Marks one recipient's messages delivered.
+ *
+ * Two callers, two shapes:
+ *  - A live ack, scoped to `messageIds` — the recipient's socket just
+ *    rendered a `message:new` it received while connected.
+ *  - The reconnect catch-up, `messageIds` omitted — everything still `sent`
+ *    across every conversation this user is in, swept the moment they come
+ *    back online. This is what makes "delivered once they're back online"
+ *    true for a message sent while they had no live socket at all: nothing
+ *    else ever revisits a `sent` row.
+ *
+ * Read is a stronger state than delivered, so this only ever touches rows
+ * still at `sent` — a message the recipient already opened and read must not
+ * be quietly downgraded back to a single tick.
+ */
+async function markDelivered(user, { messageIds } = {}) {
+  const where = {
+    status: 'sent',
+    senderId: { not: user.id },
+    conversation: { OR: [{ userAId: user.id }, { userBId: user.id }] },
+  };
+  if (messageIds) where.id = { in: messageIds };
+
+  const pending = await prisma.message.findMany({
+    where,
+    select: { id: true, senderId: true, conversationId: true },
+  });
+  if (!pending.length) return;
+
+  const now = new Date();
+  await prisma.message.updateMany({
+    where: { id: { in: pending.map((m) => m.id) } },
+    data: { status: 'delivered', deliveredAt: now },
+  });
+
+  // One event per conversation, not per message — a sender only has one peer
+  // in a given thread, so this is already the coarsest grouping that still
+  // lets the client know exactly which bubbles to flip.
+  const byConversation = new Map();
+  for (const m of pending) {
+    const group = byConversation.get(m.conversationId) ?? {
+      senderId: m.senderId,
+      messageIds: [],
+    };
+    group.messageIds.push(m.id);
+    byConversation.set(m.conversationId, group);
+  }
+  for (const [conversationId, group] of byConversation) {
+    emitToUser(group.senderId, 'message:delivered', {
+      conversation_id: conversationId,
+      message_ids: group.messageIds,
+    });
+  }
+}
+
+/**
  * Sends a message.
  *
  * The conversation's `lastMessageAt` and the recipient's unread counter move
@@ -447,6 +503,7 @@ module.exports = {
   listThreads,
   getThread,
   markRead,
+  markDelivered,
   sendMessage,
   deleteMessage,
   setMuted,

@@ -214,7 +214,7 @@ async function run() {
   const earner = await createAccount({ goal: 'earnMoney', name: 'Nila' });
   const caller = await createAccount({ goal: 'makeFriends', name: 'Vikram' });
 
-  const earnerSocket = await connect(earner.token);
+  let earnerSocket = await connect(earner.token);
   const callerSocket = await connect(caller.token);
 
   check('a valid token connects', Boolean(earnerSocket.hello));
@@ -304,6 +304,61 @@ async function run() {
   check('the sender is told their message was read', Boolean(readReceipt), {
     got: readReceipt,
   });
+
+  // ── Delivery receipts ────────────────────────────────────────────────────
+  section('Delivery receipts');
+
+  // Live ack: the recipient's socket is open, so acking the moment the
+  // message arrives is what flips the sender's tick from one to two.
+  const deliverableArrived = waitFor(earnerSocket, 'message:new');
+  const deliverableAck = await emit(callerSocket, 'message:send', {
+    conversation_id: conversationId,
+    text: 'Ack me',
+    client_id: 'sock_delivery_1',
+  });
+  check('a second message can be sent', deliverableAck?.success, { ack: deliverableAck });
+  const deliverablePush = await deliverableArrived;
+  const deliverableId = deliverablePush?.message?.id;
+  check('it arrives with an id to ack', Boolean(deliverableId));
+
+  const deliveredPush = waitFor(callerSocket, 'message:delivered', 4000);
+  earnerSocket.emit('message:delivered', { message_id: deliverableId });
+  const deliveredReceipt = await deliveredPush;
+  check('the sender is told it was delivered', Boolean(deliveredReceipt), {
+    got: deliveredReceipt,
+  });
+  check(
+    'naming the message that was delivered',
+    Boolean(deliveredReceipt?.message_ids?.includes(deliverableId)),
+    { got: deliveredReceipt }
+  );
+
+  // Reconnect catch-up: a message sent while the recipient has no socket at
+  // all must still flip to delivered the moment they come back — nothing
+  // else ever revisits a row still sitting at `sent`.
+  earnerSocket.close();
+  await new Promise((r) => setTimeout(r, 500));
+
+  const offlineSendAck = await emit(callerSocket, 'message:send', {
+    conversation_id: conversationId,
+    text: 'While you were away',
+    client_id: 'sock_delivery_2',
+  });
+  check(
+    'a message can still be sent while the recipient is offline',
+    offlineSendAck?.success,
+    { ack: offlineSendAck }
+  );
+  const offlineMessageId = offlineSendAck?.data?.message?.id;
+
+  const catchUpDelivered = waitFor(callerSocket, 'message:delivered', 6000);
+  earnerSocket = await connect(earner.token);
+  const catchUpReceipt = await catchUpDelivered;
+  check(
+    'reconnecting sweeps it into delivered too',
+    Boolean(catchUpReceipt?.message_ids?.includes(offlineMessageId)),
+    { got: catchUpReceipt, expected: offlineMessageId }
+  );
 
   // ── Calls ─────────────────────────────────────────────────────────────────
   section('Call signalling');
@@ -442,6 +497,64 @@ async function run() {
     body: { package_id: 'pkg_100' },
   });
   check('a purchase pushes the new balance', Boolean(await walletPush));
+
+  // ── Calling an offline callee ────────────────────────────────────────────
+  section('Calling an offline callee');
+
+  const sleeper = await createAccount({ goal: 'earnMoney', name: 'Meera' });
+  // Never connected — this is the "no socket at all" case `assertCanCall`
+  // used to refuse outright.
+
+  const callingPush = waitFor(callerSocket, 'call:calling');
+  const offlineStartAck = await emit(callerSocket, 'call:start', {
+    user_id: sleeper.id,
+    type: 'voice',
+  });
+  check('a call to an offline callee still starts', offlineStartAck?.success, {
+    ack: offlineStartAck,
+  });
+  const callingEvent = await callingPush;
+  const offlineCallId = offlineStartAck?.data?.call?.id;
+  check('the caller sees "calling", not "ringing"', callingEvent?.id === offlineCallId, {
+    got: callingEvent,
+  });
+
+  const sleeperSocket = io(SOCKET_URL, {
+    auth: { token: sleeper.token },
+    transports: ['websocket'],
+  });
+  // Attached before the connect handshake settles, the same way `connect()`
+  // does — otherwise a `call:incoming` sent the instant the server sees this
+  // socket would fire before anything here was listening for it.
+  const sleeperIncoming = waitFor(sleeperSocket, 'call:incoming', 6000);
+  const ringUpgrade = waitFor(callerSocket, 'call:ringing', 6000);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('connect timed out')), 8000);
+    sleeperSocket.on('connected', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    sleeperSocket.on('connect_error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+
+  const sleeperRing = await sleeperIncoming;
+  check('coming online delivers the ring that was waiting', sleeperRing?.id === offlineCallId, {
+    got: sleeperRing,
+  });
+  const upgraded = await ringUpgrade;
+  check(
+    'and upgrades the caller from "calling" to "ringing"',
+    upgraded?.id === offlineCallId,
+    { got: upgraded }
+  );
+
+  const declineAck = await emit(sleeperSocket, 'call:reject', { call_id: offlineCallId });
+  check('the callee can still decline it normally', declineAck?.success, { ack: declineAck });
+
+  sleeperSocket.close();
 
   // ── Presence on disconnect ────────────────────────────────────────────────
   section('Disconnect');
