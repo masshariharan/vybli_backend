@@ -6,7 +6,7 @@ const avatarCatalog = require('../config/avatarCatalog');
 const activity = require('./activity.service');
 const { USER_INCLUDE } = require('./auth.service');
 const relationship = require('./relationship.service');
-const { emitToUsers, emitToAdmin } = require('../sockets/bus');
+const { emitToUsers, emitToPresenceWatchers, emitToAdmin } = require('../sockets/bus');
 
 /**
  * Profiles, mine and other people's.
@@ -143,9 +143,11 @@ async function updateProfile(user, payload) {
  * both read "offline", both decide they had changed something, and both
  * announce it.
  *
- * Only people with an open conversation are notified. Broadcasting to
- * everyone who has ever viewed a profile would be a firehose, and a chat
- * thread is the only surface that shows live presence.
+ * Two audiences are notified: everyone with an open conversation (a chat
+ * list shows every peer's status, whether or not it is on screen), and
+ * whoever has this person on screen *right now* — a discovery card or a
+ * profile — via `presence:watch`. Not everyone who has ever viewed a profile:
+ * that would be a firehose, and a watch ends when the screen does.
  */
 async function setPresence(userId, status) {
   const { count } = await prisma.userProfile.updateMany({
@@ -186,14 +188,14 @@ async function setPresence(userId, status) {
   // Hiding presence means nobody is told about the change — publishing it and
   // trusting each client to ignore it would leak exactly what was hidden.
   if (privacy?.showOnlineStatus !== false) {
+    const payload = {
+      user_id: userId,
+      status: profile.presence,
+      last_seen: profile.lastSeen?.toISOString() ?? null,
+    };
     const peerIds = await relationship.conversationPeerIdsFor(userId);
-    if (peerIds.size > 0) {
-      emitToUsers([...peerIds], 'presence:changed', {
-        user_id: userId,
-        status: profile.presence,
-        last_seen: profile.lastSeen?.toISOString() ?? null,
-      });
-    }
+    if (peerIds.size > 0) emitToUsers([...peerIds], 'presence:changed', payload);
+    emitToPresenceWatchers(userId, 'presence:changed', payload);
   }
 
   return profile;

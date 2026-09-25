@@ -11,6 +11,7 @@ const callService = require('../services/call.service');
 const relationship = require('../services/relationship.service');
 const serialize = require('../utils/serialize');
 const adminAuth = require('../services/admin/auth.service');
+const connections = require('./connections');
 
 /**
  * The real-time layer.
@@ -31,16 +32,43 @@ const adminAuth = require('../services/admin/auth.service');
 
 const roomFor = (userId) => `user:${userId}`;
 
+/**
+ * Presence subscriptions: watched userId → Set of watching socket ids, and
+ * the reverse, so a socket's watches can be dropped when it goes.
+ * See `presence:watch`.
+ */
+const watchersOf = new Map();
+const watchedBy = new Map();
+
+/** Most ids one socket may watch at once — a screenful of cards, generously. */
+const MAX_WATCHED = 200;
+
+function unwatchAll(socketId) {
+  for (const id of watchedBy.get(socketId) ?? []) {
+    const set = watchersOf.get(id);
+    if (!set) continue;
+    set.delete(socketId);
+    if (set.size === 0) watchersOf.delete(id);
+  }
+  watchedBy.delete(socketId);
+}
+
 function attachSockets(httpServer) {
   const io = new Server(httpServer, {
     cors: {
       origin: env.corsOrigin.includes('*') ? true : env.corsOrigin,
       credentials: true,
     },
-    // Generous for mobile: a phone changing from wifi to cellular should
-    // reconnect, not be treated as gone.
-    pingTimeout: 30_000,
-    pingInterval: 25_000,
+    // How quickly a phone that lost its network is noticed. Nothing on the
+    // wire says "my signal just died" — the socket simply goes quiet — so
+    // the heartbeat is the only detector, and it sets how long that person
+    // keeps showing "Online" and how long a call to them keeps claiming to
+    // ring. It was 25s + 30s, nearly a minute of "Online" for a phone in a
+    // tunnel. 10s + 10s notices within ~20s at the cost of a few bytes a
+    // phone sends anyway; a wifi-to-cellular switch still reconnects, it just
+    // does so as a new socket.
+    pingTimeout: 10_000,
+    pingInterval: 10_000,
   });
 
   // ── Authentication ────────────────────────────────────────────────────────
@@ -97,6 +125,9 @@ function attachSockets(httpServer) {
   io.on('connection', (socket) => {
     const userId = socket.userId;
     socket.join(roomFor(userId));
+    // Synchronously, before anything awaits: from this instant on, anything
+    // asking "can this person be rung / are they online" must hear yes.
+    connections.add(userId, socket.id);
 
     handleConnect(io, socket).catch((err) =>
       console.error('[socket] connect failed', err)
@@ -107,6 +138,7 @@ function attachSockets(httpServer) {
     registerCalls(io, socket);
 
     socket.on('disconnect', () => {
+      unwatchAll(socket.id);
       handleDisconnect(io, socket).catch((err) =>
         console.error('[socket] disconnect failed', err)
       );
@@ -119,6 +151,10 @@ function attachSockets(httpServer) {
   });
   bus.on(RealtimeEvent.TO_USERS, ({ userIds, event, data }) => {
     for (const id of userIds) io.to(roomFor(id)).emit(event, data);
+  });
+  bus.on(RealtimeEvent.TO_PRESENCE_WATCHERS, ({ userId, event, data }) => {
+    const socketIds = watchersOf.get(userId);
+    if (socketIds?.size) io.to([...socketIds]).emit(event, data);
   });
 
   // A session that is over takes its sockets with it. `disconnectSockets`
@@ -149,19 +185,12 @@ function attachSockets(httpServer) {
 async function handleConnect(io, socket) {
   const userId = socket.userId;
 
-  // Unconditionally. A connected socket means the account is online, and that
-  // is true of the second device as much as the first — `setPresence` is
-  // idempotent, so a status that has not changed writes nothing and announces
-  // nothing, which is what the count check here used to be for.
-  //
-  // It was `if (sockets.length === 1)`, and that is a different question from
-  // the one being asked. A phone whose connection died silently leaves a
-  // socket in the room until the server's ping times it out, so a reconnect
-  // inside that window saw two sockets, skipped the update, and left the
-  // account offline to everyone while the app sat there connected — with
-  // nothing to recover it, because the next thing to touch presence was the
-  // *disconnect* of the socket it had just replaced.
-  await profileService.setPresence(userId, 'online');
+  // Unconditionally, and from the truth rather than a guess — `busy` if a call
+  // is still live, `online` otherwise. See `callService.syncPresence`: it is
+  // what keeps this write and a racing disconnect's from landing out of
+  // order and leaving a connected phone marked offline. Idempotent, so a
+  // second device connecting announces nothing.
+  await callService.syncPresence(userId);
 
   // Everything below is a convenience; the `connected` event itself is not.
   //
@@ -190,21 +219,13 @@ async function handleConnect(io, socket) {
     console.error('[socket] could not read the backlog for', userId, err.message);
   }
 
-  // A call that started while this user had no live socket never got its
-  // `call:incoming` — the caller is still showing "Calling". This connection
-  // *is* that ring landing, so treat it exactly like one: tell the caller it
-  // is now really ringing (inside `markRingDelivered`), and tell this socket
-  // it has an incoming call, the same as if it had arrived live.
-  let justDelivered = false;
-  if (
-    activeCall &&
-    activeCall.calleeId === userId &&
-    activeCall.status === 'ringing' &&
-    !activeCall.ringDeliveredAt
-  ) {
-    activeCall = await callService.markRingDelivered(activeCall.id);
-    justDelivered = true;
-  }
+  // A call still ringing *at* this user: either it started while they had no
+  // socket, or their connection dropped mid-ring. Either way the caller is
+  // looking at "Calling". Re-send `call:incoming`; the app acknowledges it
+  // with `call:ring_received`, and that — not this connection existing — is
+  // what moves the caller to "Ringing".
+  const ringHere =
+    activeCall && activeCall.calleeId === userId && activeCall.status === 'ringing';
 
   // A client that restarted mid-call rejoins it instead of losing it — with
   // fresh media credentials, so it rejoins the conversation and not just the
@@ -220,7 +241,7 @@ async function handleConnect(io, socket) {
       callMessages = callService.recentMessages(activeCall.id);
       // Same event a live ring sends, so this socket needs no code path of
       // its own to show the incoming-call screen — it is just late.
-      if (justDelivered) socket.emit('call:incoming', media);
+      if (ringHere) socket.emit('call:incoming', media);
     } catch (err) {
       console.error('[socket] could not restore call media for', userId, err.message);
     }
@@ -240,25 +261,32 @@ async function handleConnect(io, socket) {
  * A live call is ended too. Leaving a call `connected` after the caller
  * vanished would bill them for silence — the billing ticker does not care that
  * nobody is listening.
+ *
+ * A call still *ringing* is treated by side. A caller who drops has hung up
+ * — cancelled. A callee who drops has not declined anything; they lost
+ * signal. The call keeps going until the ring timeout, and the caller's
+ * screen goes back from "Ringing" to "Calling", which is exactly the truth.
  */
 async function handleDisconnect(io, socket) {
   const userId = socket.userId;
 
-  const sockets = await io.in(roomFor(userId)).fetchSockets();
-  if (sockets.length > 0) return; // Another device is still on.
+  // Synchronous, so a reconnect that lands during the awaits below is seen by
+  // everything after it — `syncPresence` reads this again when it runs.
+  if (connections.remove(userId, socket.id) > 0) return; // Another device is still on.
 
   const activeCall = await callService.getActive(userId);
-  if (activeCall) {
-    await callService
-      .end({ id: userId }, activeCall.id, {
-        reason: 'networkError',
-        force: true,
-        disconnectedUserId: userId,
-      })
-      .catch(() => {});
+  if (activeCall && !connections.isConnected(userId)) {
+    const ringingAtMe = activeCall.status === 'ringing' && activeCall.calleeId === userId;
+    if (ringingAtMe) {
+      await callService.markRingLost(activeCall.id).catch(() => {});
+    } else {
+      await callService
+        .end({ id: userId }, activeCall.id, { reason: 'networkError', force: true })
+        .catch(() => {});
+    }
   }
 
-  await profileService.setPresence(userId, 'offline');
+  await callService.syncPresence(userId);
 }
 
 // ── Presence ────────────────────────────────────────────────────────────────
@@ -272,6 +300,61 @@ function registerPresence(io, socket) {
       }
       await profileService.setPresence(socket.userId, status);
       ack?.({ success: true });
+    } catch (err) {
+      ack?.({ success: false, error: err.code ?? 'INTERNAL_ERROR' });
+    }
+  });
+
+  /**
+   * "Tell me live when any of these people's presence changes" — the ids on
+   * screen right now: Home's cards, an open profile. Replaces this socket's
+   * previous watch list outright, so the app just sends whatever it is
+   * showing and never has to unwatch.
+   *
+   * The same people a discovery card or profile already shows presence for,
+   * and `setPresence` still says nothing about anyone hiding their status, so
+   * this reveals nothing a REST fetch would not — it only stops the answer
+   * going stale while the screen is open. Answers with the current status of
+   * each so there is no gap between the fetch and the first change.
+   */
+  socket.on('presence:watch', async ({ user_ids: ids = [] } = {}, ack) => {
+    try {
+      const wanted = [...new Set(Array.isArray(ids) ? ids : [])]
+        .filter((id) => typeof id === 'string' && id !== socket.userId)
+        .slice(0, MAX_WATCHED);
+
+      unwatchAll(socket.id);
+      if (socket.disconnected) return ack?.({ success: false, error: 'DISCONNECTED' });
+      watchedBy.set(socket.id, new Set(wanted));
+      for (const id of wanted) {
+        let set = watchersOf.get(id);
+        if (!set) watchersOf.set(id, (set = new Set()));
+        set.add(socket.id);
+      }
+
+      const profiles = wanted.length
+        ? await prisma.userProfile.findMany({
+            where: { userId: { in: wanted } },
+            select: {
+              userId: true,
+              presence: true,
+              lastSeen: true,
+              user: { select: { privacySettings: { select: { showOnlineStatus: true } } } },
+            },
+          })
+        : [];
+
+      ack?.({
+        success: true,
+        data: profiles.map((p) => {
+          const visible = p.user?.privacySettings?.showOnlineStatus !== false;
+          return {
+            user_id: p.userId,
+            status: visible ? p.presence : 'offline',
+            last_seen: visible ? (p.lastSeen?.toISOString() ?? null) : null,
+          };
+        }),
+      });
     } catch (err) {
       ack?.({ success: false, error: err.code ?? 'INTERNAL_ERROR' });
     }
@@ -432,6 +515,19 @@ function registerCalls(io, socket) {
         isRandom: Boolean(payload.is_random),
       });
       return { call: await callService.withMedia(call, socket.userId) };
+    })
+  );
+
+  /**
+   * The app's word that `call:incoming` actually reached it and the phone is
+   * ringing — the only thing that turns the caller's "Calling" into
+   * "Ringing". See `callService.markRingDelivered`.
+   */
+  socket.on(
+    'call:ring_received',
+    wrap(async (payload) => {
+      await callService.markRingDelivered(socket.user, payload.call_id);
+      return null;
     })
   );
 

@@ -1380,6 +1380,11 @@ async function run() {
     { got: reversedEarnerRow }
   );
 
+  // Neither account holds a socket, so the call ending just (correctly) left
+  // both `offline` — random match only offers people who are online.
+  await put('/me/presence', earner.token, { status: 'online' });
+  await put('/me/presence', caller.token, { status: 'online' });
+
   const maleRandom = await post('/users/random-match', caller.token, {
     scope: 'allCities',
     type: 'voice',

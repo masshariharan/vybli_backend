@@ -11,6 +11,7 @@ const profileService = require('./profile.service');
 const livekit = require('./livekit.service');
 const activity = require('./activity.service');
 const { emitToUser, emitToAdmin } = require('../sockets/bus');
+const connections = require('../sockets/connections');
 const serialize = require('../utils/serialize');
 
 /**
@@ -122,11 +123,14 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
     if (balance < ratePerMinute) throw errors.insufficientBalance(ratePerMinute, balance);
   }
 
-  // Whether the callee's phone can actually be rung right now. A cache, not
-  // the truth — `handleConnect`'s own check when they next open a socket is
-  // what corrects it if this is stale — but it is enough to decide what the
-  // *caller* sees in the meantime: a real ring landing, or just an attempt.
-  const calleeReachable = callee.profile?.presence === 'online';
+  // Whether the callee has a live socket to ring *at all*. Deliberately not
+  // `profile.presence`: that column is a cache and used to say `online` for
+  // people with no connection (see `syncPresence`). Even a live socket is
+  // not proof the ring landed — a phone whose network just died keeps its
+  // socket until the server's ping gives up on it — so this only decides
+  // whether to *try*. "Ringing" waits for the device itself to say it got
+  // the call; see `markRingDelivered`.
+  const calleeReachable = connections.isConnected(calleeId);
 
   const call = await prisma.call.create({
     data: {
@@ -136,15 +140,24 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
       status: 'ringing',
       isRandom,
       ratePerMinute,
-      ringDeliveredAt: calleeReachable ? new Date() : null,
+      ringDeliveredAt: null,
     },
     include: CALL_INCLUDE,
   });
 
   // Busy is set on both sides now, not on connect — a second caller must not
-  // get through to a phone that is already ringing.
-  await setPresence([user.id, calleeId], 'busy');
-  announceCallPresence(call, { callerStatus: 'busy', calleeStatus: 'busy' });
+  // get through to a phone that is already ringing. (That rule is enforced
+  // by `assertNotBusy` against the call rows, not by this column, so an
+  // offline callee can stay honestly `offline` here: telling their contacts
+  // they are "busy" while their phone is off would be a lie about them.)
+  await Promise.all([
+    syncPresence(user.id, { onCall: true }),
+    syncPresence(calleeId, { onCall: true }),
+  ]);
+  announceCallPresence(call, {
+    callerStatus: 'busy',
+    calleeStatus: calleeReachable ? 'busy' : 'offline',
+  });
 
   if (calleeReachable) {
     // Both sides get their join credentials with the ring, so the callee's
@@ -182,18 +195,18 @@ async function start(user, { userId: calleeId, type, isRandom = false }) {
       callerId: user.id,
       callerName: user.profile?.name ?? 'Someone',
       avatarUrl: call.caller?.profile?.avatarUrl ?? null,
+      // So the callee's app can render the full incoming-call screen the
+      // instant the notification is tapped, before it has asked the server
+      // anything — see the client's `receivePendingIncoming`.
+      ratePerMinute,
     })
     .catch((err) => console.error(`[push] ring for call ${call.id}`, err));
 
-  // `call:ringing` promises the caller their ring actually landed somewhere —
-  // reserve it for when that is true. Otherwise this is only an attempt, and
-  // `call:calling` says so; `markRingDelivered` sends the real `call:ringing`
-  // later if the callee shows up before the timeout.
-  emitToUser(
-    user.id,
-    calleeReachable ? 'call:ringing' : 'call:calling',
-    await withMedia(call, user.id)
-  );
+  // Always `calling` to begin with. `call:ringing` promises the caller their
+  // ring actually landed on a device, and only the device can say that — it
+  // acknowledges `call:incoming` (or the push) with `call:ring_received`, and
+  // `markRingDelivered` sends the real `call:ringing` then.
+  emitToUser(user.id, 'call:calling', await withMedia(call, user.id));
 
   activity.recordPair(
     {
@@ -258,21 +271,49 @@ async function withMedia(call, viewerId) {
 }
 
 /**
- * The ring actually landed on the callee's device — either it did at `start`
- * (handled inline there) or, for a callee who was offline then, the moment
- * `handleConnect` sees them come back with this call still `ringing`.
+ * The callee's device says the ring reached it — the socket's
+ * `call:ring_received`, or `POST /calls/:id/ring-received` from a phone the
+ * push woke up. This is the only thing that turns the caller's "Calling"
+ * into "Ringing": a socket that merely *exists* is not a phone that rang.
  *
- * Only stamps and tells the caller once — `handleConnect` already guards on
- * `!ringDeliveredAt` before calling this, but a call can only ever be
- * delivered once regardless of how many devices reconnect.
+ * Idempotent: every device, and both the socket and the push path, may
+ * report the same ring, and only the first one moves the caller's screen.
+ * Anything that is not the callee, or not a call still ringing, is ignored
+ * rather than refused — a late ack for a call that just ended is expected
+ * traffic, not an error worth surfacing.
  */
-async function markRingDelivered(callId) {
-  const call = await prisma.call.update({
-    where: { id: callId },
+async function markRingDelivered(user, callId) {
+  if (typeof callId !== 'string' || !callId) return null;
+  const { count } = await prisma.call.updateMany({
+    where: { id: callId, calleeId: user.id, status: 'ringing', ringDeliveredAt: null },
     data: { ringDeliveredAt: new Date() },
-    include: CALL_INCLUDE,
   });
+  if (count === 0) return null;
+
+  const call = await loadCall(callId);
   emitToUser(call.callerId, 'call:ringing', await withMedia(call, call.callerId));
+  return call;
+}
+
+/**
+ * The callee's last socket just dropped while their phone was ringing.
+ *
+ * The call is *not* ended: losing signal for a moment is not declining, and
+ * the ring timeout still bounds how long the caller waits. But the caller is
+ * no longer being rung *at* anything, so their screen goes back from
+ * "Ringing" to "Calling" — and if the callee reconnects in time,
+ * `handleConnect` re-sends `call:incoming` and the ack flips it forward
+ * again.
+ */
+async function markRingLost(callId) {
+  const { count } = await prisma.call.updateMany({
+    where: { id: callId, status: 'ringing', ringDeliveredAt: { not: null } },
+    data: { ringDeliveredAt: null },
+  });
+  if (count === 0) return null;
+
+  const call = await loadCall(callId);
+  emitToUser(call.callerId, 'call:calling', await withMedia(call, call.callerId));
   return call;
 }
 
@@ -287,19 +328,50 @@ async function assertNotBusy(userId, role) {
   if (live) throw role === 'caller' ? errors.callerBusy() : errors.calleeBusy();
 }
 
+/** userId → the tail of that account's queued presence writes. */
+const presenceQueue = new Map();
+
 /**
- * Sets presence for the two people on a call.
+ * Brings `userId`'s stored presence in line with what is actually true:
+ * `offline` with no live socket, `busy` on a live call, `online` otherwise.
  *
- * Goes through `profileService.setPresence` — one call per user rather than a
- * single `updateMany` — because that is the only path that tells the other
- * side of an open conversation that their contact just went busy or came back
- * online. The bulk write this used
- * to do wrote the column and nothing else: the peer's badge in a chat header
- * or a discovery card never moved until something unrelated happened to
- * refetch it.
+ * Every automatic presence change goes through here — connect, disconnect, a
+ * call starting or ending — and never writes a status it was merely *told*.
+ * That is the fix for presence drifting from reality. It used to be written
+ * piecemeal: a call ending set both sides `online` whether or not they had a
+ * connection, and a disconnect wrote `offline` after an await, by which time
+ * the same phone could already have reconnected and been marked online — so
+ * the stale write landed last and the account sat "offline" while connected.
+ *
+ * Goes through `profileService.setPresence` because that is the only path
+ * that tells everyone watching (chat peers, open profiles) about the change.
+ *
+ * Writes for one account are chained, so they land in the order they were
+ * asked for, and each one reads the truth *when it runs*, not when it was
+ * queued — the last write therefore always reflects the latest state.
+ *
+ * `onCall` lets a caller that already knows the answer (`start`, `finalise`)
+ * skip the lookup — and in `finalise` it must, because the call row may not
+ * read as over yet when this runs alongside that write.
  */
-function setPresence(userIds, presence) {
-  return Promise.all(userIds.map((id) => profileService.setPresence(id, presence)));
+function syncPresence(userId, { onCall } = {}) {
+  const previous = presenceQueue.get(userId) ?? Promise.resolve();
+  const next = previous
+    .catch(() => {})
+    .then(async () => {
+      if (!connections.isConnected(userId)) {
+        return profileService.setPresence(userId, 'offline');
+      }
+      const busy = onCall ?? Boolean(await getActive(userId));
+      return profileService.setPresence(userId, busy ? 'busy' : 'online');
+    });
+  presenceQueue.set(userId, next);
+  next
+    .finally(() => {
+      if (presenceQueue.get(userId) === next) presenceQueue.delete(userId);
+    })
+    .catch(() => {});
+  return next;
 }
 
 /**
@@ -458,11 +530,7 @@ async function cancel(user, callId) {
 }
 
 /** Either side hanging up on a live call. */
-async function end(
-  user,
-  callId,
-  { reason = 'hungUp', force = false, disconnectedUserId } = {}
-) {
+async function end(user, callId, { reason = 'hungUp', force = false } = {}) {
   const call = await loadCall(callId);
 
   if (!force && call.callerId !== user.id && call.calleeId !== user.id) {
@@ -477,11 +545,10 @@ async function end(
     return finalise(call, {
       status: isCaller ? 'cancelled' : 'rejected',
       reason: isCaller ? 'cancelled' : 'rejected',
-      disconnectedUserId,
     });
   }
 
-  return finalise(call, { status: 'ended', reason, disconnectedUserId });
+  return finalise(call, { status: 'ended', reason });
 }
 
 // ── In-call chat ────────────────────────────────────────────────────────────
@@ -541,7 +608,7 @@ function recentMessages(callId) {
  * The one exit for every ending — hang-up, decline, timeout, out of balance — so
  * none of the bookkeeping can be attached to one path and missed on another.
  */
-async function finalise(call, { status, reason, disconnectedUserId }) {
+async function finalise(call, { status, reason }) {
   clearTimers(call.id);
   // The chat dies with the call — this is what actually makes it temporary,
   // rather than merely a client that stops rendering it. Dropped up front,
@@ -561,49 +628,35 @@ async function finalise(call, { status, reason, disconnectedUserId }) {
   // sit through a LiveKit REST call and four more database writes first,
   // and nothing downstream needs anything but this row.
   //
-  // Presence goes back to `online` alongside it, not inside the background
+  // Presence is restored alongside it, not inside the background
   // bookkeeping below — freeing both people up to be called again is exactly
-  // as urgent as the row saying the call is over, and it used to live in the
-  // fire-and-forget half, where an unrelated failure (LiveKit's REST call,
-  // say) or just ordinary async lag could leave either side wrongly `busy`
-  // for the next call that tried to reach them. Run alongside the row update,
-  // not after it, so this costs nothing extra: `finalise` already returns
-  // only once its slower of two independent writes lands.
-  //
-  // `disconnectedUserId` — set only when this call is ending *because* that
-  // person's last socket just dropped (`handleDisconnect`) — is excluded
-  // here on purpose. Marking them `online` would be a lie the database
-  // itself would hold for the instant before `handleDisconnect`'s own
-  // trailing write corrects it to `offline`, and `announceCallPresence`
-  // below would have already told the other side the wrong thing before
-  // that correction ever reaches them — the other side would still be
-  // correctly informed of this person's offline status.
-  const backOnline = [call.callerId, call.calleeId].filter(
-    (id) => id !== disconnectedUserId
-  );
+  // as urgent as the row saying the call is over. Restored to the *truth*,
+  // not to `online`: someone whose connection died (the reason this call is
+  // ending, often) or who was never connected at all (a missed call to a
+  // phone that was off) comes out of it `offline`. Writing `online` for both
+  // unconditionally is what left people advertised as online with their
+  // phone switched off.
+  const statusOf = (id) => (connections.isConnected(id) ? 'online' : 'offline');
   const [updated] = await Promise.all([
     prisma.call.update({
       where: { id: call.id },
       data: { status, endReason: reason, endedAt, durationSeconds },
       include: CALL_INCLUDE,
     }),
-    (backOnline.length ? setPresence(backOnline, 'online') : Promise.resolve()).catch(
-      (err) => {
-        console.error(`[call] presence reset failed for ${call.id}`, err);
-      }
-    ),
+    Promise.all([
+      syncPresence(call.callerId, { onCall: false }),
+      syncPresence(call.calleeId, { onCall: false }),
+    ]).catch((err) => {
+      console.error(`[call] presence reset failed for ${call.id}`, err);
+    }),
   ]);
 
   // See `announceCallPresence` — this is what actually moves a stale "Busy"
   // on the other side's screen the instant the call ends, rather than
-  // leaving it to whatever next re-fetches that profile. The disconnecting
-  // party (if any) is reported `offline`, not `online` — the true status
-  // `handleDisconnect` is about to set for them regardless, told to a call
-  // partner who might not share a conversation and would otherwise never
-  // hear it at all.
+  // leaving it to whatever next re-fetches that profile.
   announceCallPresence(updated, {
-    callerStatus: call.callerId === disconnectedUserId ? 'offline' : 'online',
-    calleeStatus: call.calleeId === disconnectedUserId ? 'offline' : 'online',
+    callerStatus: statusOf(call.callerId),
+    calleeStatus: statusOf(call.calleeId),
   });
 
   // Fired the instant the row is written, not after the bookkeeping below —
@@ -647,7 +700,7 @@ async function finalise(call, { status, reason, disconnectedUserId }) {
 }
 
 async function finaliseBookkeeping(call, updated, { status, reason, durationSeconds }) {
-  // Presence is already back to `online` — `finalise` reset it up front,
+  // Presence is already restored — `finalise` synced it up front,
   // alongside the row write, because that is the one piece of this cleanup
   // urgent enough not to be fire-and-forget. Everything below genuinely is.
   const writes = [livekit.closeRoom(call.id)];
@@ -1111,6 +1164,8 @@ module.exports = {
   getActive,
   withMedia,
   markRingDelivered,
+  markRingLost,
+  syncPresence,
   onMediaDisconnect,
   sendMessage,
   recentMessages,

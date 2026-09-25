@@ -25,6 +25,12 @@ const RealtimeEvent = {
   TO_USERS: 'toUsers',
   /** { userId, status } — presence changed and watchers should know. */
   PRESENCE: 'presence',
+  /**
+   * { userId, event, data } — deliver to every socket currently *watching*
+   * `userId`'s presence (a discovery card or profile on screen), whether or
+   * not they share a conversation. See `presence:watch` in the socket layer.
+   */
+  TO_PRESENCE_WATCHERS: 'toPresenceWatchers',
 
   /**
    * { userId, reason } — drop every socket this account has open.
@@ -56,6 +62,11 @@ function emitToUsers(userIds, event, data) {
   bus.emit(RealtimeEvent.TO_USERS, { userIds, event, data });
 }
 
+/** Sends to whoever has `userId` on screen right now — see `presence:watch`. */
+function emitToPresenceWatchers(userId, event, data) {
+  bus.emit(RealtimeEvent.TO_PRESENCE_WATCHERS, { userId, event, data });
+}
+
 /**
  * Closes every socket `userId` has open.
  *
@@ -83,6 +94,7 @@ module.exports = {
   RealtimeEvent,
   emitToUser,
   emitToUsers,
+  emitToPresenceWatchers,
   emitToAdmin,
   disconnectUser,
 };

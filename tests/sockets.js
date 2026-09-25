@@ -527,7 +527,6 @@ async function run() {
   // does — otherwise a `call:incoming` sent the instant the server sees this
   // socket would fire before anything here was listening for it.
   const sleeperIncoming = waitFor(sleeperSocket, 'call:incoming', 6000);
-  const ringUpgrade = waitFor(callerSocket, 'call:ringing', 6000);
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('connect timed out')), 8000);
     sleeperSocket.on('connected', () => {
@@ -544,6 +543,15 @@ async function run() {
   check('coming online delivers the ring that was waiting', sleeperRing?.id === offlineCallId, {
     got: sleeperRing,
   });
+
+  // Being connected is not the same as the phone having rung — only the
+  // device's own acknowledgement moves the caller to "Ringing".
+  const prematureRing = waitFor(callerSocket, 'call:ringing', 800);
+  check('connecting alone does not claim "ringing"', (await prematureRing) === null);
+
+  const ringUpgrade = waitFor(callerSocket, 'call:ringing', 6000);
+  const ringAck = await emit(sleeperSocket, 'call:ring_received', { call_id: offlineCallId });
+  check('the callee can acknowledge the ring', ringAck?.success, { ack: ringAck });
   const upgraded = await ringUpgrade;
   check(
     'and upgrades the caller from "calling" to "ringing"',
@@ -551,10 +559,55 @@ async function run() {
     { got: upgraded }
   );
 
-  const declineAck = await emit(sleeperSocket, 'call:reject', { call_id: offlineCallId });
+  const duplicateRing = waitFor(callerSocket, 'call:ringing', 800);
+  await emit(sleeperSocket, 'call:ring_received', { call_id: offlineCallId });
+  check('a repeated acknowledgement changes nothing', (await duplicateRing) === null);
+
+  // The callee losing signal mid-ring is not a decline: the call keeps going
+  // and the caller goes back to "Calling".
+  const backToCalling = waitFor(callerSocket, 'call:calling', 6000);
+  const notEnded = waitFor(callerSocket, 'call:ended', 1500);
+  sleeperSocket.close();
+  const downgraded = await backToCalling;
+  check(
+    'a callee dropping mid-ring sends the caller back to "calling"',
+    downgraded?.id === offlineCallId,
+    { got: downgraded }
+  );
+  check('without ending the call', (await notEnded) === null);
+
+  const sleeperBack = io(SOCKET_URL, {
+    auth: { token: sleeper.token },
+    transports: ['websocket'],
+  });
+  const reRing = waitFor(sleeperBack, 'call:incoming', 6000);
+  const reRinging = waitFor(callerSocket, 'call:ringing', 6000);
+  const again = await reRing;
+  check('reconnecting in time re-delivers the ring', again?.id === offlineCallId, { got: again });
+  await emit(sleeperBack, 'call:ring_received', { call_id: offlineCallId });
+  check('and "ringing" returns once acknowledged', (await reRinging)?.id === offlineCallId);
+
+  const declineAck = await emit(sleeperBack, 'call:reject', { call_id: offlineCallId });
   check('the callee can still decline it normally', declineAck?.success, { ack: declineAck });
 
-  sleeperSocket.close();
+  sleeperBack.close();
+
+  // A call that ends while the callee has no connection must leave them
+  // offline — it used to write `online` for both sides unconditionally.
+  const neverOn = await createAccount({ goal: 'earnMoney', name: 'Kavya' });
+  const neverOnStart = await emit(callerSocket, 'call:start', {
+    user_id: neverOn.id,
+    type: 'voice',
+  });
+  check('a call to a phone that is off starts', neverOnStart?.success, { ack: neverOnStart });
+  await emit(callerSocket, 'call:cancel', { call_id: neverOnStart?.data?.call?.id });
+  await new Promise((r) => setTimeout(r, 300));
+  const neverOnAfter = await api('GET', `/users/${neverOn.id}`, { token: caller.token });
+  check(
+    'and ending it leaves the callee offline, not "online"',
+    neverOnAfter.data?.user?.status === 'offline',
+    { got: neverOnAfter.data?.user?.status }
+  );
 
   // ── Presence during calls ────────────────────────────────────────────────
   // `profileService.setPresence` only announces to people with an *open
@@ -635,6 +688,47 @@ async function run() {
   );
 
   ringerSocket.close();
+
+  // ── Watching presence ───────────────────────────────────────────────────
+  // A discovery card or profile on screen — no conversation needed.
+  section('Watching presence');
+
+  const watcher = await createAccount({ goal: 'makeFriends', name: 'Nila' });
+  const watched = await createAccount({ goal: 'earnMoney', name: 'Isha' });
+  const watcherSocket = await connect(watcher.token);
+
+  const watchAck = await emit(watcherSocket, 'presence:watch', { user_ids: [watched.id] });
+  check('a screen can watch presence', watchAck?.success, { ack: watchAck });
+  check(
+    'and is answered with the current status',
+    watchAck?.data?.[0]?.user_id === watched.id && watchAck?.data?.[0]?.status === 'offline',
+    { got: watchAck?.data }
+  );
+
+  const cameOnline = waitFor(watcherSocket, 'presence:changed', 4000);
+  const watchedSocket = await connect(watched.token);
+  const onlineEvent = await cameOnline;
+  check(
+    'it hears the watched person come online, live',
+    onlineEvent?.user_id === watched.id && onlineEvent?.status === 'online',
+    { got: onlineEvent }
+  );
+
+  const wentOffline = waitFor(watcherSocket, 'presence:changed', 4000);
+  watchedSocket.close();
+  const offlineEvent = await wentOffline;
+  check(
+    'and go offline, live',
+    offlineEvent?.user_id === watched.id && offlineEvent?.status === 'offline',
+    { got: offlineEvent }
+  );
+
+  await emit(watcherSocket, 'presence:watch', { user_ids: [] });
+  const afterUnwatch = waitFor(watcherSocket, 'presence:changed', 1500);
+  const watchedAgain = await connect(watched.token);
+  check('an empty watch list stops the updates', (await afterUnwatch) === null);
+  watchedAgain.close();
+  watcherSocket.close();
 
   // ── Presence on disconnect ────────────────────────────────────────────────
   section('Disconnect');

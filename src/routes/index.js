@@ -388,6 +388,13 @@ calls.post(
   validate({ params: S.calls.callParam }),
   h(callController.accept)
 );
+// The callee's phone confirming the ring reached it — the socket's
+// `call:ring_received` for a phone the push woke with no socket up.
+calls.post(
+  '/:id/ring-received',
+  validate({ params: S.calls.callParam }),
+  h(callController.ringReceived)
+);
 calls.post(
   '/:id/reject',
   validate({ params: S.calls.callParam }),

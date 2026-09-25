@@ -209,7 +209,10 @@ function sendNotification(userId, { title, body, data = {}, collapseKey = null }
  * woken shows nothing at all rather than a silent "incoming call" row that
  * does nothing when tapped.
  */
-function sendCall(userId, { callId, type, callerId, callerName, avatarUrl = null }) {
+function sendCall(
+  userId,
+  { callId, type, callerId, callerName, avatarUrl = null, ratePerMinute = 0 }
+) {
   return deliver(userId, {
     data: stringify({
       kind: 'call',
@@ -218,6 +221,7 @@ function sendCall(userId, { callId, type, callerId, callerName, avatarUrl = null
       user_id: callerId,
       name: callerName,
       avatar_url: avatarUrl ?? '',
+      rate_per_minute: ratePerMinute,
     }),
     android: {
       priority: 'high',

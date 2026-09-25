@@ -329,6 +329,7 @@ when the thread opens. Either side can close the door mid-conversation.
 | GET | `/calls/history` | `direction=all\|incoming\|outgoing\|missed` |
 | DELETE | `/calls/history` | Clear the log |
 | POST | `/calls` | `{ "user_id", "type", "is_random" }` |
+| POST | `/calls/:id/ring-received` | Callee's phone confirms the ring reached it (push-woken path) |
 | POST | `/calls/:id/accept` | Answer |
 | POST | `/calls/:id/reject` | Decline |
 | POST | `/calls/:id/cancel` | Hang up before it is answered |
@@ -582,11 +583,13 @@ losing it.
 | Event | Payload | Ack |
 | --- | --- | --- |
 | `presence:set` | `{ status }` | ✓ |
-| `presence:query` | `{ user_ids }` | ✓ — friends only |
+| `presence:query` | `{ user_ids }` | ✓ — conversation peers only |
+| `presence:watch` | `{ user_ids }` | ✓ — replaces this socket's watch list; answers current statuses |
 | `message:send` | `{ conversation_id, text, attachment, client_id }` | ✓ |
 | `message:read` | `{ conversation_id }` | ✓ |
 | `typing` | `{ conversation_id, is_typing }` | — |
 | `call:start` | `{ user_id, type, is_random }` | ✓ |
+| `call:ring_received` | `{ call_id }` | ✓ — callee's device got `call:incoming` |
 | `call:accept` / `call:reject` / `call:cancel` | `{ call_id }` | ✓ |
 | `call:end` | `{ call_id, reason }` | ✓ |
 
@@ -605,7 +608,7 @@ exist, and a client can always pick the weaker path.
 
 | Event | When |
 | --- | --- |
-| `presence:changed` | A friend came online or went offline. Only friends, and only on an actual change — re-asserting a status nobody's view of the world depends on sends nothing |
+| `presence:changed` | Someone came online, went offline or went busy. Sent to conversation peers, call partners and sockets watching them via `presence:watch`, and only on an actual change |
 | `message:new` | A message arrived |
 | `message:sent` | Your own send, for your other devices |
 | `message:read` | They read your message |
@@ -615,7 +618,8 @@ exist, and a client can always pick the weaker path.
 | `friend:accepted` | They accepted — carries `conversation_id` |
 | `friend:cancelled` / `friend:removed` | Withdrawn / unfriended |
 | `call:incoming` | Your phone is ringing |
-| `call:ringing` | Your outgoing call is ringing |
+| `call:calling` | Your outgoing call is trying to reach them — sent at start, and again if their phone drops mid-ring |
+| `call:ringing` | Their phone acknowledged the ring (`call:ring_received`) — it is really ringing |
 | `call:accepted` / `call:connected` | Answered |
 | `call:ended` | Over — carries duration and cost |
 | `call:low_balance` | One minute of credit left |
