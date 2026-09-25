@@ -533,6 +533,13 @@ model Conversation {
   pinnedByA  Boolean @default(false)
   pinnedByB  Boolean @default(false)
 
+  /// When each side last deleted the chat — per side, like pinning. That side
+  /// sees nothing from before this moment and does not list the thread until
+  /// a newer message arrives. The other side's copy is untouched: a
+  /// conversation belongs to both people in it.
+  deletedAtByA DateTime?
+  deletedAtByB DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -120,6 +120,12 @@ async function setPinned(req, res) {
   );
 }
 
+/** Deletes the chat for this side only — see `chatService.deleteForMe`. */
+async function deleteConversation(req, res) {
+  await chatService.deleteForMe(req.user, req.params.id);
+  return ok(res, { conversation_id: req.params.id }, 'Chat deleted');
+}
+
 /** The Chats tab badge. */
 async function unreadSummary(req, res) {
   const summary = await chatService.unreadSummary(req.user);
@@ -144,6 +150,7 @@ module.exports = {
   deleteMessage,
   setMuted,
   setPinned,
+  deleteConversation,
   unreadSummary,
   openConversation,
 };

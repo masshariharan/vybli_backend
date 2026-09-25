@@ -689,6 +689,104 @@ async function run() {
 
   ringerSocket.close();
 
+  // ── Call again, straight away ───────────────────────────────────────────
+  // Call → answer → end → call again, with no pause in between — the flow that
+  // used to say "on another call" about someone who was not.
+  section('Calling again straight away');
+
+  const again1 = await createAccount({ goal: 'makeFriends', name: 'Ravi' });
+  const again2 = await createAccount({ goal: 'earnMoney', name: 'Anu' });
+  await api('POST', '/wallet/purchase', {
+    token: again1.token,
+    body: { package_id: 'pkg_1000' },
+  });
+  const a1 = await connect(again1.token);
+  const a2 = await connect(again2.token);
+
+  // Every `call:ended` either side ever hears, by call id — so a duplicate
+  // for an old call is caught however late it lands.
+  const endedSeen = new Map();
+  for (const sock of [a1, a2]) {
+    sock.on('call:ended', (p) => endedSeen.set(p.call_id, (endedSeen.get(p.call_id) ?? 0) + 1));
+  }
+
+  const ids = new Set();
+  let previousId = null;
+  for (let round = 1; round <= 3; round++) {
+    const incoming = waitFor(a2, 'call:incoming');
+    // Fired immediately after the previous round's `call:end`, not after its
+    // ack — the order a phone actually sends them in.
+    const startAck = await emit(a1, 'call:start', { user_id: again2.id, type: 'voice' });
+    check(`round ${round}: the call places`, startAck?.success, { ack: startAck });
+    const id = startAck?.data?.call?.id;
+    check(`round ${round}: with a new call id`, Boolean(id) && !ids.has(id), { id });
+    ids.add(id);
+
+    const ring = await incoming;
+    check(`round ${round}: the callee is rung for *this* call`, ring?.id === id, {
+      got: ring?.id,
+      want: id,
+    });
+
+    const accepted = waitFor(a1, 'call:accepted');
+    const acceptAck = await emit(a2, 'call:accept', { call_id: id });
+    check(`round ${round}: it can be answered`, acceptAck?.success, { ack: acceptAck });
+    const acceptedEvent = await accepted;
+    check(
+      `round ${round}: the caller hears the answer for this call, not an old one`,
+      acceptedEvent?.call_id === id,
+      { got: acceptedEvent }
+    );
+
+    // Hang up and do not wait: the next round's start goes out right behind.
+    a1.emit('call:end', { call_id: id, reason: 'hungUp' });
+    previousId = id;
+  }
+  await emit(a1, 'call:end', { call_id: previousId, reason: 'hungUp' });
+
+  // Hanging up on a call that is already over changes nothing and tells
+  // nobody anything a second time.
+  await emit(a2, 'call:end', { call_id: previousId, reason: 'hungUp' });
+  await new Promise((r) => setTimeout(r, 400));
+  check(
+    'every call was ended exactly once per side — no duplicate `call:ended`',
+    [...ids].every((id) => endedSeen.get(id) === 2),
+    { seen: Object.fromEntries(endedSeen) }
+  );
+
+  // A retried start (the app's REST fallback after a lost ack) returns the
+  // call the first attempt placed instead of refusing as busy.
+  const first = await emit(a1, 'call:start', {
+    user_id: again2.id,
+    type: 'voice',
+    client_id: 'retry-me',
+  });
+  const retried = await api('POST', '/calls', {
+    token: again1.token,
+    body: { user_id: again2.id, type: 'voice', client_id: 'retry-me' },
+  });
+  check('a retried start is not refused as busy', retried.success, { got: retried });
+  check(
+    'and hands back the same call',
+    retried.data?.call?.id === first?.data?.call?.id,
+    { first: first?.data?.call?.id, retried: retried.data?.call?.id }
+  );
+
+  // A cancel crossing an answer: whichever lands second must not leave the
+  // call connected and billing behind a caller who hung up.
+  const crossedId = first?.data?.call?.id;
+  await Promise.all([
+    emit(a2, 'call:accept', { call_id: crossedId }),
+    emit(a1, 'call:cancel', { call_id: crossedId }),
+  ]);
+  const crossed = await api('GET', '/calls/active', { token: again1.token });
+  check('a cancel crossing an answer leaves no live call behind', !crossed.data?.call, {
+    got: crossed.data?.call?.status,
+  });
+
+  a1.close();
+  a2.close();
+
   // ── Watching presence ───────────────────────────────────────────────────
   // A discovery card or profile on screen — no conversation needed.
   section('Watching presence');

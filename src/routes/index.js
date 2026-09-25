@@ -361,6 +361,12 @@ chat.patch(
   validate({ params: S.chat.conversationParam, body: S.chat.pin }),
   h(chatController.setPinned)
 );
+// Deletes the chat for this side only; the other person keeps theirs.
+chat.delete(
+  '/:id',
+  validate({ params: S.chat.conversationParam }),
+  h(chatController.deleteConversation)
+);
 chat.delete(
   '/messages/:id',
   validate({ params: S.chat.conversationParam }),

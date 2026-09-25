@@ -39,6 +39,8 @@ function sideOf(conversation, userId) {
     peerUnreadField: isA ? 'unreadForB' : 'unreadForA',
     mutedField: isA ? 'mutedByA' : 'mutedByB',
     pinnedField: isA ? 'pinnedByA' : 'pinnedByB',
+    deletedField: isA ? 'deletedAtByA' : 'deletedAtByB',
+    deletedAt: isA ? conversation.deletedAtByA : conversation.deletedAtByB,
   };
 }
 
@@ -96,8 +98,15 @@ async function listThreads(user, { skip, take }) {
     orderBy: [{ lastMessageAt: 'desc' }, { createdAt: 'desc' }],
   });
 
+  // A chat this side deleted stays out of the list until something newer
+  // than the deletion arrives, and then it comes back holding only that.
+  const visible = all.filter((c) => {
+    const deletedAt = c.userAId === user.id ? c.deletedAtByA : c.deletedAtByB;
+    return !deletedAt || (c.lastMessageAt && c.lastMessageAt > deletedAt);
+  });
+
   const isPinned = (c) => (c.userAId === user.id ? c.pinnedByA : c.pinnedByB);
-  const sorted = [...all].sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)));
+  const sorted = [...visible].sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)));
 
   return { rows: sorted.slice(skip, skip + take), total: sorted.length };
 }
@@ -116,6 +125,9 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
   if (await relationship.isBlockedEitherWay(user.id, side.peerId)) throw errors.blocked();
 
   const where = { conversationId, deletedAt: null };
+  // Nothing from before this side deleted the chat.
+  const createdAt = {};
+  if (side.deletedAt) createdAt.gt = side.deletedAt;
   // Cursor paging: messages arrive while you scroll, and an offset would skip
   // or repeat rows as the list grows underneath.
   if (before) {
@@ -123,8 +135,9 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
       where: { id: before },
       select: { createdAt: true },
     });
-    if (anchor) where.createdAt = { lt: anchor.createdAt };
+    if (anchor) createdAt.lt = anchor.createdAt;
   }
+  if (Object.keys(createdAt).length > 0) where.createdAt = createdAt;
 
   const messages = await prisma.message.findMany({
     where,
@@ -428,6 +441,29 @@ async function setPinned(user, conversationId, pinned) {
   });
 }
 
+/**
+ * Deletes the chat for this side only.
+ *
+ * Nothing is removed from the database. The conversation and its messages
+ * belong to both people, and the other person's copy must not change because
+ * of this. This side's view is cut off at this moment instead: the thread
+ * leaves the list, its history is gone, its unread count is cleared and it is
+ * unpinned. If the other person writes again, the thread comes back with
+ * only what is new, which is how deleting a chat works everywhere else.
+ */
+async function deleteForMe(user, conversationId) {
+  const conversation = await getConversationOr404(conversationId, user.id);
+  const side = sideOf(conversation, user.id);
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: {
+      [side.deletedField]: new Date(),
+      [side.unreadField]: 0,
+      [side.pinnedField]: false,
+    },
+  });
+}
+
 /** The Chats badge: unread messages across every open conversation. */
 async function unreadSummary(user) {
   if (user.privacySettings?.allowMessages === false) {
@@ -508,6 +544,7 @@ module.exports = {
   deleteMessage,
   setMuted,
   setPinned,
+  deleteForMe,
   unreadSummary,
   openOrCreate,
   getConversationOr404,

@@ -304,6 +304,8 @@ is the dead end the gate exists to prevent.
 | POST | `/conversations/:id/messages` | Send |
 | POST | `/conversations/:id/read` | Mark read |
 | PATCH | `/conversations/:id/mute` | `{ "muted": true }` |
+| PATCH | `/conversations/:id/pin` | `{ "pinned": true }` — this side only |
+| DELETE | `/conversations/:id` | Delete the chat **for this side only**: leaves your list, history cleared for you; returns if they message again |
 | DELETE | `/conversations/messages/:id` | Delete your own (soft) |
 
 `filter=requests` returns pending friend requests shaped as threads

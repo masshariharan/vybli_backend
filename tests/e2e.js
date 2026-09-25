@@ -743,6 +743,62 @@ async function run() {
     { error: unpinned.error }
   );
 
+  // ── Delete chat ───────────────────────────────────────────────────────────
+  section('Delete chat');
+
+  await patch(`/conversations/${conversationId}/pin`, earner.token, { pinned: true });
+  await post(`/conversations/${conversationId}/messages`, caller.token, {
+    text: 'before the delete',
+  });
+  const chatDeleted = await del(`/conversations/${conversationId}`, earner.token);
+  check('a chat can be deleted', chatDeleted.success, { error: chatDeleted.error });
+
+  const earnerListAfterDelete = await get('/conversations', earner.token);
+  check(
+    'it leaves the list of whoever deleted it',
+    !earnerListAfterDelete.data?.items?.some((t) => t.id === conversationId)
+  );
+  const unreadAfterDelete = await get('/conversations/unread', earner.token);
+  check('and takes its unread count with it', unreadAfterDelete.data?.unread_messages === 0, {
+    got: unreadAfterDelete.data?.unread_messages,
+  });
+
+  const callerListAfterDelete = await get('/conversations', caller.token);
+  const callerThread = await get(`/conversations/${conversationId}`, caller.token);
+  check(
+    "the other person's copy is untouched",
+    callerListAfterDelete.data?.items?.some((t) => t.id === conversationId) &&
+      callerThread.data?.thread?.messages?.some((m) => m.text === 'before the delete'),
+    { got: callerThread.data?.thread?.messages?.length }
+  );
+
+  const clearedThread = await get(`/conversations/${conversationId}`, earner.token);
+  check(
+    'the history is gone for whoever deleted it',
+    clearedThread.success && clearedThread.data?.thread?.messages?.length === 0,
+    { got: clearedThread.data?.thread?.messages?.length }
+  );
+
+  await post(`/conversations/${conversationId}/messages`, caller.token, {
+    text: 'after the delete',
+  });
+  const earnerListAfterNew = await get('/conversations', earner.token);
+  const revived = earnerListAfterNew.data?.items?.find((t) => t.id === conversationId);
+  check('a new message brings the chat back', Boolean(revived));
+  check('unpinned', revived?.pinned === false, { got: revived?.pinned });
+  const revivedThread = await get(`/conversations/${conversationId}`, earner.token);
+  check(
+    'holding only what arrived after the delete',
+    revivedThread.data?.thread?.messages?.length === 1 &&
+      revivedThread.data?.thread?.messages?.[0]?.text === 'after the delete',
+    { got: revivedThread.data?.thread?.messages?.map((m) => m.text) }
+  );
+
+  const strangerDelete = await del(`/conversations/${conversationId}`, outsider.token);
+  check('nobody outside the chat can delete it', !strangerDelete.success, {
+    got: strangerDelete.error,
+  });
+
   // ── Privacy: Allow Messages ───────────────────────────────────────────────
   section('Privacy — Allow Messages');
 

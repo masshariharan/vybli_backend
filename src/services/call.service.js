@@ -38,6 +38,71 @@ const activeTimers = new Map();
 /** Unanswered calls give up after this long and become missed. */
 const RING_TIMEOUT_MS = 45_000;
 
+/** userId → the tail of that account's queued call actions. */
+const callLocks = new Map();
+
+/**
+ * Runs `fn` once every earlier call action touching any of `userIds` has
+ * finished, and holds later ones until it has.
+ *
+ * Each account's call actions run one at a time, in the order they
+ * *arrived*. Without this, "hang up, then immediately call again" raced
+ * itself: both socket events are handled concurrently, so `start`'s busy
+ * check could read the Call table before `end` had written the old call
+ * over. The old row still said `connected`, and the caller was told the
+ * person they had just hung up on was "on another call".
+ *
+ * The queue position is taken synchronously, on the call itself, before
+ * anything is awaited. That is what preserves arrival order: the socket
+ * layer calls straight into these, so a `call:end` followed by a
+ * `call:start` on one socket queues in that order.
+ *
+ * Code already holding a lock must never call another locked entry point
+ * for the same account; it would wait on itself. `finalise` and the other
+ * internals are unlocked for that reason, and only the exported entry points
+ * and the timers take the lock.
+ */
+function withUserLocks(userIds, fn) {
+  const keys = [...new Set(userIds.filter(Boolean))];
+  const before = Promise.all(
+    keys.map((key) => (callLocks.get(key) ?? Promise.resolve()).catch(() => {}))
+  );
+  const run = before.then(() => fn());
+  const tail = run.then(
+    () => {},
+    () => {}
+  );
+  for (const key of keys) callLocks.set(key, tail);
+  tail.then(() => {
+    for (const key of keys) if (callLocks.get(key) === tail) callLocks.delete(key);
+  });
+  return run;
+}
+
+/** The same, for a call: both of its participants. */
+async function withCallLock(callId, fn) {
+  const row = await prisma.call.findUnique({
+    where: { id: callId },
+    select: { callerId: true, calleeId: true },
+  });
+  if (!row) return null;
+  return withUserLocks([row.callerId, row.calleeId], fn);
+}
+
+/**
+ * `${userId}:${clientId}` → the promise of the call that attempt created.
+ *
+ * Makes placing a call idempotent. The app sends `call:start` over the socket
+ * and falls back to REST when no ack arrives in time. When the socket
+ * attempt *had* succeeded and only its ack was lost, the retry used to place
+ * a second call. That one was refused as busy ("on another call") because of
+ * the first, while the first went on ringing the other phone for a call the
+ * caller's screen had already given up on. A retry carrying the same client
+ * id now gets the same call back.
+ */
+const recentStarts = new Map();
+const START_DEDUPE_MS = 60_000;
+
 /**
  * callId → this call's in-call chat, on this instance.
  *
@@ -98,7 +163,23 @@ function payerAndEarner(call) {
  * top up between a ring and an answer, or answer a call priced within
  * whatever they already have.
  */
-async function start(user, { userId: calleeId, type, isRandom = false }) {
+function start(user, { userId: calleeId, type, isRandom = false, clientId } = {}) {
+  const key = clientId ? `${user.id}:${clientId}` : null;
+  if (key && recentStarts.has(key)) return recentStarts.get(key);
+
+  const placing = withUserLocks([user.id, calleeId], () =>
+    startUnlocked(user, { calleeId, type, isRandom })
+  );
+  if (key) {
+    recentStarts.set(key, placing);
+    // A refused attempt is not remembered: retrying it is a new decision.
+    placing.catch(() => recentStarts.delete(key));
+    setTimeout(() => recentStarts.delete(key), START_DEDUPE_MS).unref();
+  }
+  return placing;
+}
+
+async function startUnlocked(user, { calleeId, type, isRandom }) {
   const callee = await relationship.assertCanCall(user, calleeId, type);
 
   // Neither side may already be on a call. Checked in the database rather than
@@ -417,7 +498,11 @@ function announceCallPresence(call, { callerStatus, calleeStatus }) {
  * between dialling and being answered — the call ends immediately rather
  * than connecting for free.
  */
-async function accept(user, callId) {
+function accept(user, callId) {
+  return withUserLocks([user.id], () => acceptUnlocked(user, callId));
+}
+
+async function acceptUnlocked(user, callId) {
   const call = await loadCall(callId);
 
   if (call.calleeId !== user.id) {
@@ -444,11 +529,19 @@ async function accept(user, callId) {
     throw errors.insufficientBalance(rate, balance);
   }
 
-  const connected = await prisma.call.update({
-    where: { id: callId },
+  // Compare-and-set, like `finalise`: the caller may have hung up, or the
+  // ring timed out, in the moment since this was read. Answering a call that
+  // is already over must fail, not bring it back as `connected`.
+  const { count } = await prisma.call.updateMany({
+    where: { id: callId, status: 'ringing' },
     data: { status: 'connected', connectedAt: new Date() },
-    include: CALL_INCLUDE,
   });
+  if (count === 0) {
+    const now = await loadCall(callId);
+    if (now.status === 'connected') return now;
+    throw errors.conflict('That call is no longer ringing.', 'CALL_NOT_RINGING');
+  }
+  const connected = await loadCall(callId);
 
   // Fired the instant the row is written, not after the first minute is
   // actually charged — this is what makes *both* screens show "Connected",
@@ -506,7 +599,11 @@ async function accept(user, callId) {
 }
 
 /** Declines a ringing call. */
-async function reject(user, callId) {
+function reject(user, callId) {
+  return withUserLocks([user.id], () => rejectUnlocked(user, callId));
+}
+
+async function rejectUnlocked(user, callId) {
   const call = await loadCall(callId);
   if (call.calleeId !== user.id) {
     throw errors.forbidden('That call is not yours to decline.', 'NOT_CALL_RECIPIENT');
@@ -518,34 +615,66 @@ async function reject(user, callId) {
 }
 
 /** The caller hanging up before it is answered. */
-async function cancel(user, callId) {
+function cancel(user, callId) {
+  return withUserLocks([user.id], () => cancelUnlocked(user, callId));
+}
+
+async function cancelUnlocked(user, callId) {
   const call = await loadCall(callId);
   if (call.callerId !== user.id) {
     throw errors.forbidden('That call is not yours to cancel.', 'NOT_CALL_CALLER');
   }
+  // Answered in the same instant the caller hung up. The caller's app only
+  // saw a ringing call and so asked to cancel, but the call is live now, and
+  // refusing with "no longer ringing" left it connected: still billing, for
+  // a caller whose screen already said it was over. Hanging up is what they
+  // meant, so it ends.
+  if (call.status === 'connected') {
+    return finalise(call, { status: 'ended', reason: 'hungUp' });
+  }
   if (call.status !== 'ringing') {
     throw errors.conflict('That call is no longer ringing.', 'CALL_NOT_RINGING');
   }
-  return finalise(call, { status: 'cancelled', reason: 'cancelled' });
+  const result = await finalise(call, { status: 'cancelled', reason: 'cancelled' });
+  // Lost the race to an answer, as above: end what is now a live call.
+  if (result.status === 'connected') {
+    return finalise(result, { status: 'ended', reason: 'hungUp' });
+  }
+  return result;
 }
 
 /** Either side hanging up on a live call. */
-async function end(user, callId, { reason = 'hungUp', force = false } = {}) {
+function end(user, callId, options = {}) {
+  return withUserLocks([user.id], () => endUnlocked(user, callId, options));
+}
+
+async function endUnlocked(user, callId, { reason = 'hungUp', force = false } = {}) {
   const call = await loadCall(callId);
 
   if (!force && call.callerId !== user.id && call.calleeId !== user.id) {
     throw errors.forbidden('That call is not yours.', 'NOT_CALL_PARTICIPANT');
   }
-  if (call.status === 'ended' || call.status === 'missed') return call;
+  // Anything no longer live is already over, however it ended. This only
+  // listed `ended` and `missed`, so ending a call that had been *cancelled*
+  // or *rejected* (both sides hanging up at once, or a retried request)
+  // finalised it a second time. That rewrote it as `ended` and sent both
+  // phones a second `call:ended`, which could arrive while the next call was
+  // already up and close that one instead.
+  if (call.status !== 'ringing' && call.status !== 'connected') return call;
 
   // Hanging up on a call that never connected is a cancel or a reject, not an
   // end — and it must not be billed.
   if (call.status === 'ringing') {
     const isCaller = call.callerId === user.id;
-    return finalise(call, {
+    const result = await finalise(call, {
       status: isCaller ? 'cancelled' : 'rejected',
       reason: isCaller ? 'cancelled' : 'rejected',
     });
+    // Answered while this hang-up was on its way. Still a hang-up.
+    if (result.status === 'connected') {
+      return finalise(result, { status: 'ended', reason });
+    }
+    return result;
   }
 
   return finalise(call, { status: 'ended', reason });
@@ -609,6 +738,25 @@ function recentMessages(callId) {
  * none of the bookkeeping can be attached to one path and missed on another.
  */
 async function finalise(call, { status, reason }) {
+  const endedAt = new Date();
+  const durationSeconds = call.connectedAt
+    ? Math.max(0, Math.floor((endedAt - new Date(call.connectedAt)) / 1000))
+    : 0;
+
+  // Compare-and-set: only a call still in the status this caller *read* can
+  // be finished, and only once. Two endings race all the time: both people
+  // hanging up together, a cancel landing as the callee answers, the ring
+  // timeout firing as someone declines. With a plain update the loser
+  // overwrote the winner, ran the whole ending a second time and sent both
+  // phones a second `call:ended`. A late duplicate like that could reach an
+  // app that had already started its next call. Whoever loses gets the call
+  // as it now is, with no side effects, and decides from that.
+  const { count } = await prisma.call.updateMany({
+    where: { id: call.id, status: call.status },
+    data: { status, endReason: reason, endedAt, durationSeconds },
+  });
+  if (count === 0) return loadCall(call.id);
+
   clearTimers(call.id);
   // The chat dies with the call — this is what actually makes it temporary,
   // rather than merely a client that stops rendering it. Dropped up front,
@@ -616,11 +764,6 @@ async function finalise(call, { status, reason }) {
   // is nothing to await, and no reason to let it outlive the call by even
   // the length of that background work.
   messagesByCall.delete(call.id);
-
-  const endedAt = new Date();
-  const durationSeconds = call.connectedAt
-    ? Math.max(0, Math.floor((endedAt - new Date(call.connectedAt)) / 1000))
-    : 0;
 
   // The one write either side is actually waiting on. Whoever tapped End or
   // Decline is looking at that button right now, and the other party's
@@ -638,11 +781,7 @@ async function finalise(call, { status, reason }) {
   // phone switched off.
   const statusOf = (id) => (connections.isConnected(id) ? 'online' : 'offline');
   const [updated] = await Promise.all([
-    prisma.call.update({
-      where: { id: call.id },
-      data: { status, endReason: reason, endedAt, durationSeconds },
-      include: CALL_INCLUDE,
-    }),
+    loadCall(call.id),
     Promise.all([
       syncPresence(call.callerId, { onCall: false }),
       syncPresence(call.calleeId, { onCall: false }),
@@ -817,13 +956,15 @@ async function finaliseBookkeeping(call, updated, { status, reason, durationSeco
  * `networkError` rather than `hungUp`, because the summary should say what
  * actually happened — and because the two want different copy on the screen.
  */
-async function onMediaDisconnect(callId, { reason = 'networkError' } = {}) {
-  const call = await prisma.call.findUnique({
-    where: { id: callId },
-    include: CALL_INCLUDE,
+function onMediaDisconnect(callId, { reason = 'networkError' } = {}) {
+  return withCallLock(callId, async () => {
+    const call = await prisma.call.findUnique({
+      where: { id: callId },
+      include: CALL_INCLUDE,
+    });
+    if (!call || call.status !== 'connected') return null;
+    return finalise(call, { status: 'ended', reason });
   });
-  if (!call || call.status !== 'connected') return null;
-  return finalise(call, { status: 'ended', reason });
 }
 
 /** How many minutes were charged — amount spent divided by the snapshotted rate. */
@@ -913,9 +1054,10 @@ function startBilling(call) {
 
       const charged = await billOneMinute(current);
       if (!charged) {
-        await finalise(current, {
-          status: 'ended',
-          reason: 'insufficientBalance',
+        await withCallLock(call.id, async () => {
+          const still = await loadCall(call.id).catch(() => null);
+          if (still?.status !== 'connected') return;
+          await finalise(still, { status: 'ended', reason: 'insufficientBalance' });
         });
       }
     } catch (err) {
@@ -931,9 +1073,11 @@ function startBilling(call) {
 function scheduleRingTimeout(callId) {
   const timeout = setTimeout(async () => {
     try {
-      const call = await loadCall(callId).catch(() => null);
-      if (!call || call.status !== 'ringing') return;
-      await finalise(call, { status: 'missed', reason: 'missed' });
+      await withCallLock(callId, async () => {
+        const call = await loadCall(callId).catch(() => null);
+        if (!call || call.status !== 'ringing') return;
+        await finalise(call, { status: 'missed', reason: 'missed' });
+      });
     } catch (err) {
       console.error(`[call] ring timeout failed for ${callId}`, err);
     }

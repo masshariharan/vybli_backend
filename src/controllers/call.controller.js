@@ -16,6 +16,7 @@ async function start(req, res) {
     userId: req.body.user_id,
     type: req.body.type,
     isRandom: req.body.is_random,
+    clientId: req.body.client_id,
   });
   return created(res, { call: await callService.withMedia(call, req.userId) }, 'Calling…');
 }

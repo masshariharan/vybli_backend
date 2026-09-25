@@ -513,6 +513,7 @@ function registerCalls(io, socket) {
         userId: payload.user_id,
         type: payload.type,
         isRandom: Boolean(payload.is_random),
+        clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined,
       });
       return { call: await callService.withMedia(call, socket.userId) };
     })

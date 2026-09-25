@@ -254,6 +254,9 @@ const calls = {
     user_id: cuid,
     type: callType,
     is_random: z.boolean().default(false),
+    // Makes a retried attempt return the call the first one placed, rather
+    // than placing a second — see `recentStarts` in `call.service`.
+    client_id: z.string().min(1).max(100).optional(),
   }),
   callParam: z.object({ id: cuid }),
   end: z.object({
