@@ -6,6 +6,7 @@ const otpService = require('./otp.service');
 const firebase = require('./firebase.service');
 const activity = require('./activity.service');
 const relationship = require('./relationship.service');
+const favoriteService = require('./favorite.service');
 const { emitToAdmin, emitToUser, emitToUsers, disconnectUser } = require('../sockets/bus');
 const {
   signAccessToken,
@@ -421,6 +422,9 @@ async function deleteAccount({ user, reason }) {
   // Read before the profile below goes offline for good — there would be
   // nobody left to tell afterwards otherwise.
   const peerIds = [...(await relationship.conversationPeerIdsFor(user.id))];
+  // Same reason: once the rows below are gone there is no record left of who
+  // had this account starred.
+  const favoritedByIds = await favoriteService.favoritedByIdsFor(user.id);
 
   await prisma.$transaction([
     // Dead the moment they're revoked — nothing keeps a revoked session row
@@ -438,6 +442,15 @@ async function deleteAccount({ user, reason }) {
     prisma.notification.deleteMany({ where: { userId: user.id } }),
     prisma.userLanguage.deleteMany({ where: { userId: user.id } }),
     prisma.userActivity.deleteMany({ where: { userId: user.id } }),
+
+    // Favourites, both directions. A star is a bookmark on a *reachable*
+    // person, not shared history like a thread or a call record — nobody can
+    // call, message or open the profile of a deleted account, so a card for
+    // it on somebody's Favourites tab is a dead end, and this account's own
+    // stars describe a person who no longer exists.
+    prisma.favorite.deleteMany({
+      where: { OR: [{ favoritedById: user.id }, { favoriteUserId: user.id }] },
+    }),
 
     // Reachability, not identity: what stops here is whether this account can
     // still be found, messaged or called — `name`, `bio` and `avatarId` are
@@ -494,6 +507,14 @@ async function deleteAccount({ user, reason }) {
       status: 'offline',
       last_seen: now.toISOString(),
     });
+  }
+
+  // Everyone whose screens may be holding this account — an open chat, or a
+  // card on their Favourites tab — drops it now rather than at their next
+  // session refresh. Only the id: it says who is gone, never why.
+  const affectedIds = [...new Set([...peerIds, ...favoritedByIds])];
+  if (affectedIds.length > 0) {
+    emitToUsers(affectedIds, 'user:deleted', { user_id: user.id });
   }
 
   // The one activity record this account keeps — its own history is gone

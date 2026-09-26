@@ -68,17 +68,38 @@ async function favoriteIdsFor(userId) {
 }
 
 /**
+ * Everyone who has `userId` starred, as an array of ids.
+ *
+ * Read by `deleteAccount` before it removes those rows, so the people whose
+ * Favourites tab is about to lose a card can be told in real time.
+ */
+async function favoritedByIdsFor(userId) {
+  const rows = await prisma.favorite.findMany({
+    where: { favoriteUserId: userId },
+    select: { favoritedById: true },
+  });
+  return rows.map((r) => r.favoritedById);
+}
+
+/**
  * Everyone this account has favorited, most recently favorited first.
  *
  * Blocked people are excluded the same way discovery and the Chats screen
  * exclude them: a favourite you can no longer interact with is not something
  * the Favourites tab should still offer to call.
+ *
+ * So is any account that is no longer live. `deleteAccount` removes the rows
+ * pointing at a deleted account, but the filter is what keeps that true for
+ * rows written before it did, and for a suspended account — whose rows are
+ * kept, so a restored account comes back to the lists it was on, but which
+ * `loadCounterpart` refuses every interaction with in the meantime.
  */
 async function listFavorites(userId, { skip, take }) {
   const blockedIds = await relationship.blockedIdsFor(userId);
   const where = {
     favoritedById: userId,
     favoriteUserId: { notIn: [...blockedIds] },
+    favoriteUser: { status: 'active', deletedAt: null },
   };
 
   const [rows, total] = await Promise.all([
@@ -108,5 +129,6 @@ module.exports = {
   removeFavorite,
   isFavorite,
   favoriteIdsFor,
+  favoritedByIdsFor,
   listFavorites,
 };
