@@ -311,6 +311,7 @@ is the dead end the gate exists to prevent.
 | GET | `/conversations/:id` | Open a thread — **also marks it read** |
 | POST | `/conversations/:id/messages` | Send |
 | POST | `/conversations/:id/read` | Mark read |
+| POST | `/conversations/messages/delivered` | `{ "message_ids": [...] }` (1–100) — delivery ack from a push, when there is no socket. Idempotent: only `sent` becomes `delivered` |
 | PATCH | `/conversations/:id/mute` | `{ "muted": true }` |
 | PATCH | `/conversations/:id/pin` | `{ "pinned": true }` — this side only |
 | DELETE | `/conversations/:id` | Delete the chat **for this side only**: leaves your list, history cleared for you; returns if they message again |
@@ -596,7 +597,8 @@ losing it.
 | `presence:query` | `{ user_ids }` | ✓ — conversation peers only |
 | `presence:watch` | `{ user_ids }` | ✓ — replaces this socket's watch list; answers current statuses |
 | `message:send` | `{ conversation_id, text, attachment, client_id }` | ✓ |
-| `message:read` | `{ conversation_id }` | ✓ |
+| `message:read` | `{ conversation_id }` — send only while the chat is on screen and the app is in the foreground | ✓ |
+| `message:delivered` | `{ message_id }` — this device rendered a `message:new` (the second tick) | |
 | `typing` | `{ conversation_id, is_typing }` | — |
 | `call:start` | `{ user_id, type, is_random }` | ✓ |
 | `call:ring_received` | `{ call_id }` | ✓ — callee's device got `call:incoming` |
@@ -620,8 +622,10 @@ exist, and a client can always pick the weaker path.
 | --- | --- |
 | `presence:changed` | Someone came online, went offline or went busy. Sent to conversation peers, call partners and sockets watching them via `presence:watch`, and only on an actual change |
 | `message:new` | A message arrived |
-| `message:sent` | Your own send, for your other devices |
-| `message:read` | They read your message |
+| `message:sent` | Your own send, echoed with its `client_id` — to the sending device and your others |
+| `message:delivered` | `{ conversation_id, message_ids, delivered_at }` — their phone has these (two grey ticks) |
+| `message:read` | `{ conversation_id, reader_id, message_ids, read_at }` — exactly these turned blue |
+| `conversation:read` | `{ conversation_id }` — you read it on another device; clear the badge |
 | `message:deleted` | A message was withdrawn |
 | `typing` | They are typing |
 | `friend:request` | Someone asked to connect |

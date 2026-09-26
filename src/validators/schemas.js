@@ -218,6 +218,10 @@ const chat = {
 
   list: pagination,
 
+  delivered: z.object({
+    message_ids: z.array(z.string().trim().min(1).max(64)).min(1).max(100),
+  }),
+
   history: pagination.extend({
     // Cursor paging for a thread: messages arrive while you scroll, and
     // offsets shift under you.

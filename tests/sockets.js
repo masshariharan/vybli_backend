@@ -262,6 +262,7 @@ async function run() {
   section('Messaging');
 
   const messageArrived = waitFor(earnerSocket, 'message:new');
+  const echoArrived = waitFor(callerSocket, 'message:sent', 4000);
   const sendAck = await emit(callerSocket, 'message:send', {
     conversation_id: conversationId,
     text: 'Sent over the socket',
@@ -275,6 +276,12 @@ async function run() {
   check('with authorship relative to the reader', delivered?.message?.author === 'them', {
     got: delivered?.message?.author,
   });
+  const echo = await echoArrived;
+  check(
+    "the sender's own devices get it back, with the client id to match",
+    echo?.client_id === 'sock_1' && echo?.message?.author === 'me',
+    { got: echo }
+  );
 
   // ── Typing ────────────────────────────────────────────────────────────────
   section('Typing');
@@ -299,11 +306,27 @@ async function run() {
   section('Read receipts');
 
   const readArrived = waitFor(callerSocket, 'message:read', 4000);
+  const selfReadArrived = waitFor(earnerSocket, 'conversation:read', 4000);
   await emit(earnerSocket, 'message:read', { conversation_id: conversationId });
   const readReceipt = await readArrived;
   check('the sender is told their message was read', Boolean(readReceipt), {
     got: readReceipt,
   });
+  check(
+    'naming exactly which messages turned blue, and when',
+    Boolean(readReceipt?.message_ids?.includes(delivered?.message?.id)) &&
+      Boolean(readReceipt?.read_at),
+    { got: readReceipt }
+  );
+  const selfRead = await selfReadArrived;
+  check(
+    "the reader's own devices are told too, so their badge clears",
+    selfRead?.conversation_id === conversationId,
+    { got: selfRead }
+  );
+  const readAgain = waitFor(callerSocket, 'message:read', 1500);
+  await emit(earnerSocket, 'message:read', { conversation_id: conversationId });
+  check('reading again with nothing new sends no receipt', (await readAgain) === null);
 
   // ── Delivery receipts ────────────────────────────────────────────────────
   section('Delivery receipts');
@@ -359,6 +382,40 @@ async function run() {
     Boolean(catchUpReceipt?.message_ids?.includes(offlineMessageId)),
     { got: catchUpReceipt, expected: offlineMessageId }
   );
+
+  // Acked from a push: the app is closed, so there is no socket to ack on —
+  // the phone calls the HTTP endpoint from the notification instead.
+  const pushedArrived = waitFor(earnerSocket, 'message:new');
+  const pushedAck = await emit(callerSocket, 'message:send', {
+    conversation_id: conversationId,
+    text: 'Arrives as a push',
+    client_id: 'sock_delivery_3',
+  });
+  const pushedId = pushedAck?.data?.message?.id;
+  await pushedArrived;
+  const httpDelivered = waitFor(callerSocket, 'message:delivered', 4000);
+  const httpAck = await api('POST', '/conversations/messages/delivered', {
+    token: earner.token,
+    body: { message_ids: [pushedId] },
+  });
+  check('a push can ack delivery over HTTP', httpAck.success, { got: httpAck });
+  const httpReceipt = await httpDelivered;
+  check(
+    'and the sender sees the second tick',
+    Boolean(httpReceipt?.message_ids?.includes(pushedId)),
+    { got: httpReceipt }
+  );
+  const ackedAgain = waitFor(callerSocket, 'message:delivered', 1500);
+  await api('POST', '/conversations/messages/delivered', {
+    token: earner.token,
+    body: { message_ids: [pushedId] },
+  });
+  check('acking twice is harmless and says nothing new', (await ackedAgain) === null);
+  const emptyAck = await api('POST', '/conversations/messages/delivered', {
+    token: earner.token,
+    body: { message_ids: [] },
+  });
+  check('an empty ack is refused', emptyAck.success === false, { got: emptyAck });
 
   // ── Calls ─────────────────────────────────────────────────────────────────
   section('Call signalling');

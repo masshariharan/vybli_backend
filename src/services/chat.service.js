@@ -5,6 +5,7 @@ const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
 const { pageAcrossBuckets } = require('../utils/paging');
 const notificationService = require('./notification.service');
+const push = require('./push.service');
 const activity = require('./activity.service');
 const { emitToUser, emitToAdmin } = require('../sockets/bus');
 const serialize = require('../utils/serialize');
@@ -213,13 +214,43 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
   };
 }
 
-/** Zeroes this side's unread counter and tells the sender their message landed. */
+/**
+ * Zeroes this side's unread counter, marks the peer's messages read, and
+ * tells both people.
+ *
+ * The receipt names the messages it covers (`message_ids`), rather than
+ * meaning "everything you ever sent here". The sender's app can have a
+ * message still on its way — its bubble not yet swapped for the stored one —
+ * and a blanket "all read" turned that one blue before it had even arrived;
+ * an id list says exactly which ticks go blue, and lets the app hold on to a
+ * receipt for a bubble it has not matched up yet (see the client's
+ * `ChatController`).
+ *
+ * Decided by the unread *messages*, not only the counter: a thread whose
+ * counter is already zero can still hold unread rows — a conversation
+ * re-pointed after a number was reused starts this side at zero — and those
+ * would otherwise never turn blue at all.
+ *
+ * Read implies delivered, so a message read before its delivery ack ever
+ * arrived gets its `deliveredAt` too.
+ *
+ * The reader's own other devices are told as well (`conversation:read`), so
+ * reading on one phone clears the badge on the other.
+ */
 async function markRead(user, conversationId) {
   const conversation = await getConversationOr404(conversationId, user.id);
   const side = sideOf(conversation, user.id);
 
-  if (conversation[side.unreadField] === 0) return conversation;
+  const unread = await prisma.message.findMany({
+    where: { conversationId, senderId: side.peerId, readAt: null },
+    select: { id: true },
+  });
+  if (conversation[side.unreadField] === 0 && unread.length === 0) {
+    return conversation;
+  }
 
+  const ids = unread.map((m) => m.id);
+  const now = new Date();
   const [updated] = await prisma.$transaction([
     prisma.conversation.update({
       where: { id: conversationId },
@@ -227,15 +258,24 @@ async function markRead(user, conversationId) {
       include: CONVERSATION_INCLUDE,
     }),
     prisma.message.updateMany({
-      where: { conversationId, senderId: side.peerId, readAt: null },
-      data: { status: 'read', readAt: new Date() },
+      where: { id: { in: ids }, deliveredAt: null },
+      data: { deliveredAt: now },
+    }),
+    prisma.message.updateMany({
+      where: { id: { in: ids } },
+      data: { status: 'read', readAt: now },
     }),
   ]);
 
-  emitToUser(side.peerId, 'message:read', {
-    conversation_id: conversationId,
-    reader_id: user.id,
-  });
+  if (ids.length > 0) {
+    emitToUser(side.peerId, 'message:read', {
+      conversation_id: conversationId,
+      reader_id: user.id,
+      message_ids: ids,
+      read_at: now.toISOString(),
+    });
+  }
+  emitToUser(user.id, 'conversation:read', { conversation_id: conversationId });
 
   activity.record({
     userId: user.id,
@@ -301,6 +341,7 @@ async function markDelivered(user, { messageIds } = {}) {
     emitToUser(group.senderId, 'message:delivered', {
       conversation_id: conversationId,
       message_ids: group.messageIds,
+      delivered_at: now.toISOString(),
     });
   }
 }
@@ -399,6 +440,12 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
   // Worse, a throw in there used to fail the *send*. The message was committed
   // and delivered, and the sender was told "Not sent · Tap to retry" — so a
   // retry sent it a second time, and the recipient got it twice.
+  //
+  // The push carries the message id either way: a phone that receives it with
+  // the app closed acknowledges delivery from the push itself
+  // (`POST /conversations/messages/delivered`), so the sender's second tick
+  // does not wait for the app to be opened. A muted thread gets the same
+  // acknowledgement from a silent, data-only push that shows nothing.
   const muted = side.isA ? updatedConversation.mutedByB : updatedConversation.mutedByA;
   if (!muted) {
     notificationService
@@ -407,10 +454,20 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
         kind: 'message',
         title: user.profile?.name ?? 'New message',
         body: trimmed || attachment?.title || 'Sent an attachment',
-        data: { conversation_id: conversationId, user_id: user.id },
+        data: { conversation_id: conversationId, user_id: user.id, message_id: message.id },
       })
       .catch((err) =>
         console.error(`[chat] notify failed for message ${message.id}`, err)
+      );
+  } else {
+    push
+      .sendSilent(side.peerId, {
+        kind: 'message_silent',
+        conversation_id: conversationId,
+        message_id: message.id,
+      })
+      .catch((err) =>
+        console.error(`[chat] silent push failed for message ${message.id}`, err)
       );
   }
 

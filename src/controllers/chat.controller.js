@@ -88,6 +88,16 @@ async function sendMessage(req, res) {
   );
 }
 
+/**
+ * The delivery ack from a push — the app was closed, so there was no socket to
+ * ack on. Idempotent, and only ever moves the caller's *received* messages
+ * from `sent` to `delivered` (see `chatService.markDelivered`).
+ */
+async function markDelivered(req, res) {
+  await chatService.markDelivered(req.user, { messageIds: req.body.message_ids });
+  return ok(res, { delivered: true }, 'Delivered');
+}
+
 async function markRead(req, res) {
   const conversation = await chatService.markRead(req.user, req.params.id);
   return ok(
@@ -155,6 +165,7 @@ module.exports = {
   getThread,
   sendMessage,
   markRead,
+  markDelivered,
   deleteMessage,
   setMuted,
   setPinned,

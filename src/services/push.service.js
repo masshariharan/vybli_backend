@@ -271,8 +271,25 @@ function stringify(data) {
   );
 }
 
+/**
+ * A data-only push that shows nothing — a message in a thread the recipient
+ * muted. It exists so the phone can acknowledge delivery (the second tick)
+ * without the app open; a muted chat still delivers, it just does not shout.
+ */
+function sendSilent(userId, data) {
+  return deliver(userId, {
+    data: stringify(data),
+    android: { priority: 'high' },
+    apns: {
+      headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
+      payload: { aps: { 'content-available': 1 } },
+    },
+  });
+}
+
 module.exports = {
   CHANNEL,
+  sendSilent,
   enabled,
   register,
   unregister,

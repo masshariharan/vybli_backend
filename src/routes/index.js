@@ -337,6 +337,12 @@ chat.use(authenticate, requireOnboarded);
 
 chat.get('/', validate({ query: S.chat.list }), h(chatController.listThreads));
 chat.get('/unread', h(chatController.unreadSummary));
+// Delivery acks from a push, when the app had no socket to ack on.
+chat.post(
+  '/messages/delivered',
+  validate({ body: S.chat.delivered }),
+  h(chatController.markDelivered)
+);
 chat.get(
   '/:id',
   validate({ params: S.chat.conversationParam, query: S.chat.history }),
