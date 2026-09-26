@@ -16,6 +16,13 @@
 
 generator client {
   provider = "prisma-client-js"
+  /// Loads `include`d relations with SQL joins — one query per read — instead
+  /// of one query per related table. Without it, looking up a conversation
+  /// with both people and their profiles and privacy settings was seven
+  /// sequential database round trips, and sending one message was twenty-six:
+  /// about six seconds of "sending…" against a database ~240 ms away. With it
+  /// on, `join` is the default strategy for every read in the API.
+  previewFeatures = ["relationJoins"]
 }
 
 // The connection URL used to live here (`url = env("DATABASE_URL")`) — as of

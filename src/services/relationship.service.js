@@ -65,6 +65,11 @@ async function loadCounterpart(otherId) {
     },
   });
 
+  return assertLive(other);
+}
+
+/** The account checks [loadCounterpart] applies, on a row already loaded. */
+function assertLive(other) {
   if (!other || other.status === 'deleted' || other.deletedAt) {
     throw errors.notFound('That person', 'USER_NOT_FOUND');
   }
@@ -131,7 +136,24 @@ async function assertCanStartConversation(user, otherId) {
  */
 async function assertCanMessage(user, otherId) {
   const other = await assertCanInteract(user.id, otherId);
+  return messagingChecks(user, other);
+}
 
+/**
+ * [assertCanMessage] for a counterpart the caller has **already loaded** —
+ * with `profile` and `privacySettings`, as a conversation's own include
+ * carries them. The same rules; one database round trip (the block check)
+ * instead of two, which is a quarter-second of every send against a distant
+ * database.
+ */
+async function assertCanMessageLoaded(user, other) {
+  if (user.id === other?.id) throw errors.badRequest('You cannot do that to yourself');
+  assertLive(other);
+  if (await isBlockedEitherWay(user.id, other.id)) throw errors.blocked();
+  return messagingChecks(user, other);
+}
+
+function messagingChecks(user, other) {
   if (user.privacySettings && user.privacySettings.allowMessages === false) {
     throw errors.messagingDisabledByMe();
   }
@@ -347,6 +369,7 @@ module.exports = {
   assertCanInteract,
   assertCanStartConversation,
   assertCanMessage,
+  assertCanMessageLoaded,
   assertCanCall,
   blockedIdsFor,
   conversationPeerIdsFor,

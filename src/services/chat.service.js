@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('node:crypto');
+const { Prisma } = require('@prisma/client');
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
@@ -203,7 +205,7 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
     take: limit,
   });
 
-  const updated = await markRead(user, conversationId);
+  const updated = await markRead(user, conversation);
 
   return {
     conversation: updated ?? conversation,
@@ -237,35 +239,43 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
  * The reader's own other devices are told as well (`conversation:read`), so
  * reading on one phone clears the badge on the other.
  */
-async function markRead(user, conversationId) {
-  const conversation = await getConversationOr404(conversationId, user.id);
+async function markRead(user, conversationOrId) {
+  // A caller that has just loaded the conversation (opening a thread) hands
+  // it over rather than have it read twice.
+  const conversation =
+    typeof conversationOrId === 'string'
+      ? await getConversationOr404(conversationOrId, user.id)
+      : conversationOrId;
+  const conversationId = conversation.id;
   const side = sideOf(conversation, user.id);
-
-  const unread = await prisma.message.findMany({
-    where: { conversationId, senderId: side.peerId, readAt: null },
-    select: { id: true },
-  });
-  if (conversation[side.unreadField] === 0 && unread.length === 0) {
-    return conversation;
-  }
-
-  const ids = unread.map((m) => m.id);
   const now = new Date();
-  const [updated] = await prisma.$transaction([
-    prisma.conversation.update({
-      where: { id: conversationId },
-      data: { [side.unreadField]: 0 },
-      include: CONVERSATION_INCLUDE,
-    }),
-    prisma.message.updateMany({
-      where: { id: { in: ids }, deliveredAt: null },
-      data: { deliveredAt: now },
-    }),
-    prisma.message.updateMany({
-      where: { id: { in: ids } },
-      data: { status: 'read', readAt: now },
-    }),
+
+  // One statement marks the peer's unread messages read — and delivered, if
+  // their delivery ack never made it — and says which ones it touched. It used
+  // to be a lookup, two updates and a transaction around them: five round
+  // trips between the reader opening the chat and the sender's ticks turning
+  // blue. The unread counter is reset alongside it, not after it; the two are
+  // independent and each is safe to repeat.
+  const [read] = await Promise.all([
+    prisma.$queryRaw`
+      UPDATE "messages"
+      SET "status" = 'read', "readAt" = ${now},
+          "deliveredAt" = COALESCE("deliveredAt", ${now})
+      WHERE "conversationId" = ${conversationId}
+        AND "senderId" = ${side.peerId}
+        AND "readAt" IS NULL
+      RETURNING "id"`,
+    conversation[side.unreadField] > 0
+      ? prisma.conversation.update({
+          where: { id: conversationId },
+          data: { [side.unreadField]: 0 },
+          select: { id: true },
+        })
+      : null,
   ]);
+  const ids = read.map((r) => r.id);
+  if (ids.length === 0 && conversation[side.unreadField] === 0) return conversation;
+  const updated = { ...conversation, [side.unreadField]: 0 };
 
   if (ids.length > 0) {
     emitToUser(side.peerId, 'message:read', {
@@ -306,24 +316,24 @@ async function markRead(user, conversationId) {
  * be quietly downgraded back to a single tick.
  */
 async function markDelivered(user, { messageIds } = {}) {
-  const where = {
-    status: 'sent',
-    senderId: { not: user.id },
-    conversation: { OR: [{ userAId: user.id }, { userBId: user.id }] },
-  };
-  if (messageIds) where.id = { in: messageIds };
-
-  const pending = await prisma.message.findMany({
-    where,
-    select: { id: true, senderId: true, conversationId: true },
-  });
-  if (!pending.length) return;
-
+  if (messageIds && messageIds.length === 0) return;
   const now = new Date();
-  await prisma.message.updateMany({
-    where: { id: { in: pending.map((m) => m.id) } },
-    data: { status: 'delivered', deliveredAt: now },
-  });
+
+  // One statement: flip, and say what was flipped. It used to be a lookup and
+  // then an update — two round trips before the sender's second tick could
+  // even be sent. Only rows still at `sent`, only other people's messages,
+  // and only in conversations this user is part of.
+  const pending = await prisma.$queryRaw`
+    UPDATE "messages" AS m
+    SET "status" = 'delivered', "deliveredAt" = ${now}
+    FROM "conversations" AS c
+    WHERE m."conversationId" = c."id"
+      AND m."status" = 'sent'
+      AND m."senderId" <> ${user.id}
+      AND (c."userAId" = ${user.id} OR c."userBId" = ${user.id})
+      AND (${messageIds ?? null}::text[] IS NULL OR m."id" = ANY(${messageIds ?? null}::text[]))
+    RETURNING m."id" AS "id", m."senderId" AS "senderId", m."conversationId" AS "conversationId"`;
+  if (!pending.length) return;
 
   // One event per conversation, not per message — a sender only has one peer
   // in a given thread, so this is already the coarsest grouping that still
@@ -347,70 +357,114 @@ async function markDelivered(user, { messageIds } = {}) {
 }
 
 /**
+ * A message id, made here because the send writes its row with one raw
+ * statement and so skips Prisma's `@default(cuid())`. Same shape as a cuid —
+ * `c`, a time part, then randomness — so ids made either way sort and read
+ * alike; unique by the 16 random bytes, not by the clock.
+ */
+function newId() {
+  return `c${Date.now().toString(36)}${crypto.randomBytes(12).toString('base64url')}`;
+}
+
+/** Postgres's unique-violation, however the driver adapter wraps it. */
+function isUniqueViolation(error) {
+  return (
+    error?.code === 'P2002' ||
+    error?.meta?.code === '23505' ||
+    error?.cause?.code === '23505' ||
+    /23505|unique constraint/i.test(error?.message ?? '')
+  );
+}
+
+/**
  * Sends a message.
  *
  * The conversation's `lastMessageAt` and the recipient's unread counter move
  * in the same transaction as the insert — a message that exists but does not
  * bump the list would sit invisible at the bottom of the Chats screen.
+ *
+ * **Every database round trip here is time the sender watches "sending…".**
+ * Against a database a quarter-second away this was twenty-two of them — the
+ * same two people loaded three times over — so the path is kept to what it
+ * needs, in as few sequential steps as the data allows: the conversation (with
+ * both people, which is everything the guard needs), then the block check and
+ * the retry lookup side by side, then the write.
  */
 async function sendMessage(user, conversationId, { text = '', attachment, clientId }) {
-  const conversation = await getConversationOr404(conversationId, user.id);
-  const side = sideOf(conversation, user.id);
-
-  // The full guard, on every send.
-  await relationship.assertCanMessage(user, side.peerId);
-
   const trimmed = (text ?? '').trim();
   if (!trimmed && !attachment) {
     throw errors.badRequest('Write a message or attach something');
   }
+
+  const conversation = await getConversationOr404(conversationId, user.id);
+  const side = sideOf(conversation, user.id);
 
   // A retry of a send that already landed. The first attempt wrote the row and
   // may have died on the way back, so the client has no way to know — it can
   // only send again with the same id, and this is what makes that safe.
   // Returning the original rather than inserting a second copy also means the
   // recipient is not re-notified for a message they already have.
-  if (clientId) {
-    const already = await prisma.message.findUnique({
-      where: { senderId_clientId: { senderId: user.id, clientId } },
-    });
-    if (already) {
-      return {
-        message: already,
-        conversation: await prisma.conversation.findUnique({
-          where: { id: conversationId },
-          include: CONVERSATION_INCLUDE,
-        }),
-      };
-    }
-  }
+  //
+  // Looked up alongside the guard rather than after it — the two do not
+  // depend on each other — but only used once the guard has passed.
+  const [, already] = await Promise.all([
+    // The full guard, on every send, against the peer the conversation
+    // already loaded.
+    relationship.assertCanMessageLoaded(user, side.peer),
+    clientId
+      ? prisma.message.findUnique({
+          where: { senderId_clientId: { senderId: user.id, clientId } },
+        })
+      : null,
+  ]);
+  if (already) return { message: already };
 
   const now = new Date();
 
-  const [message, updatedConversation] = await prisma.$transaction([
-    prisma.message.create({
-      data: {
-        conversationId,
-        senderId: user.id,
-        clientId: clientId ?? null,
-        text: trimmed,
-        status: 'sent',
-        attachmentKind: attachment?.kind ?? null,
-        attachmentTitle: attachment?.title ?? null,
-        attachmentSubtitle: attachment?.subtitle ?? null,
-        attachmentUrl: attachment?.image_url ?? null,
-        attachmentDuration: attachment?.duration_label ?? null,
-      },
-    }),
-    prisma.conversation.update({
-      where: { id: conversationId },
-      data: {
-        lastMessageAt: now,
-        [side.peerUnreadField]: { increment: 1 },
-      },
-      include: CONVERSATION_INCLUDE,
-    }),
-  ]);
+  // The insert and the conversation bump in **one statement** — Postgres runs
+  // a statement's data-modifying CTEs atomically, so it is exactly as
+  // all-or-nothing as the transaction it replaces, in one round trip instead
+  // of four (BEGIN, INSERT, UPDATE, COMMIT). The unread column is one of two
+  // fixed names, never input, so naming it with `Prisma.raw` is safe.
+  const unreadColumn = Prisma.raw(`"${side.peerUnreadField}"`);
+  let rows;
+  try {
+    rows = await prisma.$queryRaw`
+      WITH m AS (
+        INSERT INTO "messages" (
+          "id", "conversationId", "senderId", "clientId", "text", "status",
+          "attachmentKind", "attachmentTitle", "attachmentSubtitle",
+          "attachmentUrl", "attachmentDuration", "createdAt"
+        ) VALUES (
+          ${newId()}, ${conversationId}, ${user.id}, ${clientId ?? null}, ${trimmed},
+          'sent', ${attachment?.kind ?? null}::"AttachmentKind",
+          ${attachment?.title ?? null}, ${attachment?.subtitle ?? null},
+          ${attachment?.image_url ?? null}, ${attachment?.duration_label ?? null},
+          ${now}
+        )
+        RETURNING *
+      ), c AS (
+        UPDATE "conversations"
+        SET "lastMessageAt" = ${now}, ${unreadColumn} = ${unreadColumn} + 1,
+            "updatedAt" = ${now}
+        WHERE "id" = ${conversationId}
+        RETURNING "mutedByA", "mutedByB"
+      )
+      SELECT m.*, c."mutedByA" AS "_mutedByA", c."mutedByB" AS "_mutedByB"
+      FROM m, c`;
+  } catch (error) {
+    // Two copies of the same retry racing each other: the other one stored
+    // it first. Answer with that, as the lookup above would have.
+    if (clientId && isUniqueViolation(error)) {
+      const stored = await prisma.message.findUnique({
+        where: { senderId_clientId: { senderId: user.id, clientId } },
+      });
+      if (stored) return { message: stored };
+    }
+    throw error;
+  }
+  const { _mutedByA, _mutedByB, ...message } = rows[0];
+  const updatedConversation = { mutedByA: _mutedByA, mutedByB: _mutedByB };
 
   const payload = {
     conversation_id: conversationId,
@@ -499,7 +553,7 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
     at: message.createdAt.toISOString(),
   });
 
-  return { message, conversation: updatedConversation };
+  return { message };
 }
 
 /**
