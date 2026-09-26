@@ -2,6 +2,7 @@
 
 const prisma = require('../../config/prisma');
 const env = require('../../config/env');
+const connections = require('../../sockets/connections');
 
 /**
  * The numbers on the dashboard.
@@ -90,6 +91,12 @@ async function overview() {
     reportsResolved,
     reportsDismissed,
     totalBlocks,
+    unavailableCalls,
+    ringingCalls,
+    undeliveredMessages,
+    readToday,
+    favorites,
+    pushDevices,
   ] = await Promise.all([
     prisma.user.count({ where: live }),
     prisma.user.count({ where: { ...live, createdAt: { gte: today } } }),
@@ -132,6 +139,12 @@ async function overview() {
     prisma.report.count({ where: { status: 'resolved' } }),
     prisma.report.count({ where: { status: 'dismissed' } }),
     prisma.block.count(),
+    prisma.call.count({ where: { endReason: 'unavailable' } }),
+    prisma.call.count({ where: { status: 'ringing' } }),
+    prisma.message.count({ where: { status: 'sent', deletedAt: null } }),
+    prisma.message.count({ where: { readAt: { gte: today } } }),
+    prisma.favorite.count(),
+    prisma.deviceToken.count(),
   ]);
 
   return {
@@ -151,6 +164,11 @@ async function overview() {
       pending_verification: pendingVerification,
       suspended: suspendedUsers,
       earners: earnerUsers,
+      // Live, from the socket server: accounts with the app open right now —
+      // the only accounts a call can reach.
+      connected_now: connections.connectedUserCount(),
+      favorites,
+      push_devices: pushDevices,
     },
     communication: {
       active_calls: activeCalls,
@@ -164,6 +182,12 @@ async function overview() {
       active_conversations: activeConversations,
       messages: totalMessages,
       messages_today: messagesToday,
+      messages_read_today: readToday,
+      // Sent, not yet on the recipient's phone — usually people who have not
+      // opened the app since.
+      messages_undelivered: undeliveredMessages,
+      ringing_calls: ringingCalls,
+      unavailable_calls: unavailableCalls,
     },
     verification: {
       pending: verifPending,

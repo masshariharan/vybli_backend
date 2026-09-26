@@ -180,6 +180,15 @@ function start(user, { userId: calleeId, type, isRandom = false, clientId } = {}
   const key = clientId ? `${user.id}:${clientId}` : null;
   if (key && recentStarts.has(key)) return recentStarts.get(key);
 
+  // Nobody to ring, or nobody to ring *from* — answered instantly, from
+  // memory, before any lock is queued or the database is asked anything. This
+  // is the common refusal ("offline"), and it must not wait behind a slow
+  // database to be said.
+  if (calleeId !== user.id && !connections.isConnected(calleeId)) {
+    return Promise.reject(errors.calleeOffline());
+  }
+  if (!connections.isConnected(user.id)) return Promise.reject(errors.callerOffline());
+
   const placing = withUserLocks([user.id, calleeId], () =>
     startUnlocked(user, { calleeId, type, isRandom })
   );
@@ -196,19 +205,27 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
   // The callee first — reachable, online, not on another call (see
   // `relationship.assertCanCall`) — then the caller. All against the server's
   // own state: live sockets and the Call table, never a client's say-so.
-  const callee = await relationship.assertCanCall(user, calleeId, type);
-
   // A caller with no live socket would never hear "ringing", "answered" or
   // "ended" — and the callee would ring at a screen nobody is holding.
   if (!connections.isConnected(user.id)) throw errors.callerOffline();
 
+  // Everything the decision needs, asked at once: the callee's checks (see
+  // `relationship.assertCanCall` — reachable, allowed, not on another call),
+  // whether the caller is already on one, and — for a caller who will pay —
+  // their balance. Against a slow database these used to queue one behind
+  // another for several seconds, long enough for the app to give up waiting.
+  //
   // Neither side may already be on a call. Checked in the database rather than
   // from presence alone, because presence is a cache and this is the truth.
   // Run under both people's locks (see `start`), so two people calling each
   // other at the same instant cannot both get through: whichever lands second
   // sees the first call here.
-  await assertNotBusy(user.id, 'caller');
-  await assertNotBusy(calleeId, 'callee');
+  const callerMayPay = !user.profile?.isEarner;
+  const [callee, , callerBalance] = await Promise.all([
+    relationship.assertCanCall(user, calleeId, type),
+    assertNotBusy(user.id, 'caller'),
+    callerMayPay ? walletService.getBalance(user.id) : null,
+  ]);
 
   // The rate is the earner's, not the callee's — an earner calling out still
   // sets the price, and the other side still pays it.
@@ -233,7 +250,7 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
       );
 
   if (ratePerMinute > 0 && payerId === user.id) {
-    const balance = await walletService.getBalance(payerId);
+    const balance = callerBalance ?? (await walletService.getBalance(payerId));
     if (balance < ratePerMinute) throw errors.insufficientBalance(ratePerMinute, balance);
   }
 
@@ -253,10 +270,16 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
   // Busy is set on both sides now, not on connect — a second caller must not
   // get through to a phone that is already ringing. (That rule is enforced by
   // `assertNotBusy` against the call rows; this is what everyone else sees.)
-  await Promise.all([
+  //
+  // Not awaited: nothing about placing the call depends on the stored presence
+  // (busy is decided from the Call table), and each write is a database round
+  // trip the caller would otherwise sit through before hearing "calling". The
+  // writes are queued per person (see `syncPresence`), so a hang-up straight
+  // after still lands after them.
+  Promise.all([
     syncPresence(user.id, { onCall: true }),
     syncPresence(calleeId, { onCall: true }),
-  ]);
+  ]).catch((err) => console.error(`[call] presence for call ${call.id}`, err));
   announceCallPresence(call, { callerStatus: 'busy', calleeStatus: 'busy' });
 
   // To every device the callee has open. Both sides get their join credentials
@@ -538,6 +561,13 @@ async function acceptUnlocked(user, callId) {
   emitToUser(connected.calleeId, 'call:connected', {
     call_id: callId,
     connected_at: connected.connectedAt.toISOString(),
+  });
+  emitToAdmin('admin:call_connected', {
+    call_id: callId,
+    type: connected.type,
+    caller: { id: connected.callerId, name: connected.caller?.profile?.name ?? null },
+    callee: { id: connected.calleeId, name: connected.callee?.profile?.name ?? null },
+    at: connected.connectedAt.toISOString(),
   });
 
   // Everything past this point is the actual charge, the activity log and

@@ -180,10 +180,39 @@ function messagingChecks(user, other) {
  * offline contradicts the screen the user is looking at.
  */
 async function assertCanCall(user, otherId, type) {
-  const other = await assertCanInteract(user.id, otherId);
+  if (user.id === otherId) throw errors.badRequest('You cannot do that to yourself');
+
+  // Online means a live socket — the app open and connected. The app closes
+  // its socket the moment it leaves the foreground (see its lifecycle
+  // handling), and the server's ping reaps a socket whose network died, so
+  // "connected" here is the truth rather than `profile.presence`, which is a
+  // cache. There is no ringing somebody later: calls are real-time only, and a
+  // person who cannot hear the ring now is told as much, now. In memory, so
+  // it costs nothing and is asked before anything that does.
+  if (!connections.isConnected(otherId)) throw errors.calleeOffline();
+
+  // The three things this needs from the database do not depend on each
+  // other, so they are asked **at once**, not one after another: against a
+  // database hundreds of milliseconds away, every sequential round trip is
+  // time the caller spends waiting to find out whether the call can happen.
+  //
+  // Busy is asked of the Call table, not the `presence` cache, which lags
+  // behind a call that has just ended.
+  const [other, blocked, liveCall] = await Promise.all([
+    loadCounterpart(otherId),
+    isBlockedEitherWay(user.id, otherId),
+    prisma.call.findFirst({
+      where: {
+        status: { in: ['ringing', 'connected'] },
+        OR: [{ callerId: otherId }, { calleeId: otherId }],
+      },
+      select: { callerId: true, calleeId: true },
+    }),
+  ]);
+  if (blocked) throw errors.blocked();
+
   const privacy = other.privacySettings ?? {};
   const profile = other.profile;
-
   if (!profile) throw errors.notFound('That person', 'USER_NOT_FOUND');
 
   if (!canPair(user, other)) throw errors.callRoleMismatch();
@@ -192,32 +221,9 @@ async function assertCanCall(user, otherId, type) {
   const enabled = type === 'voice' ? profile.voiceEnabled : profile.videoEnabled;
   if (accepts === false || !enabled) throw errors.callTypeDisabled(type);
 
-  // Busy is asked of the Call table, not the `presence` cache. That cache is
-  // set to `busy` the instant a call starts ringing and only cleared once the
-  // call's background bookkeeping gets around to it — a client that redials a
-  // moment after a call ended, or one whose peer's bookkeeping is merely
-  // running slow, would otherwise be told "busy" about someone who is not.
-  // The call table is written and read in the same request that decides this,
-  // so there is nothing here for it to lag behind.
-  // Online means a live socket — the app open and connected. The app closes
-  // its socket the moment it leaves the foreground (see its lifecycle
-  // handling), and the server's ping reaps a socket whose network died, so
-  // "connected" here is the truth rather than `profile.presence`, which is a
-  // cache. There is no ringing somebody later: calls are real-time only, and a
-  // person who cannot hear the ring now is told as much, now.
-  if (!connections.isConnected(otherId)) throw errors.calleeOffline();
-
-  const liveCall = await prisma.call.findFirst({
-    where: {
-      status: { in: ['ringing', 'connected'] },
-      OR: [{ callerId: otherId }, { calleeId: otherId }],
-    },
-    select: { callerId: true, calleeId: true },
-  });
   if (liveCall) {
     // Both pressed Call at once: the first call already rings this side.
-    const between =
-      (liveCall.callerId === user.id || liveCall.calleeId === user.id);
+    const between = liveCall.callerId === user.id || liveCall.calleeId === user.id;
     throw between ? errors.callCrossed() : errors.calleeBusy();
   }
 

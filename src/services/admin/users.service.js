@@ -5,6 +5,7 @@ const { errors } = require('../../utils/errors');
 const avatarCatalog = require('../../config/avatarCatalog');
 const activity = require('../activity.service');
 const { emitToUser } = require('../../sockets/bus');
+const connections = require('../../sockets/connections');
 
 /**
  * Everything the admin panel knows about a person.
@@ -53,6 +54,9 @@ function summarise(user) {
     is_earner: p?.isEarner ?? false,
     is_verified: p?.isVerified ?? false,
     presence: p?.presence ?? 'offline',
+    // The truth behind `presence`: whether the app is open on a device and
+    // connected this second. Calls ring only accounts where this is true.
+    connected: connections.isConnected(user.id),
     last_seen: p?.lastSeen?.toISOString() ?? null,
     onboarding_status: p?.onboardingStatus ?? null,
     account_status: user.status,
@@ -263,6 +267,8 @@ async function overview(userId) {
     include: {
       ...PROFILE_INCLUDE,
       wallet: true,
+      privacySettings: true,
+      notificationSettings: true,
     },
   });
   if (!user) throw errors.notFound('User', 'USER_NOT_FOUND');
@@ -290,6 +296,11 @@ async function overview(userId) {
     nextSettlement,
     lastPayout,
     lastActivity,
+    unavailableCalls,
+    favoritesMade,
+    favoritedBy,
+    devices,
+    undeliveredToThem,
   ] = await Promise.all([
     prisma.conversation.count({ where: { OR: [{ userAId: userId }, { userBId: userId }] } }),
     prisma.message.count({ where: { senderId: userId } }),
@@ -354,6 +365,24 @@ async function overview(userId) {
       orderBy: { createdAt: 'desc' },
       select: { createdAt: true, type: true, description: true },
     }),
+    // Calls that could not reach this person — offline or never confirmed the
+    // ring (see the realtime-only call rules).
+    prisma.call.count({ where: { calleeId: userId, endReason: 'unavailable' } }),
+    prisma.favorite.count({ where: { favoritedById: userId } }),
+    prisma.favorite.count({ where: { favoriteUserId: userId } }),
+    prisma.deviceToken.findMany({
+      where: { userId },
+      orderBy: { lastSeenAt: 'desc' },
+      select: { platform: true, deviceName: true, lastSeenAt: true, createdAt: true },
+    }),
+    // Messages waiting on this person's phone to say it has them.
+    prisma.message.count({
+      where: {
+        status: 'sent',
+        senderId: { not: userId },
+        conversation: { OR: [{ userAId: userId }, { userBId: userId }] },
+      },
+    }),
   ]);
 
   return {
@@ -383,6 +412,40 @@ async function overview(userId) {
           rejection_reason: user.profile.rejectionReason ?? null,
         }
       : null,
+    // What this account has switched on and off — the same switches the app's
+    // Privacy Settings shows, including "Show All Users".
+    privacy: user.privacySettings
+      ? {
+          profile_visible_to_everyone: user.privacySettings.profileVisibleToEveryone,
+          show_online_status: user.privacySettings.showOnlineStatus,
+          show_city_on_profile: user.privacySettings.showCityOnProfile,
+          allow_voice_calls: user.privacySettings.allowVoiceCalls,
+          allow_video_calls: user.privacySettings.allowVideoCalls,
+          allow_messages: user.privacySettings.allowMessages,
+          show_all_users: user.privacySettings.showAllUsers,
+        }
+      : null,
+    notification_settings: user.notificationSettings
+      ? {
+          messages: user.notificationSettings.messages,
+          missed_calls: user.notificationSettings.missedCalls,
+          earnings: user.notificationSettings.earnings,
+          promotions: user.notificationSettings.promotions,
+        }
+      : null,
+    // Live, from the socket server — not a stored column.
+    connection: {
+      connected: connections.isConnected(user.id),
+      devices: connections.socketCount(user.id),
+      callable: connections.isConnected(user.id) && user.status === 'active',
+    },
+    // Phones registered for message notifications (calls are never pushed).
+    push_devices: devices.map((d) => ({
+      platform: d.platform,
+      device_name: d.deviceName ?? null,
+      last_seen_at: d.lastSeenAt.toISOString(),
+      registered_at: d.createdAt.toISOString(),
+    })),
     last_session: lastSession
       ? {
           ip: lastSession.ip ?? null,
@@ -416,6 +479,10 @@ async function overview(userId) {
       notifications,
       unread_notifications: unreadNotifications,
       active_sessions: sessions,
+      unavailable_calls: unavailableCalls,
+      favorites_made: favoritesMade,
+      favorited_by: favoritedBy,
+      undelivered_messages: undeliveredToThem,
     },
     last_activity: lastActivity
       ? {
@@ -483,6 +550,10 @@ function serializeCall(c, viewerId) {
     direction: viewerId ? (outgoing ? 'outgoing' : 'incoming') : null,
     type: c.type,
     status: c.status,
+    // The live lifecycle the apps show: `calling` until the callee's phone
+    // confirms the ring, then `ringing`, then `connected`; the final status
+    // once it is over.
+    phase: c.status === 'ringing' ? (c.ringDeliveredAt ? 'ringing' : 'calling') : c.status,
     is_random: c.isRandom,
     started_at: c.startedAt.toISOString(),
     connected_at: c.connectedAt?.toISOString() ?? null,
@@ -491,6 +562,9 @@ function serializeCall(c, viewerId) {
     amount_spent: Number(c.amountSpent),
     rate_per_minute: Number(c.ratePerMinute),
     end_reason: c.endReason,
+    // When the callee's phone confirmed it was ringing. Null on a call that
+    // never reached a device — the ones that end as `unavailable`.
+    ring_confirmed_at: c.ringDeliveredAt?.toISOString() ?? null,
     rating: c.rating,
     // The room this call used, so an operator can line a call up against a
     // LiveKit session without knowing the naming convention.

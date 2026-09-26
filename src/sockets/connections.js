@@ -43,4 +43,14 @@ function isConnected(userId) {
   return (socketsByUser.get(userId)?.size ?? 0) > 0;
 }
 
-module.exports = { add, remove, isConnected };
+/** How many sockets `userId` has open — one per device with the app open. */
+function socketCount(userId) {
+  return socketsByUser.get(userId)?.size ?? 0;
+}
+
+/** How many accounts have the app open and connected right now. */
+function connectedUserCount() {
+  return socketsByUser.size;
+}
+
+module.exports = { add, remove, isConnected, socketCount, connectedUserCount };

@@ -430,6 +430,10 @@ async function deleteAccount({ user, reason }) {
     // Dead the moment they're revoked — nothing keeps a revoked session row
     // around for.
     prisma.userSession.deleteMany({ where: { userId: user.id } }),
+    // Push registrations: the FCM token and the device's name are this
+    // account's alone, and a deleted account has nothing left to be notified
+    // about. Left behind, they were personal data kept for nothing.
+    prisma.deviceToken.deleteMany({ where: { userId: user.id } }),
 
     // Money. `Wallet` cascades its own ledger (`WalletTransaction`) with it.
     prisma.wallet.deleteMany({ where: { userId: user.id } }),
@@ -521,6 +525,13 @@ async function deleteAccount({ user, reason }) {
   // with everything else above, but the deletion event itself is exactly
   // what an administrator reviewing what happened to an account needs to
   // find.
+  emitToAdmin('admin:account_deleted', {
+    user_id: user.id,
+    name: user.profile?.name ?? null,
+    reason: reason ?? null,
+    at: now.toISOString(),
+  });
+
   activity.record({
     userId: user.id,
     type: 'account_deleted',

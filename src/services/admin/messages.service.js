@@ -37,8 +37,11 @@ function serializeConversation(c) {
     participants: [summarise(c.userA), summarise(c.userB)],
     message_count: c._count?.messages ?? 0,
     last_message_at: c.lastMessageAt?.toISOString() ?? null,
-    unread_a: c.unreadA,
-    unread_b: c.unreadB,
+    // Per side, in the order of `participants`. These read `unreadA`/`unreadB`,
+    // which are not columns — the counts are `unreadForA`/`unreadForB` — so
+    // every conversation used to show an unread total of NaN.
+    unread_a: c.unreadForA ?? 0,
+    unread_b: c.unreadForB ?? 0,
     created_at: c.createdAt.toISOString(),
     // A conversation nobody has written in for a month reads differently from
     // one that is live, and that is the first thing an operator wants to know.
@@ -76,8 +79,10 @@ function serializeMessage(m) {
             url: m.attachmentUrl,
             duration: m.attachmentDuration,
           },
+    // sent → delivered (their phone has it) → read (they opened the chat).
     status: m.status,
     is_deleted: Boolean(m.deletedAt),
+    delivered_at: m.deliveredAt?.toISOString() ?? null,
     read_at: m.readAt?.toISOString() ?? null,
     created_at: m.createdAt.toISOString(),
   };

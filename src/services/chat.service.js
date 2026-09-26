@@ -278,6 +278,12 @@ async function markRead(user, conversationOrId) {
   const updated = { ...conversation, [side.unreadField]: 0 };
 
   if (ids.length > 0) {
+    emitToAdmin('admin:message_status', {
+      conversation_id: conversationId,
+      status: 'read',
+      count: ids.length,
+      at: now.toISOString(),
+    });
     emitToUser(side.peerId, 'message:read', {
       conversation_id: conversationId,
       reader_id: user.id,
@@ -348,6 +354,12 @@ async function markDelivered(user, { messageIds } = {}) {
     byConversation.set(m.conversationId, group);
   }
   for (const [conversationId, group] of byConversation) {
+    emitToAdmin('admin:message_status', {
+      conversation_id: conversationId,
+      status: 'delivered',
+      count: group.messageIds.length,
+      at: now.toISOString(),
+    });
     emitToUser(group.senderId, 'message:delivered', {
       conversation_id: conversationId,
       message_ids: group.messageIds,
