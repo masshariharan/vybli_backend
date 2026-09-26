@@ -29,6 +29,7 @@ async function getPublic(req, res) {
       user: serialize.publicUser(user, {
         viewer: req.userId,
         viewerProfile: req.user.profile,
+        viewerPrivacy: req.user.privacySettings,
         favorited,
       }),
     },

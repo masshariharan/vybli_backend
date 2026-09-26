@@ -29,6 +29,7 @@ async function list(req, res) {
     serialize.publicUser(u, {
       viewer: req.userId,
       viewerProfile: req.user.profile,
+      viewerPrivacy: req.user.privacySettings,
       favorited: true,
     })
   );

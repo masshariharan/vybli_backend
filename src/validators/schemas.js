@@ -126,6 +126,7 @@ const settings = {
       allow_voice_calls: z.boolean().optional(),
       allow_video_calls: z.boolean().optional(),
       allow_messages: z.boolean().optional(),
+      show_all_users: z.boolean().optional(),
     })
     .refine((d) => Object.keys(d).length > 0, { message: 'Nothing to update' }),
 

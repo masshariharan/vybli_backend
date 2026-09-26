@@ -148,7 +148,7 @@ const errors = {
   /** Starting a chat */
   chatRoleMismatch: () =>
     new AppError(
-      'A chat must connect an Earn Money account with a Make Friends account.',
+      'Chat with this person is not available. To chat with people of your own gender, you both need Show All Users turned on.',
       { status: 400, code: 'CHAT_ROLE_MISMATCH' }
     ),
 
@@ -194,7 +194,7 @@ const errors = {
     }),
   callRoleMismatch: () =>
     new AppError(
-      'A call must connect an Earn Money account with a Make Friends account.',
+      'Calling this person is not available. To call people of your own gender, you both need Show All Users turned on.',
       { status: 400, code: 'CALL_ROLE_MISMATCH' }
     ),
 

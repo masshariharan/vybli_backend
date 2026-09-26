@@ -134,10 +134,12 @@ const CALL_INCLUDE = {
 
 /**
  * Who pays and who earns on this call — a role, not a caller/callee position.
- * `assertCanCall` only lets an earner and a non-earner ring each other, so
- * this is unambiguous for any call actually placed through this service; the
- * same-role fallback exists only so an in-flight call cannot crash if a
- * profile's role changes mid-call.
+ *
+ * Unambiguous for an earner/non-earner call, which is the only kind that is
+ * billed. A same-side call — two accounts with "Show All Users" on, see
+ * `relationship.canPair` — is placed at a rate of zero, so the fallback below
+ * never actually moves money for it; it also keeps an in-flight call from
+ * crashing if a profile's role changes mid-call.
  */
 function payerAndEarner(call) {
   const callerIsEarner = Boolean(call.caller?.profile?.isEarner);
@@ -189,17 +191,27 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
 
   // The rate is the earner's, not the callee's — an earner calling out still
   // sets the price, and the other side still pays it.
+  //
+  // A same-side call has no earner and no payer, so it is free: rate zero,
+  // no balance check, and nothing for the per-minute billing to charge or the
+  // bookkeeping to pay out (see `billOneMinute` and `finaliseBookkeeping`).
+  // That is what lets "Show All Users" connect two people on the same side
+  // without inventing a second billing model — the paid path below is exactly
+  // the one every earner/non-earner call has always taken.
   const callerIsEarner = Boolean(user.profile?.isEarner);
+  const sameSide = relationship.isSameSide(user, callee);
   const earnerProfile = callerIsEarner ? user.profile : callee.profile;
   const payerId = callerIsEarner ? calleeId : user.id;
 
-  const ratePerMinute = Number(
-    type === 'voice'
-      ? earnerProfile.voiceRatePerMinute
-      : earnerProfile.videoRatePerMinute
-  );
+  const ratePerMinute = sameSide
+    ? 0
+    : Number(
+        type === 'voice'
+          ? earnerProfile.voiceRatePerMinute
+          : earnerProfile.videoRatePerMinute
+      );
 
-  if (payerId === user.id) {
+  if (ratePerMinute > 0 && payerId === user.id) {
     const balance = await walletService.getBalance(payerId);
     if (balance < ratePerMinute) throw errors.insufficientBalance(ratePerMinute, balance);
   }
@@ -986,6 +998,9 @@ function billedMinutes(call) {
 async function billOneMinute(call) {
   const { payerId } = payerAndEarner(call);
   const rate = Number(call.ratePerMinute);
+  // A free call — see `startUnlocked`. Nothing to take, and nothing worth a
+  // `wallet:updated` or a ₹0 `call:charged` every minute.
+  if (!(rate > 0)) return true;
   try {
     let spent = Number(call.amountSpent) + rate;
     await prisma.$transaction(async (tx) => {

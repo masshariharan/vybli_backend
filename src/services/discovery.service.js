@@ -24,10 +24,11 @@ const PROFILE_INCLUDE = {
 /**
  * Everyone who may appear in `viewer`'s discovery.
  *
- * Earning is a role, not a preference: an Earn Money account's feed shows
- * Make Friends accounts and vice versa, because that is the only pairing the
- * call billing understands (one side earns, the other spends money) — two
- * earners or two non-earners are never shown to each other.
+ * Who counts as a match at all is `relationship.pairableWhere` — the other
+ * side (Earn Money ↔ Make Friends, which onboarding derives from gender)
+ * always, and the viewer's own side too when both accounts have "Show All
+ * Users" on. That rule lives in the relationship service rather than here so
+ * the chat and call guards enforce exactly the same one.
  *
  * Beyond that role split, three conditions, each load-bearing:
  *  * `ONBOARDING_COMPLETED` — a half-built profile has no name or city.
@@ -44,10 +45,11 @@ function visibleWhere(viewer) {
     status: 'active',
     deletedAt: null,
     privacySettings: { profileVisibleToEveryone: true },
-    profile: {
-      isEarner: !viewer.profile?.isEarner,
-      onboardingStatus: 'ONBOARDING_COMPLETED',
-    },
+    profile: { onboardingStatus: 'ONBOARDING_COMPLETED' },
+    // Under `AND`, not merged into `profile`/`privacySettings`: both callers
+    // below replace those two keys wholesale with their own conditions, and
+    // the pairing rule must survive that.
+    AND: [relationship.pairableWhere(viewer)],
   };
 }
 
@@ -97,9 +99,8 @@ async function feed(user, params) {
 
   // Spread first: `where.profile` below replaces this object wholesale, so the
   // eligibility conditions have to be restated here or they are lost.
-  // Gender is not a filter here — [visibleWhere] already fixed it to the
-  // opposite of the viewer's own role, and picking within that pool is not a
-  // choice the app offers any more.
+  // Gender is not a filter here — [visibleWhere] already decided it from the
+  // viewer's role and their "Show All Users" setting.
   const profileWhere = {
     ...visibleWhere(user).profile,
     age: { gte: minAge, lte: maxAge },

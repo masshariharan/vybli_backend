@@ -1476,6 +1476,106 @@ async function run() {
     { error: sameRoleCall.error }
   );
 
+  // "Show All Users" — same side pairs only when *both* accounts turn it on,
+  // and a same-side call is free. Both switched back off at the end, so the
+  // rest of this walk-through sees the default it was written against.
+  section('Show All Users');
+
+  const privacyDefault = await get('/me/settings/privacy', caller.token);
+  check(
+    'Show All Users is off by default',
+    privacyDefault.data?.privacy?.show_all_users === false,
+    { got: privacyDefault.data?.privacy }
+  );
+
+  const turnedOn = await patch('/me/settings/privacy', caller.token, {
+    show_all_users: true,
+  });
+  check(
+    'Show All Users can be turned on, and is saved',
+    turnedOn.success && turnedOn.data?.privacy?.show_all_users === true,
+    { error: turnedOn.error, got: turnedOn.data?.privacy }
+  );
+
+  const oneSided = await post('/calls', caller.token, {
+    user_id: outsider.id,
+    type: 'voice',
+  });
+  check(
+    'one side opting in is not enough to call',
+    !oneSided.success && oneSided.error === 'CALL_ROLE_MISMATCH',
+    { error: oneSided.error }
+  );
+  const oneSidedFeed = await get('/users/discover?scope=allCities&limit=100', caller.token);
+  check(
+    'or to appear in their feed',
+    !oneSidedFeed.data?.items?.some((u) => u.id === outsider.id)
+  );
+
+  await patch('/me/settings/privacy', outsider.token, { show_all_users: true });
+
+  const bothFeed = await get('/users/discover?scope=allCities&limit=100', caller.token);
+  const sameSideCard = bothFeed.data?.items?.find((u) => u.id === outsider.id);
+  check(
+    'with both on, the same side appears in the feed',
+    Boolean(sameSideCard),
+    { error: bothFeed.error }
+  );
+  check(
+    'marked as someone they can chat with and call, at no price',
+    sameSideCard?.can_interact === true && sameSideCard?.voice_rate_per_minute === 0,
+    { got: sameSideCard }
+  );
+  check(
+    'and the opposite side is still there',
+    bothFeed.data?.items?.some((u) => u.is_earner === true)
+  );
+
+  const sameSideChat = await post(`/users/${outsider.id}/conversation`, caller.token);
+  check(
+    'with both on, a same-side chat can be started',
+    sameSideChat.success,
+    { error: sameSideChat.error }
+  );
+
+  const freeCall = await post('/calls', caller.token, {
+    user_id: outsider.id,
+    type: 'voice',
+  });
+  check(
+    'with both on, a same-side call can be placed — free',
+    freeCall.success && freeCall.data?.call?.rate_per_minute === 0,
+    { error: freeCall.error, got: freeCall.data?.call?.rate_per_minute }
+  );
+  if (freeCall.data?.call?.id) {
+    await post(`/calls/${freeCall.data.call.id}/cancel`, caller.token);
+  }
+
+  await patch('/me/settings/privacy', outsider.token, { show_all_users: false });
+
+  const sameSideThreadId = sameSideChat.data?.thread?.id;
+  if (sameSideThreadId) {
+    const afterOff = await post(
+      `/conversations/${sameSideThreadId}/messages`,
+      caller.token,
+      { text: 'still there?' }
+    );
+    check(
+      'turning it off closes an existing same-side chat',
+      !afterOff.success && afterOff.error === 'CHAT_ROLE_MISMATCH',
+      { error: afterOff.error }
+    );
+  }
+
+  await patch('/me/settings/privacy', caller.token, { show_all_users: false });
+
+  const offFeed = await get('/users/discover?scope=allCities&limit=100', caller.token);
+  check(
+    'with it off again, the feed is opposite side only',
+    offFeed.data?.items?.every((u) => u.is_earner === true),
+    { error: offFeed.error }
+  );
+
   // Insufficient funds.
   section('Running out of balance');
 

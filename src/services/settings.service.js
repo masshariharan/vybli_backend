@@ -26,6 +26,7 @@ const camelFromSnake = {
   allow_voice_calls: 'allowVoiceCalls',
   allow_video_calls: 'allowVideoCalls',
   allow_messages: 'allowMessages',
+  show_all_users: 'showAllUsers',
 };
 
 function mapKeys(payload, mapping) {

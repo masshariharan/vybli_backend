@@ -2,6 +2,7 @@
 
 const env = require('../config/env');
 const avatarCatalog = require('../config/avatarCatalog');
+const { canPair } = require('./pairing');
 
 /**
  * The wire format.
@@ -60,8 +61,14 @@ function isNewAccount(createdAt) {
  * Enforced here rather than hidden in the app, so a client cannot show a
  * number the server never sanctioned, and so every surface — profile, feed,
  * chat header — gets the same answer without each having to remember the rule.
+ *
+ * `viewerPrivacy` is the viewer's own privacy row, for `can_interact` — see
+ * [interaction].
  */
-function publicUser(user, { viewer = null, viewerProfile = null, favorited = false } = {}) {
+function publicUser(
+  user,
+  { viewer = null, viewerProfile = null, viewerPrivacy = null, favorited = false } = {}
+) {
   if (!user) return null;
   const profile = user.profile ?? user;
   const privacy = user.privacySettings ?? {};
@@ -126,7 +133,29 @@ function publicUser(user, { viewer = null, viewerProfile = null, favorited = fal
       viewerPays && profile.isEarner ? money(profile.videoRatePerMinute) : 0,
 
     joined_label: joinedLabel(user.createdAt),
+
+    can_interact: isSelf
+      ? false
+      : interaction(user, viewerProfile && { profile: viewerProfile, privacySettings: viewerPrivacy }),
   };
+}
+
+/**
+ * Whether the viewer may chat with and call `user` — `utils/pairing`'s
+ * [canPair], answered per person.
+ *
+ * A yes/no rather than the other person's "Show All Users" switch itself.
+ * Whether somebody opted into same-gender contact is theirs to keep, and on a
+ * dating app it can say something personal; this reveals it to nobody who
+ * does not share it — a same-side viewer only ever sees `true` when both have
+ * it on, and an opposite-side viewer sees `true` regardless.
+ *
+ * Null with no viewer to ask about, so the client falls back on its own rule
+ * rather than trusting a guess.
+ */
+function interaction(user, viewer) {
+  if (!viewer?.profile) return null;
+  return canPair(viewer, user);
 }
 
 function joinedLabel(createdAt) {
@@ -173,8 +202,12 @@ function myProfile(user) {
  * profile rather than needing a second, laxer one. Trimming `city_id` to save
  * a dozen bytes would have cost a parallel parser.
  */
-function userSummary(user) {
+function userSummary(user, { viewer = null } = {}) {
   if (!user) return null;
+  const canInteract = interaction(user, viewer);
+  // A same-side pair ("Show All Users") calls for free, so there is no price
+  // to quote either of them — see `call.service.startUnlocked`.
+  const quotesRate = profileIsEarner(user) && !(viewer?.profile && sameSideAs(viewer, user));
   const profile = user.profile ?? user;
   const privacy = user.privacySettings ?? {};
   const showPresence = privacy.showOnlineStatus !== false;
@@ -216,9 +249,24 @@ function userSummary(user) {
     // at all. There is no viewer to consult here, and none is needed: a call
     // always pairs an earner with a non-earner, so a peer who is not an earner
     // means the viewer is, and the viewer is not being charged.
-    voice_rate_per_minute: profile.isEarner ? money(profile.voiceRatePerMinute) : 0,
-    video_rate_per_minute: profile.isEarner ? money(profile.videoRatePerMinute) : 0,
+    //
+    // "Show All Users" is the one exception to that, and the one place a
+    // viewer *is* needed: two earners can now share a thread, and a free call
+    // has no price. Without a viewer the old answer stands.
+    voice_rate_per_minute: quotesRate ? money(profile.voiceRatePerMinute) : 0,
+    video_rate_per_minute: quotesRate ? money(profile.videoRatePerMinute) : 0,
+
+    // See [interaction]. Null when the caller had no viewer to hand over.
+    can_interact: canInteract,
   };
+}
+
+function profileIsEarner(user) {
+  return Boolean((user.profile ?? user).isEarner);
+}
+
+function sameSideAs(viewer, user) {
+  return Boolean(viewer.profile?.isEarner) === profileIsEarner(user);
 }
 
 // ── Reference data ──────────────────────────────────────────────────────────
@@ -273,10 +321,11 @@ function message(row, viewerId) {
 function chatThread(conversation, viewerId, { messages = [] } = {}) {
   const isA = conversation?.userAId === viewerId;
   const peer = isA ? conversation?.userB : conversation?.userA;
+  const me = isA ? conversation?.userA : conversation?.userB;
 
   return {
     id: conversation.id,
-    user: userSummary(peer),
+    user: userSummary(peer, { viewer: me }),
     unread_count: isA ? conversation.unreadForA : conversation.unreadForB,
     is_muted: isA ? conversation.mutedByA : conversation.mutedByB,
     pinned: isA ? conversation.pinnedByA : conversation.pinnedByB,
@@ -329,9 +378,10 @@ function activeCall(row, viewerId) {
   if (!row) return null;
   const outgoing = row.callerId === viewerId;
   const peer = outgoing ? row.callee : row.caller;
+  const me = outgoing ? row.caller : row.callee;
   return {
     id: row.id,
-    peer: userSummary(peer),
+    peer: userSummary(peer, { viewer: me }),
     type: row.type,
     status: row.status,
     is_outgoing: outgoing,
@@ -442,6 +492,7 @@ function privacySettings(row) {
     allow_voice_calls: row.allowVoiceCalls,
     allow_video_calls: row.allowVideoCalls,
     allow_messages: row.allowMessages,
+    show_all_users: row.showAllUsers ?? false,
   };
 }
 

@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const { emitToUser } = require('../sockets/bus');
+const { isSameSide, showsAllUsers, canPair, pairableWhere } = require('../utils/pairing');
 
 /**
  * "May A do this to B?" — asked in exactly one place.
@@ -36,6 +37,10 @@ async function isBlockedEitherWay(userId, otherId) {
   });
   return Boolean(block);
 }
+
+// Pairing — who this app connects at all — is `utils/pairing`: pure rules,
+// shared with the serializer (which tells the client, per person, whether
+// Chat and Call apply). Every guard below enforces it through [canPair].
 
 /**
  * Loads the other party with the bits every guard needs.
@@ -103,9 +108,7 @@ async function assertCanStartConversation(user, otherId) {
     throw errors.messagingDisabledByThem();
   }
   if (!other.profile) throw errors.notFound('That person', 'USER_NOT_FOUND');
-  if (Boolean(user.profile?.isEarner) === Boolean(other.profile.isEarner)) {
-    throw errors.chatRoleMismatch();
-  }
+  if (!canPair(user, other)) throw errors.chatRoleMismatch();
 
   return other;
 }
@@ -113,9 +116,11 @@ async function assertCanStartConversation(user, otherId) {
 /**
  * Can `user` message `otherId`?
  *
- * Just the shared checks plus both privacy switches. Checked on every send,
- * not only when a conversation is opened: either side can switch messaging
- * off while a thread is on screen, and the next message has to see that.
+ * Just the shared checks, both privacy switches and the pairing rule.
+ * Checked on every send, not only when a conversation is opened: either side
+ * can switch messaging off — or "Show All Users" off, for a same-side thread
+ * — while a thread is on screen, and the next message has to see that. An
+ * opposite-side thread is never affected by the latter; see [canPair].
  */
 async function assertCanMessage(user, otherId) {
   const other = await assertCanInteract(user.id, otherId);
@@ -126,6 +131,7 @@ async function assertCanMessage(user, otherId) {
   if (other.privacySettings && other.privacySettings.allowMessages === false) {
     throw errors.messagingDisabledByThem();
   }
+  if (!canPair(user, other)) throw errors.chatRoleMismatch();
 
   return other;
 }
@@ -136,10 +142,9 @@ async function assertCanMessage(user, otherId) {
  * Note what is *not* required: an existing conversation. Calling a stranger
  * is the product — it is what discovery is for and what money pays for.
  *
- * A call must pair an earner with a non-earner: that is the only shape the
- * billing side understands (one party earns, the other spends money), and it
- * is what keeps two Earn Money accounts — or two Make Friends accounts — from
- * ever ringing each other.
+ * A call pairs whoever [canPair] pairs: an earner with a non-earner always,
+ * and two accounts on the same side only when both have "Show All Users" on.
+ * Only the first kind is billed — see `call.service.startUnlocked`.
  *
  * Presence is checked here too. Ringing someone the feed just showed as
  * offline contradicts the screen the user is looking at.
@@ -151,9 +156,7 @@ async function assertCanCall(user, otherId, type) {
 
   if (!profile) throw errors.notFound('That person', 'USER_NOT_FOUND');
 
-  if (Boolean(user.profile?.isEarner) === Boolean(profile.isEarner)) {
-    throw errors.callRoleMismatch();
-  }
+  if (!canPair(user, other)) throw errors.callRoleMismatch();
 
   const accepts = type === 'voice' ? privacy.allowVoiceCalls : privacy.allowVideoCalls;
   const enabled = type === 'voice' ? profile.voiceEnabled : profile.videoEnabled;
@@ -325,6 +328,10 @@ async function relinkConversationsForPhone(user) {
 }
 
 module.exports = {
+  isSameSide,
+  showsAllUsers,
+  canPair,
+  pairableWhere,
   orderPair,
   isBlockedEitherWay,
   loadCounterpart,

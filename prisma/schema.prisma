@@ -811,6 +811,13 @@ model PrivacySettings {
   /// received. Calls are unaffected.
   allowMessages Boolean @default(true)
 
+  /// "Show All Users": opts this account into seeing, chatting with and
+  /// calling people on its own side (same gender) as well as the other side.
+  /// Off by default. Same-side pairs need it on for *both* accounts — see
+  /// `relationship.canPair` — and their calls are free: billing only ever
+  /// runs between an earner and a non-earner.
+  showAllUsers Boolean @default(false)
+
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

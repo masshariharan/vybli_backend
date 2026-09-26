@@ -196,6 +196,7 @@ Every one has a server-side consequence — none is decoration.
 | `show_city_on_profile` | Off omits city from your payload entirely — not blanked client-side. |
 | `allow_voice_calls` / `allow_video_calls` | Off refuses that call type with `CALL_TYPE_DISABLED` and updates the profile others see. |
 | `allow_messages` | Full opt-out: no conversations, no friend requests, nothing sent or received. Calls unaffected. |
+| `show_all_users` | **Show All Users.** Off by default. On lets this account see, chat with and call people of its own gender as well as the other — but only people who also have it on. Same-gender calls are free (rate 0). Opposite-gender discovery, chat and calls are never affected. Every user in discovery, favourites, profiles, chat threads and calls carries a per-viewer `can_interact` boolean saying whether Chat and Call apply; the other person's own switch is never sent. Refusals use `CHAT_ROLE_MISMATCH` / `CALL_ROLE_MISMATCH`. |
 
 With `allow_messages` off, `GET /conversations` returns an **empty list with
 `messaging_disabled: true`**, not a 403 — the client has a state for it, and an

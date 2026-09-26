@@ -5,6 +5,7 @@ const referenceService = require('../services/reference.service');
 const avatarCatalog = require('../config/avatarCatalog');
 const geoip = require('../services/geoip.service');
 const favoriteService = require('../services/favorite.service');
+const relationship = require('../services/relationship.service');
 const serialize = require('../utils/serialize');
 const { ok, paginated } = require('../utils/respond');
 const { q } = require('../middleware/validate');
@@ -24,6 +25,7 @@ async function feed(req, res) {
     serialize.publicUser(u, {
       viewer: req.userId,
       viewerProfile: req.user.profile,
+      viewerPrivacy: req.user.privacySettings,
       favorited: favoriteIds.has(u.id),
     })
   );
@@ -65,6 +67,9 @@ async function randomMatch(req, res) {
   // The earner's rate, whichever side of the match that is — see
   // `serialize.publicUser`'s `viewerProfile` doc for why.
   const rateOwner = req.user.profile?.isEarner ? req.user.profile : match.profile;
+  // A same-side match ("Show All Users") is a free call — see
+  // `call.service.startUnlocked`, which places it at zero.
+  const sameSide = relationship.isSameSide(req.user, match);
 
   return ok(
     res,
@@ -72,12 +77,17 @@ async function randomMatch(req, res) {
       user: serialize.publicUser(match, {
         viewer: req.userId,
         viewerProfile: req.user.profile,
+        viewerPrivacy: req.user.privacySettings,
         favorited,
       }),
       type: req.body.type,
-      rate_per_minute: Number(
-        req.body.type === 'voice' ? rateOwner.voiceRatePerMinute : rateOwner.videoRatePerMinute
-      ),
+      rate_per_minute: sameSide
+        ? 0
+        : Number(
+            req.body.type === 'voice'
+              ? rateOwner.voiceRatePerMinute
+              : rateOwner.videoRatePerMinute
+          ),
     },
     'Match found'
   );
