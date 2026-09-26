@@ -42,31 +42,6 @@ async function wants(userId, kind) {
 }
 
 /**
- * Rings a phone that is not currently connected.
- *
- * Deliberately **not** [notify]: a ring is not a notification. It writes no
- * row — the call log is the record, and a "someone called" entry alongside it
- * would double every call in the Notifications tab — and it has to be
- * data-only so the client can draw Answer and Decline on it.
- *
- * What it does share is the rule that matters: the `incomingCalls` setting is
- * honoured here rather than at the call site, exactly like every other kind.
- * That was the hole in the first version of this — the ring was pushed
- * straight from `call.service`, so an account that had switched incoming-call
- * notifications off still had its phone ring.
- *
- * Note what is *not* suppressed: the socket. Someone with the app open still
- * sees the call arrive, because the setting governs being interrupted when
- * you are not looking, not whether people can reach you at all. Refusing
- * calls outright is `allowVoiceCalls` / `allowVideoCalls`, which is a
- * different switch on a different screen.
- */
-async function ring(userId, call) {
-  if (!(await wants(userId, 'incomingCall'))) return null;
-  return push.sendCall(userId, call);
-}
-
-/**
  * Records a notification and delivers it live.
  *
  * Returns null when the user has that kind switched off — callers do not
@@ -175,4 +150,4 @@ async function markAllRead(userId) {
   return count;
 }
 
-module.exports = { ring, notify, list, unreadCount, markRead, markAllRead };
+module.exports = { notify, list, unreadCount, markRead, markAllRead };

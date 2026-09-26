@@ -178,7 +178,7 @@ const errors = {
       code: 'CALL_TYPE_DISABLED',
     }),
   calleeBusy: () =>
-    new AppError('This person is on another call right now.', {
+    new AppError('This user is currently on another call.', {
       status: 409,
       code: 'CALLEE_BUSY',
     }),
@@ -186,6 +186,22 @@ const errors = {
     new AppError('You are already on a call.', {
       status: 409,
       code: 'CALLER_BUSY',
+    }),
+  calleeOffline: () =>
+    new AppError('This user is currently offline and cannot receive calls.', {
+      status: 409,
+      code: 'CALLEE_OFFLINE',
+    }),
+  callerOffline: () =>
+    new AppError('You are offline. Check your connection and try again.', {
+      status: 409,
+      code: 'CALLER_OFFLINE',
+    }),
+  /** Both of them pressed Call at the same moment — one call already rings. */
+  callCrossed: () =>
+    new AppError('This user is calling you right now.', {
+      status: 409,
+      code: 'CALL_CROSSED',
     }),
   noMatchAvailable: () =>
     new AppError('No one is available right now. Try a wider city selection.', {

@@ -125,6 +125,9 @@ enum CallEndReason {
   cancelled
   missed
   networkError
+  /// The callee could not be reached: their last connection dropped while it
+  /// was ringing, or their phone never confirmed the ring.
+  unavailable
 }
 
 enum TransactionKind {

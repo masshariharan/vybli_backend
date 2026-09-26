@@ -1,14 +1,15 @@
 # Push notifications — setup
 
-What makes a call ring and a message arrive on a phone that does not currently
-have Vybli open. Without the two environment variables below, everything in the
+What makes a **chat message** arrive on a phone that does not currently have
+Vybli open. Calls are not pushed — they ring only an app that is open and
+connected (see *Who can be called* in `API.md`). Without the two environment variables below, everything in the
 app still works and no notification is ever sent — the server says so once, at
 startup:
 
 ```
 [boot] FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY are not set. Push
-notifications are disabled: calls and messages will only reach phones that
-currently have the app open and connected.
+notifications are disabled: messages will only reach phones that currently
+have the app open and connected.
 ```
 
 ## Why a service account is needed now and was not before
@@ -55,27 +56,24 @@ with the app installed and signed in:
 2. From another account, send that user a message.
 3. The notification appears within a second or two.
 
-Then the harder case: swipe the app away entirely and call that account from
-another phone. The ring should take over the screen with Answer and Decline on
-it.
-
-If messages arrive but calls do not, the cause is almost always battery
-optimisation on that handset rather than anything here — see below.
+Then swipe the app away entirely and send another message: it should still
+arrive, and the sender should see the second tick without the app being
+opened. (Calling that account now is refused as offline — by design.)
 
 ## How it is delivered
 
-Two shapes of message, for two different reasons. See `src/services/push.service.js`.
+See `src/services/push.service.js`.
 
-| | Chat message | Call |
+| | Chat message | Muted chat |
 | --- | --- | --- |
-| FCM payload | `notification` + `data` | `data` only |
-| Drawn by | Android itself | The app |
-| Priority | high | high, with a 45-second TTL |
-| Why | Survives a dozing phone and an OEM that kills background isolates — no Dart has to run | A ring needs two buttons, a full-screen takeover and a ringtone, none of which the OS-rendered block can express |
+| FCM payload | `notification` + `data` | `data` only (silent) |
+| Drawn by | Android itself | Nothing |
+| Priority | high | high |
+| Why | Survives a dozing phone and an OEM that kills background isolates — no Dart has to run | Lets the phone confirm delivery (the second tick) without notifying |
 
-The TTL is why a phone that comes back onto the network two minutes later does
-not start ringing at a call that ended long ago: FCM drops the message instead
-of delivering it late.
+There is no call push. The old data-only "ring" that drew a full-screen
+incoming-call notification is gone, along with its notification channel,
+`USE_FULL_SCREEN_INTENT`, the lock-screen activity flags and iOS `voip` mode.
 
 ## Tokens
 
@@ -93,10 +91,9 @@ of delivering it late.
   done: it needs an APNs auth key uploaded to the Firebase console, plus the
   Push Notifications and Background Modes capabilities in Xcode. Until then an
   iOS build registers a token that can never be delivered to.
-- **Aggressive OEM power management.** Xiaomi, Oppo, vivo and others kill
-  background processes hard enough to delay or drop a data-only message, which
-  is the call path. There is no server-side fix; the app already asks for the
-  battery-optimisation exemption for location, and the same dialog is what
-  helps here.
-- **A ring while the app is force-stopped.** Android delivers nothing at all to
-  an app the user has force-stopped from Settings, by design.
+- **Aggressive OEM power management.** Xiaomi, Oppo, vivo and others can delay
+  the silent delivery-ack push for muted chats. The visible chat notification
+  is drawn by the OS and is unaffected; a missed ack is caught by the delivery
+  sweep the next time the app connects.
+- **A force-stopped app.** Android delivers nothing at all to an app the user
+  has force-stopped from Settings, by design.

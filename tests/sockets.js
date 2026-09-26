@@ -556,115 +556,225 @@ async function run() {
   check('a purchase pushes the new balance', Boolean(await walletPush));
 
   // ── Calling an offline callee ────────────────────────────────────────────
-  section('Calling an offline callee');
+  section('Real-time-only calls');
 
+  // Calls ring only somebody whose app is open and connected — never a push,
+  // never "later, when they come back". Everything below asks the server, the
+  // source of truth, over real sockets.
+
+  // ── Offline callee: refused up front, nothing created ─────────────────────
   const sleeper = await createAccount({ goal: 'earnMoney', name: 'Meera' });
-  // Never connected — this is the "no socket at all" case `assertCanCall`
-  // used to refuse outright.
-
-  const callingPush = waitFor(callerSocket, 'call:calling');
-  const offlineStartAck = await emit(callerSocket, 'call:start', {
+  const offlineAttempt = await emit(callerSocket, 'call:start', {
     user_id: sleeper.id,
     type: 'voice',
   });
-  check('a call to an offline callee still starts', offlineStartAck?.success, {
-    ack: offlineStartAck,
-  });
-  const callingEvent = await callingPush;
-  const offlineCallId = offlineStartAck?.data?.call?.id;
-  check('the caller sees "calling", not "ringing"', callingEvent?.id === offlineCallId, {
-    got: callingEvent,
-  });
-
-  const sleeperSocket = io(SOCKET_URL, {
-    auth: { token: sleeper.token },
-    transports: ['websocket'],
-  });
-  // Attached before the connect handshake settles, the same way `connect()`
-  // does — otherwise a `call:incoming` sent the instant the server sees this
-  // socket would fire before anything here was listening for it.
-  const sleeperIncoming = waitFor(sleeperSocket, 'call:incoming', 6000);
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('connect timed out')), 8000);
-    sleeperSocket.on('connected', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    sleeperSocket.on('connect_error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-
-  const sleeperRing = await sleeperIncoming;
-  check('coming online delivers the ring that was waiting', sleeperRing?.id === offlineCallId, {
-    got: sleeperRing,
-  });
-
-  // Being connected is not the same as the phone having rung — only the
-  // device's own acknowledgement moves the caller to "Ringing".
-  const prematureRing = waitFor(callerSocket, 'call:ringing', 800);
-  check('connecting alone does not claim "ringing"', (await prematureRing) === null);
-
-  const ringUpgrade = waitFor(callerSocket, 'call:ringing', 6000);
-  const ringAck = await emit(sleeperSocket, 'call:ring_received', { call_id: offlineCallId });
-  check('the callee can acknowledge the ring', ringAck?.success, { ack: ringAck });
-  const upgraded = await ringUpgrade;
   check(
-    'and upgrades the caller from "calling" to "ringing"',
-    upgraded?.id === offlineCallId,
-    { got: upgraded }
+    'calling someone with no connection is refused',
+    offlineAttempt?.success === false && offlineAttempt?.error === 'CALLEE_OFFLINE',
+    { got: offlineAttempt }
   );
+  check(
+    'with the message the app shows',
+    offlineAttempt?.message === 'This user is currently offline and cannot receive calls.',
+    { got: offlineAttempt?.message }
+  );
+  const nothingLive = await api('GET', '/calls/active', { token: caller.token });
+  check('and no call session is left behind', !nothingLive.data?.call, { got: nothingLive.data });
 
+  // ── A caller with no socket cannot place one either ───────────────────────
+  const socketless = await createAccount({ goal: 'makeFriends', name: 'Arjun' });
+  await api('POST', '/wallet/purchase', { token: socketless.token, body: { package_id: 'pkg_1000' } });
+  const earnerForSocketless = await createAccount({ goal: 'earnMoney', name: 'Asha' });
+  const asha = await connect(earnerForSocketless.token);
+  const noSocketStart = await api('POST', '/calls', {
+    token: socketless.token,
+    body: { user_id: earnerForSocketless.id, type: 'voice' },
+  });
+  check(
+    'a caller with no live connection is refused',
+    noSocketStart.success === false && noSocketStart.error === 'CALLER_OFFLINE',
+    { got: noSocketStart }
+  );
+  asha.close();
+
+  // ── Online callee: rings, and the ring is confirmed by the device ─────────
+  let sleeperSocket = await connect(sleeper.token);
+  const rung = waitFor(sleeperSocket, 'call:incoming', 4000);
+  const callingPush = waitFor(callerSocket, 'call:calling', 4000);
+  const liveStart = await emit(callerSocket, 'call:start', { user_id: sleeper.id, type: 'voice' });
+  const liveCallId = liveStart?.data?.call?.id;
+  check('calling someone online works', liveStart?.success && Boolean(liveCallId), {
+    ack: liveStart,
+  });
+  check('the caller sees "calling" first', (await callingPush)?.id === liveCallId);
+  check('the callee is rung over the socket', (await rung)?.id === liveCallId);
+
+  const ringUpgrade = waitFor(callerSocket, 'call:ringing', 4000);
+  await emit(sleeperSocket, 'call:ring_received', { call_id: liveCallId });
+  check('confirming the ring moves the caller to "ringing"', (await ringUpgrade)?.id === liveCallId);
   const duplicateRing = waitFor(callerSocket, 'call:ringing', 800);
-  await emit(sleeperSocket, 'call:ring_received', { call_id: offlineCallId });
-  check('a repeated acknowledgement changes nothing', (await duplicateRing) === null);
+  await emit(sleeperSocket, 'call:ring_received', { call_id: liveCallId });
+  check('a repeated confirmation changes nothing', (await duplicateRing) === null);
 
-  // The callee losing signal mid-ring is not a decline: the call keeps going
-  // and the caller goes back to "Calling".
-  const backToCalling = waitFor(callerSocket, 'call:calling', 6000);
-  const notEnded = waitFor(callerSocket, 'call:ended', 1500);
+  // ── Callee drops mid-ring: over at once, both free again ─────────────────
+  const droppedEnd = waitFor(callerSocket, 'call:ended', 4000);
   sleeperSocket.close();
-  const downgraded = await backToCalling;
+  const dropped = await droppedEnd;
   check(
-    'a callee dropping mid-ring sends the caller back to "calling"',
-    downgraded?.id === offlineCallId,
-    { got: downgraded }
+    'a callee losing connection mid-ring ends the call immediately',
+    dropped?.call_id === liveCallId,
+    { got: dropped }
   );
-  check('without ending the call', (await notEnded) === null);
+  check('as unavailable', dropped?.end_reason === 'unavailable', { got: dropped?.end_reason });
+  await new Promise((r) => setTimeout(r, 300));
+  const sleeperAfter = await api('GET', `/users/${sleeper.id}`, { token: caller.token });
+  check(
+    'and their presence reads offline',
+    sleeperAfter.data?.user?.status === 'offline',
+    { got: sleeperAfter.data?.user?.status }
+  );
 
-  const sleeperBack = io(SOCKET_URL, {
-    auth: { token: sleeper.token },
-    transports: ['websocket'],
-  });
-  const reRing = waitFor(sleeperBack, 'call:incoming', 6000);
-  const reRinging = waitFor(callerSocket, 'call:ringing', 6000);
-  const again = await reRing;
-  check('reconnecting in time re-delivers the ring', again?.id === offlineCallId, { got: again });
-  await emit(sleeperBack, 'call:ring_received', { call_id: offlineCallId });
-  check('and "ringing" returns once acknowledged', (await reRinging)?.id === offlineCallId);
+  // Back online → online immediately, and callable at once.
+  sleeperSocket = await connect(sleeper.token);
+  await new Promise((r) => setTimeout(r, 200));
+  const sleeperBack = await api('GET', `/users/${sleeper.id}`, { token: caller.token });
+  check(
+    'reconnecting restores online presence immediately',
+    sleeperBack.data?.user?.status === 'online',
+    { got: sleeperBack.data?.user?.status }
+  );
 
-  const declineAck = await emit(sleeperBack, 'call:reject', { call_id: offlineCallId });
-  check('the callee can still decline it normally', declineAck?.success, { ack: declineAck });
-
-  sleeperBack.close();
-
-  // A call that ends while the callee has no connection must leave them
-  // offline — it used to write `online` for both sides unconditionally.
-  const neverOn = await createAccount({ goal: 'earnMoney', name: 'Kavya' });
-  const neverOnStart = await emit(callerSocket, 'call:start', {
-    user_id: neverOn.id,
+  // ── Connected but unreachable (no internet): the ring is never confirmed ──
+  // A socket that stays "connected" but never acknowledges the ring is what a
+  // phone that lost its network looks like until the ping gives up on it.
+  const unconfirmedStart = await emit(callerSocket, 'call:start', {
+    user_id: sleeper.id,
     type: 'voice',
   });
-  check('a call to a phone that is off starts', neverOnStart?.success, { ack: neverOnStart });
-  await emit(callerSocket, 'call:cancel', { call_id: neverOnStart?.data?.call?.id });
-  await new Promise((r) => setTimeout(r, 300));
-  const neverOnAfter = await api('GET', `/users/${neverOn.id}`, { token: caller.token });
+  const unconfirmedId = unconfirmedStart?.data?.call?.id;
+  check('a call to a connected phone starts', unconfirmedStart?.success, { ack: unconfirmedStart });
+  const unconfirmedEnd = await waitFor(callerSocket, 'call:ended', 14000);
   check(
-    'and ending it leaves the callee offline, not "online"',
-    neverOnAfter.data?.user?.status === 'offline',
-    { got: neverOnAfter.data?.user?.status }
+    'a ring the phone never confirms ends as unavailable, well before the ring timeout',
+    unconfirmedEnd?.call_id === unconfirmedId && unconfirmedEnd?.end_reason === 'unavailable',
+    { got: unconfirmedEnd }
   );
+
+  // ── Callee already on a call ──────────────────────────────────────────────
+  const busyStart = await emit(callerSocket, 'call:start', { user_id: sleeper.id, type: 'voice' });
+  const busyCallId = busyStart?.data?.call?.id;
+  await emit(sleeperSocket, 'call:ring_received', { call_id: busyCallId });
+  await emit(sleeperSocket, 'call:accept', { call_id: busyCallId });
+
+  const thirdParty = await createAccount({ goal: 'makeFriends', name: 'Rahul' });
+  await api('POST', '/wallet/purchase', { token: thirdParty.token, body: { package_id: 'pkg_1000' } });
+  const thirdSocket = await connect(thirdParty.token);
+  const busyAttempt = await emit(thirdSocket, 'call:start', { user_id: sleeper.id, type: 'voice' });
+  check(
+    'calling someone already on a call is refused',
+    busyAttempt?.success === false && busyAttempt?.error === 'CALLEE_BUSY',
+    { got: busyAttempt }
+  );
+  check(
+    'with the message the app shows',
+    busyAttempt?.message === 'This user is currently on another call.',
+    { got: busyAttempt?.message }
+  );
+
+  // Ends → both immediately available: the third party gets straight through.
+  const endedBoth = waitFor(sleeperSocket, 'call:ended', 4000);
+  await emit(callerSocket, 'call:end', { call_id: busyCallId, reason: 'hungUp' });
+  check('ending reaches the other side at once', (await endedBoth)?.call_id === busyCallId);
+  const rightAfter = await emit(thirdSocket, 'call:start', { user_id: sleeper.id, type: 'voice' });
+  check(
+    'and the moment it ends, a new call to them goes through',
+    rightAfter?.success,
+    { got: rightAfter }
+  );
+  const rightAfterId = rightAfter?.data?.call?.id;
+
+  // ── Caller cancels → the callee is cleared immediately ────────────────────
+  const cancelSeen = waitFor(sleeperSocket, 'call:ended', 4000);
+  await emit(thirdSocket, 'call:cancel', { call_id: rightAfterId });
+  const cancelled = await cancelSeen;
+  check(
+    'a caller cancelling clears the callee at once',
+    cancelled?.call_id === rightAfterId && cancelled?.status === 'cancelled',
+    { got: cancelled }
+  );
+
+  // ── Callee rejects → the caller hears it immediately ─────────────────────
+  const toReject = await emit(thirdSocket, 'call:start', { user_id: sleeper.id, type: 'voice' });
+  const rejectSeen = waitFor(thirdSocket, 'call:ended', 4000);
+  await emit(sleeperSocket, 'call:reject', { call_id: toReject?.data?.call?.id });
+  const rejection = await rejectSeen;
+  check(
+    'a callee rejecting reaches the caller at once',
+    rejection?.status === 'rejected',
+    { got: rejection }
+  );
+
+  // ── Rapid repeat calls → one session ──────────────────────────────────────
+  const burst = await Promise.all(
+    [1, 2, 3].map(() => emit(thirdSocket, 'call:start', { user_id: sleeper.id, type: 'voice' }))
+  );
+  const burstOk = burst.filter((b) => b?.success);
+  const burstIds = new Set(burstOk.map((b) => b.data?.call?.id));
+  check(
+    'calling the same person three times at once creates one call',
+    burstOk.length === 1 && burstIds.size === 1,
+    { got: burst.map((b) => b?.error ?? b?.data?.call?.id) }
+  );
+  const sameClient = await Promise.all(
+    [1, 2].map(() =>
+      emit(callerSocket, 'call:start', { user_id: thirdParty.id, type: 'voice', client_id: 'dup_1' })
+    )
+  );
+  // callerSocket's account is Make Friends like thirdParty — refused by role,
+  // which is fine: what matters is they agree.
+  check(
+    'a retried start with the same client id gets the same answer',
+    sameClient[0]?.success === sameClient[1]?.success &&
+      sameClient[0]?.error === sameClient[1]?.error,
+    { got: sameClient }
+  );
+  const burstLive = await api('GET', '/calls/active', { token: thirdParty.token });
+  await emit(thirdSocket, 'call:cancel', { call_id: burstLive.data?.call?.id });
+  await new Promise((r) => setTimeout(r, 300));
+
+  // ── Two people calling each other at the same instant ────────────────────
+  const [aToB, bToA] = await Promise.all([
+    emit(thirdSocket, 'call:start', { user_id: sleeper.id, type: 'voice' }),
+    emit(sleeperSocket, 'call:start', { user_id: thirdParty.id, type: 'voice' }),
+  ]);
+  const crossedOk = [aToB, bToA].filter((r) => r?.success);
+  check(
+    'two people calling each other at once end up in exactly one call',
+    crossedOk.length === 1,
+    { got: [aToB?.error ?? 'ok', bToA?.error ?? 'ok'] }
+  );
+  const crossedRefusal = [aToB, bToA].find((r) => !r?.success);
+  check(
+    'and the other is told the call is already coming in',
+    ['CALL_CROSSED', 'CALLER_BUSY', 'CALLEE_BUSY'].includes(crossedRefusal?.error),
+    { got: crossedRefusal }
+  );
+  const [aLive, bLive] = await Promise.all([
+    api('GET', '/calls/active', { token: thirdParty.token }),
+    api('GET', '/calls/active', { token: sleeper.token }),
+  ]);
+  check(
+    'and both see the same single call',
+    Boolean(aLive.data?.call?.id) && aLive.data?.call?.id === bLive.data?.call?.id,
+    { a: aLive.data?.call?.id, b: bLive.data?.call?.id }
+  );
+  const crossedCallId = crossedOk[0]?.data?.call?.id;
+  await emit(thirdSocket, 'call:end', { call_id: crossedCallId, reason: 'hungUp' });
+  await emit(sleeperSocket, 'call:end', { call_id: crossedCallId, reason: 'hungUp' });
+
+  thirdSocket.close();
+  sleeperSocket.close();
+  await new Promise((r) => setTimeout(r, 300));
 
   // ── Presence during calls ────────────────────────────────────────────────
   // `profileService.setPresence` only announces to people with an *open

@@ -20,6 +20,38 @@ const BASE = process.env.API_BASE || 'http://localhost:4000/api/v1';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const { io } = require('socket.io-client');
+const SOCKET_URL = process.env.SOCKET_URL || BASE.replace(/\/api\/v1\/?$/, '');
+
+/**
+ * Puts an account "in the app": a live socket that confirms every ring it
+ * receives, the way the real app does the moment it shows one.
+ *
+ * Calls are real-time only — the server refuses to ring anybody without a
+ * live connection (`CALLEE_OFFLINE`), refuses a caller without one
+ * (`CALLER_OFFLINE`), and ends a ring the phone never confirms. So every
+ * account that places or receives a call in this walk-through has to be
+ * online, exactly as a person would be.
+ */
+async function goOnline(account) {
+  const socket = io(SOCKET_URL, { auth: { token: account.token }, transports: ['websocket'] });
+  socket.on('call:incoming', (call) => {
+    socket.emit('call:ring_received', { call_id: call?.id }, () => {});
+  });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('socket connect timed out')), 8000);
+    socket.on('connected', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    socket.on('connect_error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+  return socket;
+}
+
 let passed = 0;
 let failed = 0;
 const failures = [];
@@ -907,6 +939,9 @@ async function run() {
   );
   await patch('/me/settings/privacy', earner.token, { show_city_on_profile: true });
 
+  // Everyone who calls or is called from here on has the app open.
+  await Promise.all([goOnline(caller), goOnline(earner), goOnline(outsider)]);
+
   // ── Privacy: call types ───────────────────────────────────────────────────
   section('Privacy — call types');
 
@@ -1650,6 +1685,7 @@ async function run() {
     gender: 'male',
   });
   await put('/me/presence', brokeUser.token, { status: 'online' });
+  await goOnline(brokeUser);
 
   const noBalance = await post('/calls', brokeUser.token, {
     user_id: earner.id,

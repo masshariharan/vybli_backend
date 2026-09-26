@@ -26,17 +26,6 @@ async function accept(req, res) {
   return ok(res, { call: await callService.withMedia(call, req.userId) }, 'Connected');
 }
 
-/**
- * The callee's phone saying the ring landed — what moves the caller from
- * "Calling" to "Ringing". Sent by a phone the push woke, which has no socket
- * to send `call:ring_received` on. Always succeeds: a late or repeated
- * confirmation is ignored rather than refused.
- */
-async function ringReceived(req, res) {
-  await callService.markRingDelivered(req.user, req.params.id);
-  return ok(res, {}, 'Ringing');
-}
-
 async function reject(req, res) {
   const call = await callService.reject(req.user, req.params.id);
   return ok(res, { call: await callService.withMedia(call, req.userId) }, 'Declined');
@@ -159,7 +148,6 @@ async function sendMessage(req, res) {
 module.exports = {
   start,
   accept,
-  ringReceived,
   reject,
   cancel,
   end,

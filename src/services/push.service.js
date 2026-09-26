@@ -7,32 +7,22 @@ const env = require('../config/env');
 const firebase = require('./firebase.service');
 
 /**
- * Notifications that arrive when the app is not on screen.
+ * Notifications that arrive when the app is not on screen — **messages
+ * only.**
  *
  * The socket delivers everything while Vybli is open and connected. This is
- * the other half: the phone in a pocket, the app swiped away, the screen off.
- * Without it the product only works while someone is already looking at it —
- * a call rings into a closed app and nobody ever knows it happened.
+ * the other half for chat: the phone in a pocket, the app swiped away, the
+ * screen off. A chat message is sent with an FCM `notification` block, which
+ * Android itself draws when the app is backgrounded — the most reliable
+ * delivery there is: no Dart has to run, nothing has to survive a doze, and
+ * an OEM that kills background isolates cannot swallow it. The matching
+ * `data` block rides along for when the app *is* running, and for the tap.
  *
- * **Two shapes of message, and the difference is not cosmetic.**
- *
- *  * A **chat message** is sent with an FCM `notification` block. Android
- *    itself draws it when the app is backgrounded, which is the most reliable
- *    delivery there is: no Dart has to run, nothing has to survive a doze, and
- *    an OEM that kills background isolates cannot swallow it. The matching
- *    `data` block rides along for when the app *is* running, and for when the
- *    notification is tapped and the app needs to know which thread to open.
- *
- *  * A **call** is sent as data only, at high priority. It has to be, because
- *    a ring is not a row that sits in a tray: it needs two buttons, a
- *    full-screen intent over the lock screen and a sound that keeps going —
- *    none of which is expressible in the `notification` block the OS renders.
- *    The client builds it instead, which means the client's background
- *    handler has to run, which is what `priority: high` buys.
- *
- * **A ring expires.** Call pushes carry a short TTL, so a phone that comes
- * back on the network two minutes later does not start ringing for a call
- * that ended long ago. FCM drops the undeliverable message instead.
+ * **Calls are never pushed.** A call rings only an app that is open and
+ * connected, over the socket, and is refused up front when the other person
+ * is not (see `relationship.assertCanCall`). There used to be a data-only
+ * "ring" push that drew a full-screen incoming-call notification; it opened
+ * the app onto a call seconds late, often one already over, and it is gone.
  *
  * Every failure here is swallowed. A push is the last step of an action that
  * has already succeeded — the message is stored and delivered, the call is
@@ -40,13 +30,10 @@ const firebase = require('./firebase.service');
  * not turn any of that into an error somebody sees.
  */
 
-/** How long a ring is worth delivering. Past this the call is over. */
-const CALL_TTL_SECONDS = 45;
 
-/** Android channel ids. The client creates both at startup, under these names. */
+/** Android channel id. The client creates it at startup, under this name. */
 const CHANNEL = {
   messages: 'vybli_messages',
-  calls: 'vybli_calls',
 };
 
 let warned = false;
@@ -201,67 +188,6 @@ function sendNotification(userId, { title, body, data = {}, collapseKey = null }
   });
 }
 
-/**
- * A ring.
- *
- * Data only — see the note at the top of the file. The client turns this into
- * the full-screen, two-button notification, so a phone whose app cannot be
- * woken shows nothing at all rather than a silent "incoming call" row that
- * does nothing when tapped.
- */
-function sendCall(
-  userId,
-  { callId, type, callerId, callerName, avatarUrl = null, ratePerMinute = 0 }
-) {
-  return deliver(userId, {
-    data: stringify({
-      kind: 'call',
-      call_id: callId,
-      call_type: type,
-      user_id: callerId,
-      name: callerName,
-      avatar_url: avatarUrl ?? '',
-      rate_per_minute: ratePerMinute,
-    }),
-    android: {
-      priority: 'high',
-      ttl: CALL_TTL_SECONDS * 1000,
-    },
-    apns: {
-      headers: {
-        'apns-priority': '10',
-        'apns-push-type': 'alert',
-        'apns-expiration': `${Math.floor(Date.now() / 1000) + CALL_TTL_SECONDS}`,
-      },
-      payload: {
-        aps: {
-          alert: { title: `${callerName} is calling`, body: `${type} call` },
-          sound: 'default',
-          'content-available': 1,
-        },
-      },
-    },
-  });
-}
-
-/**
- * Tells the phones a call is over, so a ring still on screen comes down.
- *
- * Without this, declining on one device or the caller giving up leaves every
- * other phone the account is signed in on ringing at a call that no longer
- * exists — and answering it lands on an error instead of a conversation.
- */
-function sendCallCancelled(userId, { callId, reason = 'ended' }) {
-  return deliver(userId, {
-    data: stringify({ kind: 'call_cancelled', call_id: callId, reason }),
-    android: { priority: 'high', ttl: CALL_TTL_SECONDS * 1000 },
-    apns: {
-      headers: { 'apns-priority': '10', 'apns-push-type': 'background' },
-      payload: { aps: { 'content-available': 1 } },
-    },
-  });
-}
-
 /** FCM data values must be strings, or the whole message is rejected. */
 function stringify(data) {
   return Object.fromEntries(
@@ -294,6 +220,4 @@ module.exports = {
   register,
   unregister,
   sendNotification,
-  sendCall,
-  sendCallCancelled,
 };

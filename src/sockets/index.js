@@ -219,11 +219,12 @@ async function handleConnect(io, socket) {
     console.error('[socket] could not read the backlog for', userId, err.message);
   }
 
-  // A call still ringing *at* this user: either it started while they had no
-  // socket, or their connection dropped mid-ring. Either way the caller is
-  // looking at "Calling". Re-send `call:incoming`; the app acknowledges it
-  // with `call:ring_received`, and that — not this connection existing — is
-  // what moves the caller to "Ringing".
+  // A call still ringing *at* this user. Calls only ever ring someone already
+  // connected, and a ring whose callee drops is ended on the spot (see
+  // `handleDisconnect`) — so this is another of their devices opening while
+  // the first one rings. It rings here too; whichever device answers first
+  // takes the call, and the others stand down (see the app's
+  // `CallController.onConnectedRemotely`).
   const ringHere =
     activeCall && activeCall.calleeId === userId && activeCall.status === 'ringing';
 
@@ -256,16 +257,17 @@ async function handleConnect(io, socket) {
 }
 
 /**
- * Marks the user offline once their last device goes.
+ * Marks the user offline once their last device goes — and releases any call
+ * they were in, so nobody is left "on another call" with a person who is gone.
  *
- * A live call is ended too. Leaving a call `connected` after the caller
- * vanished would bill them for silence — the billing ticker does not care that
- * nobody is listening.
+ * A live call is ended. Leaving a call `connected` after the caller vanished
+ * would bill them for silence — the billing ticker does not care that nobody
+ * is listening.
  *
- * A call still *ringing* is treated by side. A caller who drops has hung up
- * — cancelled. A callee who drops has not declined anything; they lost
- * signal. The call keeps going until the ring timeout, and the caller's
- * screen goes back from "Ringing" to "Calling", which is exactly the truth.
+ * A call still *ringing* is treated by side. A caller who drops has hung up —
+ * cancelled. A callee who drops can no longer be rung: calls are real-time
+ * only, so the ring ends now as `unavailable` rather than waiting out its
+ * timeout for a phone that is not coming back in time.
  */
 async function handleDisconnect(io, socket) {
   const userId = socket.userId;
@@ -278,7 +280,7 @@ async function handleDisconnect(io, socket) {
   if (activeCall && !connections.isConnected(userId)) {
     const ringingAtMe = activeCall.status === 'ringing' && activeCall.calleeId === userId;
     if (ringingAtMe) {
-      await callService.markRingLost(activeCall.id).catch(() => {});
+      await callService.abandonRing(activeCall.id).catch(() => {});
     } else {
       await callService
         .end({ id: userId }, activeCall.id, { reason: 'networkError', force: true })

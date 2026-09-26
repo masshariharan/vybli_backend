@@ -6,7 +6,6 @@ const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
 const walletService = require('./wallet.service');
 const notificationService = require('./notification.service');
-const push = require('./push.service');
 const profileService = require('./profile.service');
 const livekit = require('./livekit.service');
 const activity = require('./activity.service');
@@ -37,6 +36,18 @@ const activeTimers = new Map();
 
 /** Unanswered calls give up after this long and become missed. */
 const RING_TIMEOUT_MS = 45_000;
+
+/**
+ * How long the callee's phone has to confirm it is actually ringing.
+ *
+ * A socket can look connected for up to a ping cycle after its network died —
+ * the phone in a lift, Wi-Fi gone. `call:incoming` then goes nowhere, and the
+ * caller would sit on "Calling" for the whole ring timeout. A phone that is
+ * really there acknowledges the ring (`call:ring_received`) within a second
+ * or two; one that has not in this long cannot receive the call, and the
+ * caller is told so rather than left waiting.
+ */
+const RING_ACK_TIMEOUT_MS = 10_000;
 
 /** userId → the tail of that account's queued call actions. */
 const callLocks = new Map();
@@ -182,10 +193,20 @@ function start(user, { userId: calleeId, type, isRandom = false, clientId } = {}
 }
 
 async function startUnlocked(user, { calleeId, type, isRandom }) {
+  // The callee first — reachable, online, not on another call (see
+  // `relationship.assertCanCall`) — then the caller. All against the server's
+  // own state: live sockets and the Call table, never a client's say-so.
   const callee = await relationship.assertCanCall(user, calleeId, type);
+
+  // A caller with no live socket would never hear "ringing", "answered" or
+  // "ended" — and the callee would ring at a screen nobody is holding.
+  if (!connections.isConnected(user.id)) throw errors.callerOffline();
 
   // Neither side may already be on a call. Checked in the database rather than
   // from presence alone, because presence is a cache and this is the truth.
+  // Run under both people's locks (see `start`), so two people calling each
+  // other at the same instant cannot both get through: whichever lands second
+  // sees the first call here.
   await assertNotBusy(user.id, 'caller');
   await assertNotBusy(calleeId, 'callee');
 
@@ -216,15 +237,6 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
     if (balance < ratePerMinute) throw errors.insufficientBalance(ratePerMinute, balance);
   }
 
-  // Whether the callee has a live socket to ring *at all*. Deliberately not
-  // `profile.presence`: that column is a cache and used to say `online` for
-  // people with no connection (see `syncPresence`). Even a live socket is
-  // not proof the ring landed — a phone whose network just died keeps its
-  // socket until the server's ping gives up on it — so this only decides
-  // whether to *try*. "Ringing" waits for the device itself to say it got
-  // the call; see `markRingDelivered`.
-  const calleeReachable = connections.isConnected(calleeId);
-
   const call = await prisma.call.create({
     data: {
       callerId: user.id,
@@ -239,65 +251,23 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
   });
 
   // Busy is set on both sides now, not on connect — a second caller must not
-  // get through to a phone that is already ringing. (That rule is enforced
-  // by `assertNotBusy` against the call rows, not by this column, so an
-  // offline callee can stay honestly `offline` here: telling their contacts
-  // they are "busy" while their phone is off would be a lie about them.)
+  // get through to a phone that is already ringing. (That rule is enforced by
+  // `assertNotBusy` against the call rows; this is what everyone else sees.)
   await Promise.all([
     syncPresence(user.id, { onCall: true }),
     syncPresence(calleeId, { onCall: true }),
   ]);
-  announceCallPresence(call, {
-    callerStatus: 'busy',
-    calleeStatus: calleeReachable ? 'busy' : 'offline',
-  });
+  announceCallPresence(call, { callerStatus: 'busy', calleeStatus: 'busy' });
 
-  if (calleeReachable) {
-    // Both sides get their join credentials with the ring, so the callee's
-    // media is already connecting while the phone is still buzzing. Waiting
-    // until they tap Answer to fetch a token is the difference between
-    // "hello?" and two seconds of silence.
-    emitToUser(calleeId, 'call:incoming', await withMedia(call, calleeId));
-  }
-  // If they are not reachable now, nothing is lost: `handleConnect` sends
-  // this same `call:incoming` (and upgrades the caller from "Calling" to
-  // "Ringing") the moment their socket does come up, via `markRingDelivered`
-  // below — as long as that happens before the ring times out.
-
-  // And to the phone, for the case the socket cannot reach: app closed,
-  // swiped away, or the process asleep. This is the whole difference between
-  // a calling app and one that only works while you are already looking at
-  // it — without it the ring lands in a closed app and nobody ever learns the
-  // call happened until they open Vybli and find a missed call.
-  //
-  // Data-only and short-lived, so the client can draw a real ringing screen
-  // with Answer and Decline on it, and so a phone that rejoins the network
-  // two minutes from now does not start ringing at a call that is over. See
-  // `push.service`.
-  //
-  // Through `notificationService` rather than straight at `push`, so the
-  // callee's `incomingCalls` setting is honoured by the same code path as
-  // every other kind — see the note there. Sent regardless of `calleeReachable`:
-  // a phone can hold a websocket open while backgrounded and still need the
-  // push to actually wake and re-ring it, and a phone with no socket at all
-  // is exactly who this is for.
-  notificationService
-    .ring(calleeId, {
-      callId: call.id,
-      type,
-      callerId: user.id,
-      callerName: user.profile?.name ?? 'Someone',
-      avatarUrl: call.caller?.profile?.avatarUrl ?? null,
-      // So the callee's app can render the full incoming-call screen the
-      // instant the notification is tapped, before it has asked the server
-      // anything — see the client's `receivePendingIncoming`.
-      ratePerMinute,
-    })
-    .catch((err) => console.error(`[push] ring for call ${call.id}`, err));
-
+  // To every device the callee has open. Both sides get their join credentials
+  // with the ring, so the callee's media is already connecting while the phone
+  // is still buzzing — the difference between "hello?" and two seconds of
+  // silence. There is no push fallback: a call only ever rings an app that is
+  // open, and one that does not confirm it (below) ends as unavailable.
+  emitToUser(calleeId, 'call:incoming', await withMedia(call, calleeId));
   // Always `calling` to begin with. `call:ringing` promises the caller their
   // ring actually landed on a device, and only the device can say that — it
-  // acknowledges `call:incoming` (or the push) with `call:ring_received`, and
+  // acknowledges `call:incoming` with `call:ring_received`, and
   // `markRingDelivered` sends the real `call:ringing` then.
   emitToUser(user.id, 'call:calling', await withMedia(call, user.id));
 
@@ -331,6 +301,7 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
   });
 
   scheduleRingTimeout(call.id);
+  scheduleRingAckTimeout(call.id);
 
   return call;
 }
@@ -365,12 +336,13 @@ async function withMedia(call, viewerId) {
 
 /**
  * The callee's device says the ring reached it — the socket's
- * `call:ring_received`, or `POST /calls/:id/ring-received` from a phone the
- * push woke up. This is the only thing that turns the caller's "Calling"
- * into "Ringing": a socket that merely *exists* is not a phone that rang.
+ * `call:ring_received`, sent by the app the moment it shows the ring. This is
+ * the only thing that turns the caller's "Calling" into "Ringing" — a socket
+ * that merely *exists* is not a phone that rang — and the only thing that
+ * keeps the ring alive past [RING_ACK_TIMEOUT_MS].
  *
- * Idempotent: every device, and both the socket and the push path, may
- * report the same ring, and only the first one moves the caller's screen.
+ * Idempotent: every device may report the same ring, and only the first one
+ * moves the caller's screen.
  * Anything that is not the callee, or not a call still ringing, is ignored
  * rather than refused — a late ack for a call that just ended is expected
  * traffic, not an error worth surfacing.
@@ -389,25 +361,24 @@ async function markRingDelivered(user, callId) {
 }
 
 /**
- * The callee's last socket just dropped while their phone was ringing.
+ * Ends a ring that can no longer reach anyone: the callee's last socket went,
+ * or their phone never confirmed the ring ([RING_ACK_TIMEOUT_MS]).
  *
- * The call is *not* ended: losing signal for a moment is not declining, and
- * the ring timeout still bounds how long the caller waits. But the caller is
- * no longer being rung *at* anything, so their screen goes back from
- * "Ringing" to "Calling" — and if the callee reconnects in time,
- * `handleConnect` re-sends `call:incoming` and the ack flips it forward
- * again.
+ * Calls are real-time only. There is no ringing somebody once they come back
+ * online, so a ring nobody can hear is over now — `missed`, with the reason
+ * `unavailable`, which the caller's app words as "offline and cannot receive
+ * calls" — rather than left for the full ring timeout, pinning both people as
+ * "on another call" to everyone else in the meantime.
+ *
+ * Under the call's lock, and only while it is still ringing: an answer that
+ * got in first wins.
  */
-async function markRingLost(callId) {
-  const { count } = await prisma.call.updateMany({
-    where: { id: callId, status: 'ringing', ringDeliveredAt: { not: null } },
-    data: { ringDeliveredAt: null },
+function abandonRing(callId) {
+  return withCallLock(callId, async () => {
+    const call = await loadCall(callId).catch(() => null);
+    if (!call || call.status !== 'ringing') return null;
+    return finalise(call, { status: 'missed', reason: 'unavailable' });
   });
-  if (count === 0) return null;
-
-  const call = await loadCall(callId);
-  emitToUser(call.callerId, 'call:calling', await withMedia(call, call.callerId));
-  return call;
 }
 
 async function assertNotBusy(userId, role) {
@@ -825,14 +796,6 @@ async function finalise(call, { status, reason }) {
   emitToUser(call.callerId, 'call:ended', payload);
   emitToUser(call.calleeId, 'call:ended', payload);
 
-  // Take the ring down on every phone that is still showing it. A call
-  // cancelled, declined elsewhere, or answered on another device leaves the
-  // rest ringing at something that no longer exists — and answering that
-  // lands on an error rather than a conversation.
-  push
-    .sendCallCancelled(call.calleeId, { callId: call.id, reason: status })
-    .catch((err) => console.error(`[push] cancel for call ${call.id}`, err));
-
   // Everything past this point is bookkeeping nobody's screen is waiting on:
   // closing the LiveKit room, the lifetime-call count, the earner's credit, a
   // missed-call notification, the activity log, and the admin feed. None of
@@ -1101,11 +1064,32 @@ function scheduleRingTimeout(callId) {
   activeTimers.set(callId, { ...(activeTimers.get(callId) ?? {}), timeout });
 }
 
+/** A ring the callee's phone never confirmed — see [RING_ACK_TIMEOUT_MS]. */
+function scheduleRingAckTimeout(callId) {
+  const ackTimeout = setTimeout(async () => {
+    try {
+      const call = await prisma.call.findUnique({
+        where: { id: callId },
+        select: { status: true, ringDeliveredAt: true },
+      });
+      if (call?.status === 'ringing' && !call.ringDeliveredAt) {
+        await abandonRing(callId);
+      }
+    } catch (err) {
+      console.error(`[call] ring-ack check failed for ${callId}`, err);
+    }
+  }, RING_ACK_TIMEOUT_MS);
+  ackTimeout.unref?.();
+
+  activeTimers.set(callId, { ...(activeTimers.get(callId) ?? {}), ackTimeout });
+}
+
 function clearTimers(callId) {
   const timers = activeTimers.get(callId);
   if (!timers) return;
   if (timers.interval) clearInterval(timers.interval);
   if (timers.timeout) clearTimeout(timers.timeout);
+  if (timers.ackTimeout) clearTimeout(timers.ackTimeout);
   activeTimers.delete(callId);
 }
 
@@ -1323,7 +1307,7 @@ module.exports = {
   getActive,
   withMedia,
   markRingDelivered,
-  markRingLost,
+  abandonRing,
   syncPresence,
   onMediaDisconnect,
   sendMessage,

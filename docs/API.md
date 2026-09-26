@@ -65,7 +65,8 @@ Branch on `error`, never on `message` — messages get reworded.
 `REQUEST_TO_SELF` · `FRIEND_REQUEST_EXISTS` · `ALREADY_FRIENDS` ·
 `CHAT_ROLE_MISMATCH` · `FRIEND_REQUEST_NOT_FOUND` · `REQUEST_NOT_PENDING`
 `BLOCKED` · `NOT_FRIENDS` · `MESSAGING_DISABLED_SELF` · `MESSAGING_DISABLED_PEER`
-`CALL_TYPE_DISABLED` · `CALLEE_BUSY` · `CALLER_BUSY` ·
+`CALL_TYPE_DISABLED` · `CALLEE_BUSY` · `CALLER_BUSY` · `CALLEE_OFFLINE` ·
+`CALLER_OFFLINE` · `CALL_CROSSED` ·
 `NO_MATCH_AVAILABLE` · `CALL_NOT_RINGING` · `CALL_NOT_ENDED`
 `INSUFFICIENT_COINS` · `PAYMENT_FAILED` · `WITHDRAWAL_BELOW_MINIMUM` ·
 `NOT_EARNER_ACCOUNT`
@@ -339,8 +340,7 @@ when the thread opens. Either side can close the door mid-conversation.
 | GET | `/calls/active` | Rejoin a call after an app restart |
 | GET | `/calls/history` | `direction=all\|incoming\|outgoing\|missed` |
 | DELETE | `/calls/history` | Clear the log |
-| POST | `/calls` | `{ "user_id", "type", "is_random" }` |
-| POST | `/calls/:id/ring-received` | Callee's phone confirms the ring reached it (push-woken path) |
+| POST | `/calls` | `{ "user_id", "type", "is_random" }` — see *Who can be called* below |
 | POST | `/calls/:id/accept` | Answer |
 | POST | `/calls/:id/reject` | Decline |
 | POST | `/calls/:id/cancel` | Hang up before it is answered |
@@ -350,6 +350,25 @@ when the thread opens. Either side can close the door mid-conversation.
 | DELETE | `/calls/:id` | Remove one row from the log |
 | GET | `/livekit/status` | Whether this deployment can carry media |
 | POST | `/livekit/webhook` | LiveKit's own callback — signed, not authenticated |
+
+**Who can be called.** Calls are real-time only — there is no push ring. The
+server decides, from its own state, before a call row exists:
+
+1. The callee has a live socket (the app is open — the app closes its socket in
+   the background), else `CALLEE_OFFLINE` — *"This user is currently offline
+   and cannot receive calls."*
+2. The callee is not on a call, else `CALLEE_BUSY` — *"This user is currently on
+   another call."* — or `CALL_CROSSED` when that call is with the caller (both
+   pressed Call at once; exactly one call is created).
+3. The caller has a live socket (`CALLER_OFFLINE`) and is not on a call
+   (`CALLER_BUSY`).
+
+Once placed, the callee's device must confirm the ring (`call:ring_received`)
+within 10 seconds, and the callee must stay connected while it rings;
+otherwise the call ends at once as `missed` with `end_reason: "unavailable"`.
+Lifecycle: `calling` (ringing, unconfirmed) → `ringing` → `connected` →
+`ended` / `rejected` / `cancelled` / `missed`. Both people are free for a new
+call the moment it ends.
 
 ### Media
 

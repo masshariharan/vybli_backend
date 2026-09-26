@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const { emitToUser } = require('../sockets/bus');
+const connections = require('../sockets/connections');
 const {
   isSameSide,
   showsAllUsers,
@@ -198,19 +199,27 @@ async function assertCanCall(user, otherId, type) {
   // running slow, would otherwise be told "busy" about someone who is not.
   // The call table is written and read in the same request that decides this,
   // so there is nothing here for it to lag behind.
+  // Online means a live socket — the app open and connected. The app closes
+  // its socket the moment it leaves the foreground (see its lifecycle
+  // handling), and the server's ping reaps a socket whose network died, so
+  // "connected" here is the truth rather than `profile.presence`, which is a
+  // cache. There is no ringing somebody later: calls are real-time only, and a
+  // person who cannot hear the ring now is told as much, now.
+  if (!connections.isConnected(otherId)) throw errors.calleeOffline();
+
   const liveCall = await prisma.call.findFirst({
     where: {
       status: { in: ['ringing', 'connected'] },
       OR: [{ callerId: otherId }, { calleeId: otherId }],
     },
-    select: { id: true },
+    select: { callerId: true, calleeId: true },
   });
-  if (liveCall) throw errors.calleeBusy();
-
-  // Deliberately not gated on presence. A call to someone offline still
-  // starts — the caller sees "Calling" rather than an outright refusal, and
-  // `call.service.js::start` is what actually decides whether to ring them
-  // now or wait for `handleConnect` to deliver it once they reconnect.
+  if (liveCall) {
+    // Both pressed Call at once: the first call already rings this side.
+    const between =
+      (liveCall.callerId === user.id || liveCall.calleeId === user.id);
+    throw between ? errors.callCrossed() : errors.calleeBusy();
+  }
 
   return other;
 }
