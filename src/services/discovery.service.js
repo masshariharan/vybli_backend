@@ -24,11 +24,13 @@ const PROFILE_INCLUDE = {
 /**
  * Everyone who may appear in `viewer`'s discovery.
  *
- * Who counts as a match at all is `relationship.pairableWhere` — the other
- * side (Earn Money ↔ Make Friends, which onboarding derives from gender)
- * always, and the viewer's own side too when both accounts have "Show All
- * Users" on. That rule lives in the relationship service rather than here so
- * the chat and call guards enforce exactly the same one.
+ * Which sides appear is `utils/pairing`, and differs by surface:
+ *  * the **feed** ([feed]) uses `visibleSideWhere` — the other side (Earn
+ *    Money ↔ Make Friends, which onboarding derives from gender) always, and
+ *    the viewer's own side too when *they* have "Show All Users" on;
+ *  * **random match** uses `pairableWhere` — somebody it can ring right now,
+ *    so a same-side match also needs the switch on for *them*, exactly the
+ *    rule the call guard enforces.
  *
  * Beyond that role split, three conditions, each load-bearing:
  *  * `ONBOARDING_COMPLETED` — a half-built profile has no name or city.
@@ -40,7 +42,7 @@ const PROFILE_INCLUDE = {
  * every account in this database belongs to somebody who signed up, so there
  * is no longer a category of row that has to be hidden from real users.
  */
-function visibleWhere(viewer) {
+function visibleWhere(viewer, { callable = false } = {}) {
   return {
     status: 'active',
     deletedAt: null,
@@ -49,7 +51,11 @@ function visibleWhere(viewer) {
     // Under `AND`, not merged into `profile`/`privacySettings`: both callers
     // below replace those two keys wholesale with their own conditions, and
     // the pairing rule must survive that.
-    AND: [relationship.pairableWhere(viewer)],
+    AND: [
+      callable
+        ? relationship.pairableWhere(viewer)
+        : relationship.visibleSideWhere(viewer),
+    ],
   };
 }
 
@@ -182,14 +188,14 @@ async function randomMatch(user, { scope, cityId, type, excludeIds = [] }) {
   });
 
   const profileWhere = {
-    ...visibleWhere(user).profile,
+    ...visibleWhere(user, { callable: true }).profile,
     presence: 'online',
     ...(type === 'voice' ? { voiceEnabled: true } : { videoEnabled: true }),
   };
   if (resolvedCityId) profileWhere.cityId = resolvedCityId;
 
   const where = {
-    ...visibleWhere(user),
+    ...visibleWhere(user, { callable: true }),
     profile: profileWhere,
     privacySettings: {
       profileVisibleToEveryone: true,

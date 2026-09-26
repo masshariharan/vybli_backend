@@ -3,7 +3,14 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const { emitToUser } = require('../sockets/bus');
-const { isSameSide, showsAllUsers, canPair, pairableWhere } = require('../utils/pairing');
+const {
+  isSameSide,
+  showsAllUsers,
+  canSee,
+  canPair,
+  visibleSideWhere,
+  pairableWhere,
+} = require('../utils/pairing');
 
 /**
  * "May A do this to B?" — asked in exactly one place.
@@ -330,7 +337,9 @@ async function relinkConversationsForPhone(user) {
 module.exports = {
   isSameSide,
   showsAllUsers,
+  canSee,
   canPair,
+  visibleSideWhere,
   pairableWhere,
   orderPair,
   isBlockedEitherWay,

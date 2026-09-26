@@ -14,7 +14,13 @@
  */
 
 const assert = require('node:assert/strict');
-const { isSameSide, canPair, pairableWhere } = require('../src/utils/pairing');
+const {
+  isSameSide,
+  canSee,
+  canPair,
+  visibleSideWhere,
+  pairableWhere,
+} = require('../src/utils/pairing');
 const serialize = require('../src/utils/serialize');
 
 let passed = 0;
@@ -68,7 +74,13 @@ check('missing privacy row reads as OFF', () => {
   assert.equal(canPair(a, b), false);
 });
 
-check('discovery shows the opposite side only', () => {
+check('the Home feed shows the opposite side only', () => {
+  assert.deepEqual(visibleSideWhere(man('m')), { profile: { isEarner: true } });
+  assert.deepEqual(visibleSideWhere(woman('w')), { profile: { isEarner: false } });
+  assert.equal(canSee(man('a'), man('b', true)), false);
+});
+
+check('random match offers the opposite side only', () => {
   assert.deepEqual(pairableWhere(man('m')), { profile: { isEarner: true } });
   assert.deepEqual(pairableWhere(woman('w')), { profile: { isEarner: false } });
 });
@@ -90,7 +102,20 @@ check('opposite sides still pair, whatever either setting', () => {
   assert.equal(canPair(woman('w', true), man('m', false)), true);
 });
 
-check('discovery adds same-side people who also have it on', () => {
+check('the Home feed shows everyone, whatever their own setting', () => {
+  assert.deepEqual(visibleSideWhere(man('m', true)), {});
+  assert.deepEqual(visibleSideWhere(woman('w', true)), {});
+  assert.equal(canSee(man('a', true), man('b', false)), true);
+  assert.equal(canSee(woman('a', true), woman('b', false)), true);
+  assert.equal(canSee(man('a', true), woman('w')), true);
+});
+
+check('but seeing is not reaching: chat/call still need both', () => {
+  assert.equal(canSee(man('a', true), man('b', false)), true);
+  assert.equal(canPair(man('a', true), man('b', false)), false);
+});
+
+check('random match adds only same-side people who also have it on', () => {
   assert.deepEqual(pairableWhere(man('m', true)), {
     OR: [
       { profile: { isEarner: true } },

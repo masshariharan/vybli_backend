@@ -3,11 +3,12 @@
 /**
  * Pairing — which two accounts this app connects at all: see, chat with, call.
  *
- * Asked here and nowhere else. Discovery builds its query from
- * [pairableWhere], every chat and call guard in `relationship.service` asks
- * [canPair], and the serializer sends the client the same answer per person
- * (`can_interact`), so a rule changed here is changed everywhere at once
- * rather than on three paths out of four.
+ * Asked here and nowhere else. The Home feed builds its query from
+ * [visibleSideWhere] and random match from [pairableWhere], every chat and
+ * call guard in `relationship.service` asks [canPair], and the serializer
+ * sends the client that same answer per person (`can_interact`), so a rule
+ * changed here is changed everywhere at once rather than on three paths out
+ * of four.
  *
  * Pure functions over already-loaded rows — no database access — which is
  * what lets the serializer use them too.
@@ -16,13 +17,20 @@
 // An account's *side* is its role: Earn Money or Make Friends. Onboarding
 // derives it from gender (female → earner), so "same side" is "same gender".
 //
-//  * Opposite sides always pair. This is the product, and nothing about it
-//    depends on the setting below — turning "Show All Users" on or off can
-//    never cost anybody an opposite-gender match, chat or call.
-//  * Same side pairs only when **both** accounts have "Show All Users" on.
-//    Mutual rather than one-sided: somebody who left it off has said they
-//    want to see and hear from the other side only, and a same-side account
-//    that turned it on must not be able to reach them anyway.
+// Two questions, deliberately answered differently:
+//
+//  * **Who appears in my feed** — [canSee], [visibleSideWhere]. Only the
+//    viewer's own switch: with "Show All Users" on, the Home feed holds both
+//    men and women, whatever each of them chose. Seeing someone reaches
+//    nobody.
+//  * **Who I may chat with and call** — [canPair], [pairableWhere]. The other
+//    side always; the same side only when **both** have "Show All Users" on.
+//    Somebody who left it off has said they want to hear from the other
+//    side only, and appearing in a same-gender feed must not change that —
+//    their card shows, with Chat and Call unavailable.
+//
+// Opposite sides always see and pair. Nothing about "Show All Users" can ever
+// cost anybody an opposite-gender match, chat or call.
 //
 // Same-side calls are free — see `call.service.startUnlocked`. Billing only
 // ever runs between an earner and a non-earner, which is exactly the pairing
@@ -39,7 +47,14 @@ function showsAllUsers(user) {
 }
 
 /**
- * May these two see and reach each other at all?
+ * Does `other` belong in `viewer`'s feed? The viewer's own switch alone.
+ */
+function canSee(viewer, other) {
+  return !isSameSide(viewer, other) || showsAllUsers(viewer);
+}
+
+/**
+ * May these two chat with and call each other?
  *
  * Needs both users' `profile` and `privacySettings` loaded — which every
  * guard here already has (`req.user` and [loadCounterpart] both include
@@ -51,9 +66,21 @@ function canPair(user, other) {
 }
 
 /**
+ * [canSee] as a Prisma `where` fragment over candidate users — the Home feed.
+ *
+ * Meant to go under an `AND`, like [pairableWhere], and for the same reason.
+ * With the switch on there is no side condition at all: everybody.
+ */
+function visibleSideWhere(viewer) {
+  if (showsAllUsers(viewer)) return {};
+  return { profile: { isEarner: !viewer?.profile?.isEarner } };
+}
+
+/**
  * [canPair] as a Prisma `where` fragment over candidate users, for a listing
- * that has to filter in the query (so the count and the paging agree with
- * what is shown) rather than afterwards.
+ * whose result is somebody to call — random match, which rings at once.
+ * Filtered in the query so the count and the paging agree with what is
+ * shown.
  *
  * Meant to go under an `AND`, so a caller replacing `profile` or
  * `privacySettings` wholesale with its own conditions cannot drop it.
@@ -73,4 +100,11 @@ function pairableWhere(viewer) {
   };
 }
 
-module.exports = { isSameSide, showsAllUsers, canPair, pairableWhere };
+module.exports = {
+  isSameSide,
+  showsAllUsers,
+  canSee,
+  canPair,
+  visibleSideWhere,
+  pairableWhere,
+};

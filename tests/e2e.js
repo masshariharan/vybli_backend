@@ -1507,9 +1507,16 @@ async function run() {
     { error: oneSided.error }
   );
   const oneSidedFeed = await get('/users/discover?scope=allCities&limit=100', caller.token);
+  const oneSidedCard = oneSidedFeed.data?.items?.find((u) => u.id === outsider.id);
   check(
-    'or to appear in their feed',
-    !oneSidedFeed.data?.items?.some((u) => u.id === outsider.id)
+    'but with it on, the same side appears in their feed regardless',
+    Boolean(oneSidedCard),
+    { error: oneSidedFeed.error }
+  );
+  check(
+    'marked as someone they cannot chat with or call yet',
+    oneSidedCard?.can_interact === false,
+    { got: oneSidedCard?.can_interact }
   );
 
   await patch('/me/settings/privacy', outsider.token, { show_all_users: true });
