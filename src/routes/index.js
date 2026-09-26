@@ -314,6 +314,8 @@ const favorites = express.Router();
 favorites.use(authenticate, requireOnboarded);
 
 favorites.get('/', validate({ query: S.pagination }), h(favoriteController.list));
+// Every starred id, no profiles — the app's stars; the tab pages `/`.
+favorites.get('/ids', h(favoriteController.ids));
 favorites.post(
   '/:id',
   writeLimiter,

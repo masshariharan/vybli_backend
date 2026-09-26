@@ -68,6 +68,27 @@ async function favoriteIdsFor(userId) {
 }
 
 /**
+ * The ids behind [listFavorites], all of them — no profiles, so no paging.
+ *
+ * What lets the app mark a star on every card it draws (Home, profiles)
+ * while the Favourites tab itself loads its profiles a page at a time. Same
+ * filter as the list, so an id here is always one the tab can show.
+ */
+async function listFavoriteIds(userId) {
+  const blockedIds = await relationship.blockedIdsFor(userId);
+  const rows = await prisma.favorite.findMany({
+    where: {
+      favoritedById: userId,
+      favoriteUserId: { notIn: [...blockedIds] },
+      favoriteUser: { status: 'active', deletedAt: null },
+    },
+    select: { favoriteUserId: true },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  });
+  return rows.map((r) => r.favoriteUserId);
+}
+
+/**
  * Everyone who has `userId` starred, as an array of ids.
  *
  * Read by `deleteAccount` before it removes those rows, so the people whose
@@ -114,7 +135,9 @@ async function listFavorites(userId, { skip, take }) {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      // `id` last: unique, so two stars made in the same millisecond keep
+      // their order between pages rather than one repeating on the next.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip,
       take,
     }),
@@ -131,4 +154,5 @@ module.exports = {
   favoriteIdsFor,
   favoritedByIdsFor,
   listFavorites,
+  listFavoriteIds,
 };

@@ -1583,6 +1583,64 @@ async function run() {
     { error: offFeed.error }
   );
 
+  // Lazy loading: walking a list one row per page must give exactly what one
+  // big page gives — same people, same order, nobody twice. Offset paging only
+  // holds up when every page agrees on the order.
+  section('Paging');
+
+  async function walkPages(path, token, extract = (d) => d.items) {
+    const seen = [];
+    for (let page = 1; page <= 200; page += 1) {
+      const sep = path.includes('?') ? '&' : '?';
+      const res = await get(`${path}${sep}limit=1&page=${page}`, token);
+      if (!res.success) return { error: res.error, seen };
+      seen.push(...extract(res.data).map((x) => x.id));
+      if (!res.data.pagination.has_next) return { seen, total: res.data.pagination.total };
+    }
+    return { seen };
+  }
+
+  const feedWhole = await get('/users/discover?scope=allCities&limit=100', earner.token);
+  const feedWalk = await walkPages('/users/discover?scope=allCities', earner.token);
+  check(
+    'the Home feed, one card per page, matches the whole feed in order',
+    JSON.stringify(feedWalk.seen) ===
+      JSON.stringify((feedWhole.data?.items ?? []).map((u) => u.id)),
+    { error: feedWalk.error, walked: feedWalk.seen.length, whole: feedWhole.data?.items?.length }
+  );
+  check(
+    'and nobody appears twice',
+    new Set(feedWalk.seen).size === feedWalk.seen.length
+  );
+
+  const chatsWhole = await get('/conversations?limit=100', caller.token);
+  const chatsWalk = await walkPages('/conversations', caller.token);
+  check(
+    'the Chats list, one thread per page, matches the whole list in order',
+    JSON.stringify(chatsWalk.seen) ===
+      JSON.stringify((chatsWhole.data?.items ?? []).map((t) => t.id)),
+    { error: chatsWalk.error, walked: chatsWalk.seen, whole: chatsWhole.data?.items?.map((t) => t.id) }
+  );
+  const onePage = await get('/conversations?limit=1', caller.token);
+  const unreadEverywhere = (chatsWhole.data?.items ?? []).reduce(
+    (sum, t) => sum + (t.unread_count ?? 0),
+    0
+  );
+  check(
+    'every page carries the unread total for all conversations, not just its own',
+    onePage.data?.unread_total === unreadEverywhere,
+    { got: onePage.data?.unread_total, expected: unreadEverywhere }
+  );
+
+  await post(`/favorites/${earner.id}`, caller.token);
+  const favIds = await get('/favorites/ids', caller.token);
+  check(
+    'every favourite id is available without loading the profiles',
+    Array.isArray(favIds.data?.user_ids) && favIds.data.user_ids.includes(earner.id),
+    { error: favIds.error, got: favIds.data }
+  );
+  await del(`/favorites/${earner.id}`, caller.token);
+
   // Insufficient funds.
   section('Running out of balance');
 

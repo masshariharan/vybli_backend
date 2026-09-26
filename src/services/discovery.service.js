@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
+const { pageAcrossBuckets } = require('../utils/paging');
 const settingsService = require('./settings.service');
 
 /**
@@ -136,37 +137,38 @@ async function feed(user, params) {
     where.languages = { some: { languageCode: { in: languages } } };
   }
 
-  const [rows, total] = await Promise.all([
-    prisma.user.findMany({
-      where,
-      include: PROFILE_INCLUDE,
-      orderBy: [
-        // Online first, then busy, then offline — `online` sorts before
-        // `offline` alphabetically, and `busy` before both, so the enum is
-        // ordered explicitly instead.
-        { profile: { presence: 'asc' } },
-        { profile: { rating: 'desc' } },
-        { createdAt: 'desc' },
-      ],
-      skip: params.skip,
-      take: params.take,
-    }),
-    prisma.user.count({ where }),
-  ]);
-
-  return { rows: sortByPresence(rows), total };
-}
-
-/** online → busy → offline. The enum's own order is not this. */
-const PRESENCE_RANK = { online: 0, busy: 1, offline: 2 };
-function sortByPresence(rows) {
-  return [...rows].sort((a, b) => {
-    const rank =
-      PRESENCE_RANK[a.profile?.presence ?? 'offline'] -
-      PRESENCE_RANK[b.profile?.presence ?? 'offline'];
-    if (rank !== 0) return rank;
-    return (b.profile?.rating ?? 0) - (a.profile?.rating ?? 0);
+  // Online first, then busy, then offline — each its own bucket, paged
+  // across as one list (`utils/paging`). This used to order by the
+  // `presence` enum in SQL, which sorts in *declaration* order (online,
+  // offline, busy), and then re-sort each page in JavaScript. The two
+  // disagreed across pages: page two could open with a busy card that
+  // belonged above the offline ones already shown at the end of page one.
+  //
+  // Within a bucket: best rated, newest, then `id` — unique, so two people
+  // who tie on everything else keep their places between requests and nobody
+  // is shown twice or skipped as the next page loads.
+  const orderBy = [
+    { profile: { rating: 'desc' } },
+    { createdAt: 'desc' },
+    { id: 'desc' },
+  ];
+  const inPresence = (presence) => ({
+    where: { AND: [where, { profile: { presence } }] },
+    orderBy,
   });
+
+  // A presence filter already narrows the feed to one bucket; asking the
+  // other two would only count rows that cannot match.
+  const presences = params.online_only ? ['online'] : ['online', 'busy', 'offline'];
+
+  const { rows, total } = await pageAcrossBuckets(prisma.user, {
+    buckets: presences.map(inPresence),
+    include: PROFILE_INCLUDE,
+    skip: params.skip,
+    take: params.take,
+  });
+
+  return { rows, total };
 }
 
 /**

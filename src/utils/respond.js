@@ -28,12 +28,24 @@ function noContentOk(res, message = 'Done') {
  * `items` rather than a resource-specific key so a client can write one
  * pagination helper: every list endpoint in the API returns this shape.
  */
-function paginated(res, items, { page, limit, total }, message = 'Request successful') {
+/**
+ * A page of a list. `extra` rides alongside `items` and `pagination` for the
+ * odd list that needs one more fact about the *whole* list, not the page —
+ * the Chats list's unread total.
+ */
+function paginated(
+  res,
+  items,
+  { page, limit, total },
+  message = 'Request successful',
+  extra = {}
+) {
   const totalPages = limit > 0 ? Math.ceil(total / limit) : 0;
   return res.status(200).json({
     success: true,
     message,
     data: {
+      ...extra,
       items,
       pagination: {
         page,

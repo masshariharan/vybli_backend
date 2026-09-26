@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const relationship = require('./relationship.service');
+const { pageAcrossBuckets } = require('../utils/paging');
 const notificationService = require('./notification.service');
 const activity = require('./activity.service');
 const { emitToUser, emitToAdmin } = require('../sockets/bus');
@@ -59,14 +60,24 @@ async function getConversationOr404(conversationId, userId) {
 }
 
 /**
- * The Chats screen: every conversation this account is part of, pinned ones
- * first.
+ * The Chats screen, one page at a time: every conversation this account is
+ * part of, pinned ones first, then most recent.
  *
- * Which side's `pinnedByA`/`pinnedByB` flag applies depends on the row, so
- * the pinned-first ordering is done in memory after a single ordered fetch
- * rather than in the query — Node's array sort is stable, so within each
- * group (pinned, then not) rows keep the `lastMessageAt desc` order the query
- * already gave them.
+ * All of it is decided in the query. This used to fetch *every* conversation
+ * the account had — each with its latest message — filter out the deleted
+ * ones and sort pinned-first in JavaScript, and only then slice out the page
+ * asked for, so the twentieth page cost as much as the whole list and the
+ * first page as much as the twentieth.
+ *
+ * What made the query hard is that both rules are per side: "pinned" is
+ * `pinnedByA` or `pinnedByB`, and "deleted for me" is `deletedAtByA` or
+ * `deletedAtByB`, depending on which column the viewer sits in. So each rule
+ * is written once per side and OR'd together ([sideWhere]), and pinned-first
+ * becomes two buckets — pinned, then the rest — paged across as one list
+ * (`utils/paging`).
+ *
+ * `unreadTotal` is the unread count across *every* visible conversation, not
+ * just this page: the app's badge cannot add up threads it has not loaded.
  *
  * With messaging off the answer is an empty list — not an error. The client
  * renders its "Messaging is off" state, and a 403 here would turn a setting
@@ -74,41 +85,87 @@ async function getConversationOr404(conversationId, userId) {
  */
 async function listThreads(user, { skip, take }) {
   if (user.privacySettings?.allowMessages === false) {
-    return { rows: [], total: 0, messagingDisabled: true };
+    return { rows: [], total: 0, unreadTotal: 0, messagingDisabled: true };
   }
 
-  const blockedIds = await relationship.blockedIdsFor(user.id);
-  const blocked = [...blockedIds];
+  const blocked = [...(await relationship.blockedIdsFor(user.id))];
+  const notBlocked =
+    blocked.length > 0
+      ? { NOT: [{ userAId: { in: blocked } }, { userBId: { in: blocked } }] }
+      : {};
 
-  const where = {
-    OR: [{ userAId: user.id }, { userBId: user.id }],
-  };
-  if (blocked.length > 0) {
-    where.NOT = [{ userAId: { in: blocked } }, { userBId: { in: blocked } }];
-  }
-
-  const all = await prisma.conversation.findMany({
-    where,
-    include: {
-      ...CONVERSATION_INCLUDE,
-      // Only the latest, for the preview line. Loading a whole thread per
-      // row to show one line would be pathological on a long list.
-      messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+  const bucket = (pinned) => ({
+    where: {
+      AND: [
+        notBlocked,
+        {
+          OR: [
+            sideWhere(user.id, 'A', { pinned }),
+            sideWhere(user.id, 'B', { pinned }),
+          ],
+        },
+      ],
     },
-    orderBy: [{ lastMessageAt: 'desc' }, { createdAt: 'desc' }],
+    orderBy: [
+      { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+      { createdAt: 'desc' },
+      { id: 'desc' },
+    ],
   });
 
-  // A chat this side deleted stays out of the list until something newer
-  // than the deletion arrives, and then it comes back holding only that.
-  const visible = all.filter((c) => {
-    const deletedAt = c.userAId === user.id ? c.deletedAtByA : c.deletedAtByB;
-    return !deletedAt || (c.lastMessageAt && c.lastMessageAt > deletedAt);
-  });
+  const [{ rows, total }, unreadTotal] = await Promise.all([
+    pageAcrossBuckets(prisma.conversation, {
+      buckets: [bucket(true), bucket(false)],
+      include: {
+        ...CONVERSATION_INCLUDE,
+        // Only the latest, for the preview line. Loading a whole thread per
+        // row to show one line would be pathological on a long list.
+        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+      skip,
+      take,
+    }),
+    unreadTotalFor(user.id, notBlocked),
+  ]);
 
-  const isPinned = (c) => (c.userAId === user.id ? c.pinnedByA : c.pinnedByB);
-  const sorted = [...visible].sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)));
+  return { rows, total, unreadTotal };
+}
 
-  return { rows: sorted.slice(skip, skip + take), total: sorted.length };
+/**
+ * The conversations where the viewer is on side [side] ('A' or 'B') and can
+ * see the thread — optionally only those they have (or have not) pinned.
+ *
+ * "Can see" is the delete-for-me rule: a chat this side deleted stays out of
+ * the list until something newer than the deletion arrives, and then it comes
+ * back holding only that. `lastMessageAt > deletedAtBy<side>` compares two
+ * columns of the same row, which Prisma expresses as a field reference.
+ */
+function sideWhere(userId, side, { pinned } = {}) {
+  const deletedField = side === 'A' ? 'deletedAtByA' : 'deletedAtByB';
+  const where = {
+    [side === 'A' ? 'userAId' : 'userBId']: userId,
+    OR: [
+      { [deletedField]: null },
+      { lastMessageAt: { gt: prisma.conversation.fields[deletedField] } },
+    ],
+  };
+  if (pinned !== undefined) where[side === 'A' ? 'pinnedByA' : 'pinnedByB'] = pinned;
+  return where;
+}
+
+/** Unread messages across every conversation the viewer can see. */
+async function unreadTotalFor(userId, notBlocked) {
+  const [asA, asB] = await Promise.all([
+    prisma.conversation.aggregate({
+      where: { AND: [notBlocked, sideWhere(userId, 'A')] },
+      _sum: { unreadForA: true },
+    }),
+    prisma.conversation.aggregate({
+      where: { AND: [notBlocked, sideWhere(userId, 'B')] },
+      _sum: { unreadForB: true },
+    }),
+  ]);
+  return (asA._sum.unreadForA ?? 0) + (asB._sum.unreadForB ?? 0);
 }
 
 /**

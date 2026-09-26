@@ -31,6 +31,12 @@ Lists add pagination inside `data`:
 } }
 ```
 
+The app loads the Home feed (`/users/discover`), Chats (`/conversations`) and
+Favourites (`/favorites`) 20 at a time and asks for the next page as the list
+is scrolled. Every list has a stable order ending on a unique id, so walking
+the pages gives each row exactly once. `GET /favorites/ids` returns every
+starred id (`user_ids`) without profiles, for the hearts shown across the app.
+
 Authenticate with `Authorization: Bearer <access_token>`. The user is taken
 from the token — **no endpoint accepts a user id meaning "who I am"**.
 
@@ -300,6 +306,7 @@ is the dead end the gate exists to prevent.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/conversations` | `filter=accepted\|requests\|all` — the two Chats tabs |
+|  | | Paged (`page`, `limit`), pinned first then most recent. Every page also carries `unread_total` — unread across **all** conversations, for the badge |
 | GET | `/conversations/unread` | Badge: unread + pending requests |
 | GET | `/conversations/:id` | Open a thread — **also marks it read** |
 | POST | `/conversations/:id/messages` | Send |

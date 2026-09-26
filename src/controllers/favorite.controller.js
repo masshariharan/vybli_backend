@@ -37,4 +37,10 @@ async function list(req, res) {
   return paginated(res, body, { page: params.page, limit: params.limit, total });
 }
 
-module.exports = { add, remove, list };
+/** Every favourite's id — see `favoriteService.listFavoriteIds`. */
+async function ids(req, res) {
+  const userIds = await favoriteService.listFavoriteIds(req.userId);
+  return ok(res, { user_ids: userIds }, 'Favourite ids');
+}
+
+module.exports = { add, remove, list, ids };

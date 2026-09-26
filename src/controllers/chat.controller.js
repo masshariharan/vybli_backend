@@ -11,7 +11,7 @@ async function listThreads(req, res) {
   const params = q(req);
   const { skip, take } = toSkipTake(params);
 
-  const { rows, total, messagingDisabled } = await chatService.listThreads(req.user, {
+  const { rows, total, unreadTotal, messagingDisabled } = await chatService.listThreads(req.user, {
     skip,
     take,
   });
@@ -32,6 +32,7 @@ async function listThreads(req, res) {
           has_previous: false,
         },
         messaging_disabled: true,
+        unread_total: 0,
       },
       'Messaging is off'
     );
@@ -41,7 +42,14 @@ async function listThreads(req, res) {
     serialize.chatThread(c, req.userId, { messages: c.messages ?? [] })
   );
 
-  return paginated(res, items, { page: params.page, limit: params.limit, total });
+  return paginated(
+    res,
+    items,
+    { page: params.page, limit: params.limit, total },
+    'Conversations',
+    // Across every conversation, not this page — see `listThreads`.
+    { unread_total: unreadTotal }
+  );
 }
 
 /** Opens a thread. Reading it is what marks it read. */
