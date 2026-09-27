@@ -15,6 +15,7 @@ const deliveryReceipt = require('../utils/deliveryReceipt');
 const e2ee = require('../utils/e2ee');
 const e2eeService = require('./e2ee.service');
 const env = require('../config/env');
+const retention = require('./retention.service');
 
 /** What a notification says about an encrypted message — all the server knows. */
 const ENCRYPTED_PREVIEW = 'Sent you a message';
@@ -132,7 +133,11 @@ async function listThreads(user, { skip, take }) {
         ...CONVERSATION_INCLUDE,
         // Only the latest, for the preview line. Loading a whole thread per
         // row to show one line would be pathological on a long list.
-        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+        messages: {
+          where: { createdAt: { gt: retention.cutoff() } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
       },
       skip,
       take,
@@ -194,9 +199,12 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
   if (await relationship.isBlockedEitherWay(user.id, side.peerId)) throw errors.blocked();
 
   const where = { conversationId, deletedAt: null };
-  // Nothing from before this side deleted the chat.
-  const createdAt = {};
-  if (side.deletedAt) createdAt.gt = side.deletedAt;
+  // Nothing from before this side deleted the chat, and nothing past the
+  // retention window — the hourly purge may not have reached it yet.
+  const expired = retention.cutoff();
+  const createdAt = {
+    gt: side.deletedAt && side.deletedAt > expired ? side.deletedAt : expired,
+  };
   // Cursor paging: messages arrive while you scroll, and an offset would skip
   // or repeat rows as the list grows underneath.
   if (before) {

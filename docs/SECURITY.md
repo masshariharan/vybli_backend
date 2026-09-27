@@ -92,6 +92,30 @@ table.
 5. Optionally, after that, blank the old plaintext rows. See the `text`
    column on `messages` where `envelope IS NULL`.
 
+## Messages are deleted after 7 days
+
+Every chat message is deleted for both people once it's older than
+`MESSAGE_RETENTION_DAYS` (default 7). The rows are removed, ciphertext
+included (`services/retention.service.js`):
+
+- **Hourly purge.** It runs on boot and then every hour. It deletes in
+  batches, recomputes the unread counters of the conversations it touched,
+  and removes the matching "new message" notifications.
+- **Reads apply the cut-off too.** This covers the app's thread view, chat
+  previews and the admin panel, so an expired message is never shown in the
+  hour before the purge reaches it. The app filters as well.
+- **Conversations are kept.** Pins, mutes and the pair itself stay; only
+  their messages age out.
+- **Report evidence is kept.** It's a safety record the reporter handed over
+  deliberately. Expiring it would let someone erase the case against them by
+  waiting a week.
+
+Users are told in three places: the Profile screen, Privacy Settings → Message
+preferences, and the top of every chat ("Messages disappear after 7 days").
+The app's copy comes from `kMessageRetentionDays` in
+`lib/data/models/chat.dart`. Change it in the same release as the server
+setting.
+
 ## Other protections
 
 - **Sessions.** Refresh tokens are stored hashed and rotated on every use.

@@ -117,6 +117,16 @@ const env = {
     required: bool('E2EE_REQUIRED', false),
   },
 
+  chat: {
+    /**
+     * How long a chat message exists before it is deleted for everyone —
+     * see `services/retention.service`. The app tells people "messages
+     * disappear after 7 days", so changing this means changing that copy
+     * (`kMessageRetentionDays` in the app) in the same release.
+     */
+    retentionDays: Math.max(1, num('MESSAGE_RETENTION_DAYS', 7)),
+  },
+
   /**
    * The key for columns encrypted at rest (`utils/fieldCrypto`) — base64 of
    * 32 random bytes, `openssl rand -base64 32`. Optional: without it those

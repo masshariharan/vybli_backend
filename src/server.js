@@ -9,6 +9,7 @@ const { attachSockets } = require('./sockets');
 const profileService = require('./services/profile.service');
 const callService = require('./services/call.service');
 const otpService = require('./services/otp.service');
+const retention = require('./services/retention.service');
 
 /**
  * Process entry point.
@@ -59,6 +60,25 @@ async function start() {
       .catch((err) => console.error('[otp] purge failed', err));
   purge();
   setInterval(purge, 3600_000).unref();
+
+  // Chat messages older than the retention window are deleted, for everyone —
+  // see `services/retention.service`. Hourly, so a message lasts at most an
+  // hour past its seven days on disk; reads apply the cut-off themselves, so
+  // it is never *shown* past them.
+  const expire = () =>
+    retention
+      .purgeExpiredMessages()
+      .then(
+        ({ messages, notifications }) =>
+          (messages > 0 || notifications > 0) &&
+          console.info(
+            `[retention] deleted ${messages} messages and ${notifications} notifications ` +
+              `older than ${env.chat.retentionDays} days`
+          )
+      )
+      .catch((err) => console.error('[retention] message purge failed', err));
+  expire();
+  setInterval(expire, 3600_000).unref();
 
   // No host argument, so this binds every interface — loopback and the LAN
   // alike. That is what lets a phone on the same Wi-Fi reach it.

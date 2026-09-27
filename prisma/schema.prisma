@@ -685,6 +685,8 @@ model Message {
   // Paging a thread is always "newest first within this conversation".
   @@index([conversationId, createdAt])
   @@index([senderId])
+  // The hourly retention purge deletes by age across every conversation.
+  @@index([createdAt])
   @@map("messages")
 }
 

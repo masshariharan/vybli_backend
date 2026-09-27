@@ -2,6 +2,7 @@
 
 const { Prisma } = require('@prisma/client');
 const prisma = require('../../config/prisma');
+const retention = require('../retention.service');
 const { errors } = require('../../utils/errors');
 const avatarCatalog = require('../../config/avatarCatalog');
 const { summarise, PROFILE_INCLUDE } = require('./users.service');
@@ -152,8 +153,10 @@ async function conversation(conversationId, { before, limit = 50 } = {}) {
   });
   if (!row) throw errors.notFound('Conversation', 'CONVERSATION_NOT_FOUND');
 
-  const where = { conversationId };
-  if (before) where.createdAt = { lt: new Date(before) };
+  // Past the retention window a message is gone for the panel too, even in
+  // the hour before the purge deletes the row.
+  const where = { conversationId, createdAt: { gt: retention.cutoff() } };
+  if (before) where.createdAt.lt = new Date(before);
 
   const rows = await prisma.message.findMany({
     where,
@@ -193,16 +196,14 @@ async function searchMessages({ query, userId, conversationId, from, to, skip = 
   const where = {
     text: { contains: query.trim(), mode: 'insensitive' },
     deletedAt: null,
+    createdAt: { gt: retention.cutoff() },
   };
   if (conversationId) where.conversationId = conversationId;
   if (userId) {
     where.conversation = { OR: [{ userAId: userId }, { userBId: userId }] };
   }
-  if (from || to) {
-    where.createdAt = {};
-    if (from) where.createdAt.gte = new Date(from);
-    if (to) where.createdAt.lte = new Date(to);
-  }
+  if (from) where.createdAt.gte = new Date(from);
+  if (to) where.createdAt.lte = new Date(to);
 
   const [rows, total] = await Promise.all([
     prisma.message.findMany({
