@@ -169,6 +169,18 @@ function attachSockets(httpServer) {
   // the one message telling it why, and be left to work it out from the next
   // request it happened to make. Long enough to flush, short enough that a
   // client ignoring the event is still cut off promptly.
+  // See `RealtimeEvent.USER_CHANGED`. The local sockets directly rather than
+  // `fetchSockets()`: the bus is in-process, so every socket this account has
+  // open on this server is here, and the copy to update is the object the
+  // handlers read — `socket.user` itself.
+  bus.on(RealtimeEvent.USER_CHANGED, ({ userId, privacySettings, profile }) => {
+    for (const socket of io.sockets.sockets.values()) {
+      if (socket.userId !== userId || !socket.user) continue;
+      if (privacySettings) socket.user.privacySettings = privacySettings;
+      if (profile) socket.user.profile = { ...socket.user.profile, ...profile };
+    }
+  });
+
   bus.on(RealtimeEvent.DISCONNECT_USER, ({ userId, reason }) => {
     console.info(`[socket] dropping ${userId}'s connections: ${reason}`);
     setTimeout(() => {

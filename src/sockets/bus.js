@@ -43,6 +43,18 @@ const RealtimeEvent = {
   DISCONNECT_USER: 'disconnectUser',
 
   /**
+   * { userId, privacySettings?, profile? } — this account's own settings just
+   * changed; bring every socket it has open up to date.
+   *
+   * A socket loads its user once, at handshake, and every socket-borne action
+   * (`call:start`, `message:send`) is judged against that copy. Without this,
+   * turning "Show All Users" on left calls refused as if it were still off —
+   * against the switch as it stood when the app connected — while the same
+   * chat worked over HTTP, which loads the user fresh on every request.
+   */
+  USER_CHANGED: 'userChanged',
+
+  /**
    * { event, data } — something happened worth showing the administrator.
    *
    * A separate channel rather than a user id of "admin": these are
@@ -74,6 +86,10 @@ function emitToPresenceWatchers(userId, event, data) {
  * delivered over the connection that is about to be closed rather than into
  * one that has already gone.
  */
+function userChanged(userId, changes) {
+  bus.emit(RealtimeEvent.USER_CHANGED, { userId, ...changes });
+}
+
 function disconnectUser(userId, reason) {
   bus.emit(RealtimeEvent.DISCONNECT_USER, { userId, reason });
 }
@@ -97,4 +113,5 @@ module.exports = {
   emitToPresenceWatchers,
   emitToAdmin,
   disconnectUser,
+  userChanged,
 };

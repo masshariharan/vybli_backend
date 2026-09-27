@@ -198,7 +198,7 @@ async function assertCanCall(user, otherId, type) {
   //
   // Busy is asked of the Call table, not the `presence` cache, which lags
   // behind a call that has just ended.
-  const [other, blocked, liveCall] = await Promise.all([
+  const [other, blocked, liveCall, callerPrivacy] = await Promise.all([
     loadCounterpart(otherId),
     isBlockedEitherWay(user.id, otherId),
     prisma.call.findFirst({
@@ -208,14 +208,20 @@ async function assertCanCall(user, otherId, type) {
       },
       select: { callerId: true, calleeId: true },
     }),
+    // The caller's own switches, read now rather than trusted from `user`:
+    // a socket-borne call brings the user the socket loaded at handshake,
+    // and "Show All Users" may have been turned on since. Asked in this same
+    // batch, so it costs no extra round trip.
+    prisma.privacySettings.findUnique({ where: { userId: user.id } }),
   ]);
   if (blocked) throw errors.blocked();
+  const caller = callerPrivacy ? { ...user, privacySettings: callerPrivacy } : user;
 
   const privacy = other.privacySettings ?? {};
   const profile = other.profile;
   if (!profile) throw errors.notFound('That person', 'USER_NOT_FOUND');
 
-  if (!canPair(user, other)) throw errors.callRoleMismatch();
+  if (!canPair(caller, other)) throw errors.callRoleMismatch();
 
   const accepts = type === 'voice' ? privacy.allowVoiceCalls : privacy.allowVideoCalls;
   const enabled = type === 'voice' ? profile.voiceEnabled : profile.videoEnabled;

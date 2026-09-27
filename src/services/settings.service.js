@@ -2,7 +2,7 @@
 
 const prisma = require('../config/prisma');
 const relationship = require('./relationship.service');
-const { emitToUsers } = require('../sockets/bus');
+const { emitToUsers, userChanged } = require('../sockets/bus');
 
 /**
  * Settings.
@@ -67,6 +67,13 @@ async function updatePrivacy(userId, payload) {
   }
 
   const [settings] = await prisma.$transaction(operations);
+
+  // Live sockets judge calls and messages against the user they loaded at
+  // handshake — bring them up to date now, not at the next reconnect.
+  userChanged(userId, {
+    privacySettings: settings,
+    profile: Object.keys(profileData).length > 0 ? profileData : undefined,
+  });
 
   if (data.showOnlineStatus !== undefined) {
     await broadcastPresenceVisibility(userId, data.showOnlineStatus);
