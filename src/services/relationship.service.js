@@ -254,6 +254,31 @@ async function blockedIdsFor(userId) {
   return ids;
 }
 
+/**
+ * Everyone who has blocked `userId` — one direction only.
+ *
+ * The chat list and a thread's history hide a conversation from the person
+ * who was blocked, but not from the one who did the blocking: they keep the
+ * chat, see "You blocked …" in it, and can unblock from there. Sending and
+ * calling still refuse either way ([isBlockedEitherWay]).
+ */
+async function blockerIdsOf(userId) {
+  const blocks = await prisma.block.findMany({
+    where: { blockedId: userId },
+    select: { blockerId: true },
+  });
+  return new Set(blocks.map((b) => b.blockerId));
+}
+
+/** True if `otherId` has blocked `userId`. */
+async function isBlockedBy(userId, otherId) {
+  const block = await prisma.block.findFirst({
+    where: { blockerId: otherId, blockedId: userId },
+    select: { id: true },
+  });
+  return Boolean(block);
+}
+
 /** Everyone `userId` has an open conversation with. */
 async function conversationPeerIdsFor(userId) {
   const rows = await prisma.conversation.findMany({
@@ -393,6 +418,8 @@ module.exports = {
   assertCanMessageLoaded,
   assertCanCall,
   blockedIdsFor,
+  blockerIdsOf,
+  isBlockedBy,
   conversationPeerIdsFor,
   hasConversation,
   relinkConversationsForPhone,

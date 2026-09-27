@@ -1766,11 +1766,27 @@ async function run() {
     !blockedFeed.data?.items?.some((u) => u.id === earner.id)
   );
 
+  // The one who blocked keeps the chat — it is where they unblock — and can
+  // still read its history. The one who was blocked loses it.
   const chatsAfterBlock = await get('/conversations', caller.token);
   check(
-    'the conversation leaves the chat list',
-    !chatsAfterBlock.data?.items?.some((t) => t.id === conversationId)
+    'the blocker keeps the conversation in their chat list',
+    chatsAfterBlock.data?.items?.some((t) => t.id === conversationId)
   );
+  const blockerReads = await get(`/conversations/${conversationId}`, caller.token);
+  check('and can still open it', blockerReads.success, { error: blockerReads.error });
+
+  const blockedChats = await get('/conversations', earner.token);
+  check(
+    'the blocked person no longer sees it',
+    !blockedChats.data?.items?.some((t) => t.id === conversationId)
+  );
+  const blockedReads = await get(`/conversations/${conversationId}`, earner.token);
+  check('nor can they open it', !blockedReads.success, { error: blockedReads.error });
+  const blockedReplies = await post(`/conversations/${conversationId}/messages`, earner.token, {
+    text: 'still there?',
+  });
+  check('nor message back', !blockedReplies.success, { error: blockedReplies.error });
 
   const blockedList = await get('/moderation/blocked', caller.token);
   check('the blocked list shows them', blockedList.data?.items?.length === 1);

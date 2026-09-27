@@ -101,7 +101,9 @@ async function listThreads(user, { skip, take }) {
     return { rows: [], total: 0, unreadTotal: 0, messagingDisabled: true };
   }
 
-  const blocked = [...(await relationship.blockedIdsFor(user.id))];
+  // Hidden only from the person who was blocked. Someone who blocked a peer
+  // keeps the chat in their list, where it says so and offers Unblock.
+  const blocked = [...(await relationship.blockerIdsOf(user.id))];
   const notBlocked =
     blocked.length > 0
       ? { NOT: [{ userAId: { in: blocked } }, { userBId: { in: blocked } }] }
@@ -196,7 +198,10 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
   const conversation = await getConversationOr404(conversationId, user.id);
   const side = sideOf(conversation, user.id);
 
-  if (await relationship.isBlockedEitherWay(user.id, side.peerId)) throw errors.blocked();
+  // The one blocked cannot read it; the one who blocked still can — the
+  // history is theirs, and the chat is where they unblock. Sending re-checks
+  // both directions on its own.
+  if (await relationship.isBlockedBy(user.id, side.peerId)) throw errors.blocked();
 
   // Nothing that has disappeared — past its timer or the 7-day ceiling —
   // even before the purge reaches it.
@@ -788,7 +793,9 @@ async function unreadSummary(user) {
     return { unread_messages: 0, total: 0 };
   }
 
-  const blockedIds = await relationship.blockedIdsFor(user.id);
+  // Matches the list: only conversations with someone who blocked this user
+  // are left out.
+  const blockedIds = await relationship.blockerIdsOf(user.id);
   const blocked = [...blockedIds];
 
   const conversations = await prisma.conversation.findMany({
