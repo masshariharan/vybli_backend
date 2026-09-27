@@ -606,6 +606,11 @@ model Conversation {
   /// own `expiresAt`, fixed when it was sent.
   messageTtlHours Int @default(168)
 
+  /// The chat's look — bubble colours and background — as a theme id
+  /// (`classic`, `blush`, `sunset`, …). Shared by both people, like the timer,
+  /// and either of them can change it.
+  chatTheme String @default("classic")
+
   /// When each side last deleted the chat — per side, like pinning. That side
   /// sees nothing from before this moment and does not list the thread until
   /// a newer message arrives. The other side's copy is untouched: a

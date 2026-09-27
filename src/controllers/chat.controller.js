@@ -165,6 +165,16 @@ async function setMessageTimer(req, res) {
   );
 }
 
+/** The chat's theme, for both people — see `chatService.setChatTheme`. */
+async function setChatTheme(req, res) {
+  const conversation = await chatService.setChatTheme(req.user, req.params.id, req.body.theme);
+  return ok(
+    res,
+    { conversation_id: conversation.id, chat_theme: conversation.chatTheme },
+    'Chat theme updated'
+  );
+}
+
 /** Deletes the chat for this side only — see `chatService.deleteForMe`. */
 async function deleteConversation(req, res) {
   await chatService.deleteForMe(req.user, req.params.id);
@@ -198,6 +208,7 @@ module.exports = {
   setMuted,
   setPinned,
   setMessageTimer,
+  setChatTheme,
   deleteConversation,
   unreadSummary,
   openConversation,

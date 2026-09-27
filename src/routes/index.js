@@ -409,6 +409,12 @@ chat.patch(
   validate({ params: S.chat.conversationParam, body: S.chat.timer }),
   h(chatController.setMessageTimer)
 );
+// Chat theme: the conversation's look, for both people.
+chat.patch(
+  '/:id/theme',
+  validate({ params: S.chat.conversationParam, body: S.chat.theme }),
+  h(chatController.setChatTheme)
+);
 // Deletes the chat for this side only; the other person keeps theirs.
 chat.delete(
   '/:id',

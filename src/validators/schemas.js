@@ -280,6 +280,16 @@ const chat = {
   pin: z.object({ pinned: z.boolean() }),
   // Disappearing messages: 24 hours or 7 days.
   timer: z.object({ hours: z.union([z.literal(24), z.literal(168)]) }),
+  // Chat themes — kept in step with `ChatTheme` in the app.
+  theme: z.object({
+    theme: z.enum([
+      // Colours
+      'classic', 'blush', 'sunset', 'ocean', 'mint', 'berry', 'golden', 'midnight',
+      // Decorative themes
+      'sweetheart', 'rose_garden', 'cherry_blossom', 'valentine', 'starry_night',
+      'moonlight', 'candlelight', 'lavender_dreams', 'dreamy',
+    ]),
+  }),
 };
 
 // ── Calls ───────────────────────────────────────────────────────────────────

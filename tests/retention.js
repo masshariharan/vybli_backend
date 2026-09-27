@@ -121,6 +121,24 @@ async function run() {
     event?.conversation_id === conversationId && event?.message_ttl_hours === 24,
     event
   );
+
+  section('The chat theme');
+
+  check('a chat starts on the classic theme', fresh.data?.thread?.chat_theme === 'classic', fresh.data?.thread);
+  const badTheme = await patch(`/conversations/${conversationId}/theme`, earner.token, { theme: 'neon' });
+  check('only a known theme can be chosen', badTheme.status === 422, badTheme);
+
+  const toldTheme = nextEvent(payerSocket, 'conversation:theme');
+  const setTheme = await patch(`/conversations/${conversationId}/theme`, earner.token, { theme: 'ocean' });
+  check('either person can change the theme', setTheme.success && setTheme.data?.chat_theme === 'ocean', setTheme);
+  const themeEvent = await toldTheme;
+  check(
+    'and the other person’s chat changes at once',
+    themeEvent?.conversation_id === conversationId && themeEvent?.chat_theme === 'ocean',
+    themeEvent
+  );
+  const reread = await get(`/conversations/${conversationId}`, payer.token);
+  check('and it is the same theme for both people', reread.data?.thread?.chat_theme === 'ocean', reread.data?.thread);
   payerSocket.close();
 
   const before24 = Date.now();

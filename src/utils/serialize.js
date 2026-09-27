@@ -343,6 +343,8 @@ function chatThread(conversation, viewerId, { messages = [] } = {}) {
     pinned: isA ? conversation.pinnedByA : conversation.pinnedByB,
     // Disappearing messages: 24 or 168 hours, shared by both people.
     message_ttl_hours: conversation.messageTtlHours ?? 168,
+    // Chat theme id, shared by both people.
+    chat_theme: conversation.chatTheme ?? 'classic',
     is_typing: false, // Live-only; the socket layer owns it.
     last_message_at: iso(conversation.lastMessageAt),
     messages: messages.map((m) => message(m, viewerId)),

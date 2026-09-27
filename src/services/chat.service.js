@@ -733,6 +733,33 @@ async function setMessageTimer(user, conversationId, hours) {
 }
 
 /**
+ * Sets the chat's theme for both people — the look belongs to the
+ * conversation, like the timer. The id is checked by the route's validator.
+ *
+ * Both people's apps are told at once (`conversation:theme`), so the chat
+ * changes on both screens without a reload.
+ */
+async function setChatTheme(user, conversationId, theme) {
+  const conversation = await getConversationOr404(conversationId, user.id);
+  const side = sideOf(conversation, user.id);
+  if (conversation.chatTheme === theme) return conversation;
+
+  const updated = await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { chatTheme: theme },
+    include: CONVERSATION_INCLUDE,
+  });
+  const payload = {
+    conversation_id: conversationId,
+    chat_theme: theme,
+    changed_by: user.id,
+  };
+  emitToUser(side.peerId, 'conversation:theme', payload);
+  emitToUser(user.id, 'conversation:theme', payload);
+  return updated;
+}
+
+/**
  * Deletes the chat for this side only.
  *
  * Nothing is removed from the database. The conversation and its messages
@@ -851,6 +878,7 @@ module.exports = {
   setMuted,
   setPinned,
   setMessageTimer,
+  setChatTheme,
   deleteForMe,
   unreadSummary,
   openOrCreate,
