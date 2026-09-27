@@ -315,6 +315,8 @@ function message(row, viewerId) {
     sent_at: iso(row.createdAt),
     status: row.status,
     envelope,
+    // When it disappears for both people — the app drops it on the dot.
+    expires_at: iso(row.expiresAt),
     attachment: row.attachmentKind
       ? {
           kind: row.attachmentKind,
@@ -339,6 +341,8 @@ function chatThread(conversation, viewerId, { messages = [] } = {}) {
     unread_count: isA ? conversation.unreadForA : conversation.unreadForB,
     is_muted: isA ? conversation.mutedByA : conversation.mutedByB,
     pinned: isA ? conversation.pinnedByA : conversation.pinnedByB,
+    // Disappearing messages: 24 or 168 hours, shared by both people.
+    message_ttl_hours: conversation.messageTtlHours ?? 168,
     is_typing: false, // Live-only; the socket layer owns it.
     last_message_at: iso(conversation.lastMessageAt),
     messages: messages.map((m) => message(m, viewerId)),

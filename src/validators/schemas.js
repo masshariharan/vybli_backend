@@ -278,6 +278,8 @@ const chat = {
 
   mute: z.object({ muted: z.boolean() }),
   pin: z.object({ pinned: z.boolean() }),
+  // Disappearing messages: 24 hours or 7 days.
+  timer: z.object({ hours: z.union([z.literal(24), z.literal(168)]) }),
 };
 
 // ── Calls ───────────────────────────────────────────────────────────────────

@@ -155,8 +155,8 @@ async function conversation(conversationId, { before, limit = 50 } = {}) {
 
   // Past the retention window a message is gone for the panel too, even in
   // the hour before the purge deletes the row.
-  const where = { conversationId, createdAt: { gt: retention.cutoff() } };
-  if (before) where.createdAt.lt = new Date(before);
+  const where = { conversationId, AND: [retention.visibleWhere()] };
+  if (before) where.createdAt = { lt: new Date(before) };
 
   const rows = await prisma.message.findMany({
     where,
@@ -196,7 +196,8 @@ async function searchMessages({ query, userId, conversationId, from, to, skip = 
   const where = {
     text: { contains: query.trim(), mode: 'insensitive' },
     deletedAt: null,
-    createdAt: { gt: retention.cutoff() },
+    AND: [retention.visibleWhere()],
+    createdAt: {},
   };
   if (conversationId) where.conversationId = conversationId;
   if (userId) {

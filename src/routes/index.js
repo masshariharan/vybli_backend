@@ -403,6 +403,12 @@ chat.patch(
   validate({ params: S.chat.conversationParam, body: S.chat.pin }),
   h(chatController.setPinned)
 );
+// Disappearing messages: 24 hours or 7 days, for both people.
+chat.patch(
+  '/:id/timer',
+  validate({ params: S.chat.conversationParam, body: S.chat.timer }),
+  h(chatController.setMessageTimer)
+);
 // Deletes the chat for this side only; the other person keeps theirs.
 chat.delete(
   '/:id',

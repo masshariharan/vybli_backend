@@ -153,6 +153,18 @@ async function setPinned(req, res) {
   );
 }
 
+/** The chat's disappearing-messages timer — see `chatService.setMessageTimer`. */
+async function setMessageTimer(req, res) {
+  const conversation = await chatService.setMessageTimer(req.user, req.params.id, req.body.hours);
+  return ok(
+    res,
+    { conversation_id: conversation.id, message_ttl_hours: conversation.messageTtlHours },
+    req.body.hours === 24
+      ? 'New messages will disappear after 24 hours'
+      : 'New messages will disappear after 7 days'
+  );
+}
+
 /** Deletes the chat for this side only — see `chatService.deleteForMe`. */
 async function deleteConversation(req, res) {
   await chatService.deleteForMe(req.user, req.params.id);
@@ -185,6 +197,7 @@ module.exports = {
   deleteMessage,
   setMuted,
   setPinned,
+  setMessageTimer,
   deleteConversation,
   unreadSummary,
   openConversation,

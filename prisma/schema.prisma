@@ -599,6 +599,13 @@ model Conversation {
   pinnedByA  Boolean @default(false)
   pinnedByB  Boolean @default(false)
 
+  /// Disappearing messages: how long a message sent in this chat lives, in
+  /// hours — 24 or 168 (7 days, the default and the ceiling). Shared by both
+  /// people, like the conversation itself, and either of them can change it.
+  /// A change applies to messages sent after it; each message carries its
+  /// own `expiresAt`, fixed when it was sent.
+  messageTtlHours Int @default(168)
+
   /// When each side last deleted the chat — per side, like pinning. That side
   /// sees nothing from before this moment and does not list the thread until
   /// a newer message arrives. The other side's copy is untouched: a
@@ -669,6 +676,10 @@ model Message {
   deliveredAt DateTime?
   readAt      DateTime?
   deletedAt   DateTime?
+  /// When this message is deleted for both people — its conversation's
+  /// timer at the moment it was sent. Null only on messages from before
+  /// timers existed, which age out at the 7-day ceiling instead.
+  expiresAt   DateTime?
   createdAt   DateTime  @default(now())
 
   // A message's *conversation* going away still takes it with it — that is
@@ -685,8 +696,9 @@ model Message {
   // Paging a thread is always "newest first within this conversation".
   @@index([conversationId, createdAt])
   @@index([senderId])
-  // The hourly retention purge deletes by age across every conversation.
+  // The retention purge deletes by age and by expiry across every conversation.
   @@index([createdAt])
+  @@index([expiresAt])
   @@map("messages")
 }
 

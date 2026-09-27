@@ -17,6 +17,9 @@ const {
   post,
   createAccount,
   withPrisma,
+  patch,
+  online,
+  nextEvent,
   cleanup,
   summary,
   fail,
@@ -99,6 +102,62 @@ async function run() {
 
   const again = await retention.purgeExpiredMessages();
   check('running it again deletes nothing more', again.messages === 0, again);
+
+  section('The per-chat timer');
+
+  const fresh = await get(`/conversations/${conversationId}`, earner.token);
+  check('a chat starts at 7 days', fresh.data?.thread?.message_ttl_hours === 168, fresh.data?.thread);
+
+  const bad = await patch(`/conversations/${conversationId}/timer`, earner.token, { hours: 1 });
+  check('only 24 hours or 7 days can be chosen', bad.status === 422, bad);
+
+  const payerSocket = await online(payer);
+  const told = nextEvent(payerSocket, 'conversation:timer');
+  const set = await patch(`/conversations/${conversationId}/timer`, earner.token, { hours: 24 });
+  check('either person can set it to 24 hours', set.success && set.data?.message_ttl_hours === 24, set);
+  const event = await told;
+  check(
+    'and the other person’s app is told at once',
+    event?.conversation_id === conversationId && event?.message_ttl_hours === 24,
+    event
+  );
+  payerSocket.close();
+
+  const before24 = Date.now();
+  const sent = await post(`/conversations/${conversationId}/messages`, payer.token, {
+    text: 'gone tomorrow',
+  });
+  const expiresAt = Date.parse(sent.data?.message?.expires_at ?? '');
+  check(
+    'a message sent now expires in 24 hours',
+    Math.abs(expiresAt - (before24 + DAY)) < 60_000,
+    sent.data?.message?.expires_at
+  );
+  const edgeRow = await withPrisma((prisma) => prisma.message.findUnique({ where: { id: edgeId } }));
+  check(
+    'one sent before the change keeps the expiry it was sent with',
+    edgeRow && (edgeRow.expiresAt === null || edgeRow.expiresAt.getTime() > Date.now() + DAY),
+    edgeRow?.expiresAt
+  );
+
+  // A day passes, for this message only.
+  const shortId = sent.data?.message?.id;
+  await withPrisma((prisma) =>
+    prisma.message.update({
+      where: { id: shortId },
+      data: {
+        createdAt: new Date(Date.now() - 25 * 3_600_000),
+        expiresAt: new Date(Date.now() - 3_600_000),
+      },
+    })
+  );
+  const after = await get(`/conversations/${conversationId}`, earner.token);
+  const visible = after.data?.thread?.messages?.map((m) => m.id) ?? [];
+  check('past its 24 hours it is no longer shown', !visible.includes(shortId), visible);
+  const purged = await retention.purgeExpiredMessages();
+  const gone = await withPrisma((prisma) => prisma.message.findUnique({ where: { id: shortId } }));
+  check('and the purge deletes it', purged.messages >= 1 && gone === null, purged);
+  check('while the 7-day messages stay', visible.includes(edgeId) && visible.includes(newId), visible);
 }
 
 run()

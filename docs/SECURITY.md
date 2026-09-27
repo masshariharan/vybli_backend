@@ -92,6 +92,15 @@ table.
 5. Optionally, after that, blank the old plaintext rows. See the `text`
    column on `messages` where `envelope IS NULL`.
 
+## Disappearing messages: 24 hours or 7 days
+
+Each chat has a timer, **7 days by default**, that either person can switch
+to **24 hours** from the chat menu → Disappearing messages
+(`PATCH /conversations/:id/timer`). Both apps are told at once
+(`conversation:timer`). Each message stores its own `expiresAt` when it's
+sent, so a change applies to new messages only: messages already sent keep
+their expiry. Nothing ever outlives the 7-day ceiling described below.
+
 ## Messages are deleted after 7 days
 
 Every chat message is deleted for both people once it's older than

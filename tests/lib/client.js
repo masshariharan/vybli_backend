@@ -49,6 +49,7 @@ async function api(method, path, { token, body } = {}) {
 const get = (p, t) => api('GET', p, { token: t });
 const post = (p, t, b) => api('POST', p, { token: t, body: b });
 const put = (p, t, b) => api('PUT', p, { token: t, body: b });
+const patch = (p, t, b) => api('PATCH', p, { token: t, body: b });
 const del = (p, t, b) => api('DELETE', p, { token: t, body: b });
 
 const createdPhones = [];
@@ -168,6 +169,7 @@ module.exports = {
   get,
   post,
   put,
+  patch,
   del,
   createAccount,
   online,

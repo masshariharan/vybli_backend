@@ -4,8 +4,10 @@ const prisma = require('../config/prisma');
 const env = require('../config/env');
 
 /**
- * Chat messages live for `MESSAGE_RETENTION_DAYS` (7 by default) and are then
- * deleted — for everyone, for good.
+ * Disappearing messages. Every message is deleted — for everyone, for good —
+ * when its conversation's timer runs out: 24 hours or 7 days, chosen per chat
+ * (7 days by default), and never later than `MESSAGE_RETENTION_DAYS` (7)
+ * whatever the timer says.
  *
  * **Deleted, not hidden.** The rows go, ciphertext and all, so nothing older
  * than the window exists to be leaked, subpoenaed or decrypted later with a
@@ -31,6 +33,31 @@ function cutoff(now = new Date()) {
   return new Date(now.getTime() - env.chat.retentionDays * 86_400_000);
 }
 
+/** The timers a chat can be set to, in hours: 24 hours or 7 days. */
+const TIMER_CHOICES = [24, 168];
+const DEFAULT_TIMER_HOURS = 168;
+
+/**
+ * When a message sent now, in a chat with [ttlHours], expires. Capped at the
+ * retention ceiling, so no setting can keep a message longer than that.
+ */
+function expiryFor(ttlHours, now = new Date()) {
+  const hours = Math.min(ttlHours ?? DEFAULT_TIMER_HOURS, env.chat.retentionDays * 24);
+  return new Date(now.getTime() + hours * 3_600_000);
+}
+
+/**
+ * The Prisma condition for "still exists as far as anyone may see": inside
+ * the ceiling, and its own timer not run out. Every read of messages ANDs
+ * this in, so nothing is shown in the gap before the purge reaches it.
+ */
+function visibleWhere(now = new Date()) {
+  return {
+    createdAt: { gt: cutoff(now) },
+    OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+  };
+}
+
 /** Rows removed per statement, so a large backlog never holds one long lock. */
 const BATCH = 5_000;
 
@@ -54,7 +81,9 @@ async function purgeExpiredMessages(now = new Date()) {
     const rows = await prisma.$queryRaw`
       DELETE FROM "messages"
       WHERE "id" IN (
-        SELECT "id" FROM "messages" WHERE "createdAt" < ${before} LIMIT ${BATCH}
+        SELECT "id" FROM "messages"
+        WHERE "createdAt" < ${before} OR "expiresAt" <= ${now}
+        LIMIT ${BATCH}
       )
       RETURNING "conversationId"`;
     for (const r of rows) touched.add(r.conversationId);
@@ -84,12 +113,27 @@ async function purgeExpiredMessages(now = new Date()) {
   }
 
   // The "new message" notifications for those messages. From an out-of-date
-  // app their body is the message text itself, so they age out with it.
-  const { count: notifications } = await prisma.notification.deleteMany({
-    where: { kind: 'message', createdAt: { lt: before } },
-  });
+  // app their body is the message text itself, so they age out with it — at
+  // the ceiling, or sooner when the message they announce is already gone.
+  const notifications = await prisma.$executeRaw`
+    DELETE FROM "notifications" n
+    WHERE n."kind" = 'message'
+      AND (
+        n."createdAt" < ${before}
+        OR (
+          n."data" ? 'message_id'
+          AND NOT EXISTS (SELECT 1 FROM "messages" m WHERE m."id" = n."data"->>'message_id')
+        )
+      )`;
 
   return { messages, notifications, conversations: touched.size };
 }
 
-module.exports = { cutoff, purgeExpiredMessages };
+module.exports = {
+  cutoff,
+  expiryFor,
+  visibleWhere,
+  purgeExpiredMessages,
+  TIMER_CHOICES,
+  DEFAULT_TIMER_HOURS,
+};

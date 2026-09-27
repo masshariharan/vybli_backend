@@ -134,7 +134,7 @@ async function listThreads(user, { skip, take }) {
         // Only the latest, for the preview line. Loading a whole thread per
         // row to show one line would be pathological on a long list.
         messages: {
-          where: { createdAt: { gt: retention.cutoff() } },
+          where: retention.visibleWhere(),
           orderBy: { createdAt: 'desc' },
           take: 1,
         },
@@ -198,13 +198,12 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
 
   if (await relationship.isBlockedEitherWay(user.id, side.peerId)) throw errors.blocked();
 
-  const where = { conversationId, deletedAt: null };
-  // Nothing from before this side deleted the chat, and nothing past the
-  // retention window — the hourly purge may not have reached it yet.
-  const expired = retention.cutoff();
-  const createdAt = {
-    gt: side.deletedAt && side.deletedAt > expired ? side.deletedAt : expired,
-  };
+  // Nothing that has disappeared — past its timer or the 7-day ceiling —
+  // even before the purge reaches it.
+  const where = { conversationId, deletedAt: null, AND: [retention.visibleWhere()] };
+  // Nothing from before this side deleted the chat.
+  const createdAt = {};
+  if (side.deletedAt) createdAt.gt = side.deletedAt;
   // Cursor paging: messages arrive while you scroll, and an offset would skip
   // or repeat rows as the list grows underneath.
   if (before) {
@@ -490,13 +489,14 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
         INSERT INTO "messages" (
           "id", "conversationId", "senderId", "clientId", "text", "status",
           "attachmentKind", "attachmentTitle", "attachmentSubtitle",
-          "attachmentUrl", "attachmentDuration", "envelope", "createdAt"
+          "attachmentUrl", "attachmentDuration", "envelope", "expiresAt", "createdAt"
         ) VALUES (
           ${newId()}, ${conversationId}, ${user.id}, ${clientId ?? null}, ${trimmed},
           'sent', ${plainAttachment?.kind ?? null}::"AttachmentKind",
           ${plainAttachment?.title ?? null}, ${plainAttachment?.subtitle ?? null},
           ${plainAttachment?.image_url ?? null}, ${plainAttachment?.duration_label ?? null},
           ${sealed ? JSON.stringify(sealed) : null}::jsonb,
+          ${retention.expiryFor(conversation.messageTtlHours, now)},
           ${now}
         )
         RETURNING *
@@ -698,6 +698,41 @@ async function setPinned(user, conversationId, pinned) {
 }
 
 /**
+ * Sets the chat's disappearing-messages timer — 24 hours or 7 days — for both
+ * people, since the messages belong to both. Either of them may change it.
+ *
+ * Applies to messages sent from now on. Ones already sent keep the expiry
+ * they were sent with: shortening the timer does not suddenly delete a day
+ * of history the other person has not read yet, and lengthening it cannot
+ * bring back what was promised to disappear.
+ *
+ * Both people's apps are told at once (`conversation:timer`), so the notice
+ * at the top of the chat changes on both screens.
+ */
+async function setMessageTimer(user, conversationId, hours) {
+  if (!retention.TIMER_CHOICES.includes(hours)) {
+    throw errors.badRequest('Messages can disappear after 24 hours or 7 days.');
+  }
+  const conversation = await getConversationOr404(conversationId, user.id);
+  const side = sideOf(conversation, user.id);
+  if (conversation.messageTtlHours === hours) return conversation;
+
+  const updated = await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { messageTtlHours: hours },
+    include: CONVERSATION_INCLUDE,
+  });
+  const payload = {
+    conversation_id: conversationId,
+    message_ttl_hours: hours,
+    changed_by: user.id,
+  };
+  emitToUser(side.peerId, 'conversation:timer', payload);
+  emitToUser(user.id, 'conversation:timer', payload);
+  return updated;
+}
+
+/**
  * Deletes the chat for this side only.
  *
  * Nothing is removed from the database. The conversation and its messages
@@ -815,6 +850,7 @@ module.exports = {
   deleteMessage,
   setMuted,
   setPinned,
+  setMessageTimer,
   deleteForMe,
   unreadSummary,
   openOrCreate,
