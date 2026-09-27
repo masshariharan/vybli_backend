@@ -183,7 +183,10 @@ function sendNotification(userId, { title, body, data = {}, collapseKey = null }
     },
     apns: {
       headers: { 'apns-priority': '10' },
-      payload: { aps: { sound: 'default' } },
+      // `content-available` is what lets iOS run the app's background handler
+      // for a visible notification — without it only the banner happens, and
+      // the delivery ack (the sender's second tick) waits for the app to open.
+      payload: { aps: { sound: 'default', 'content-available': 1 } },
     },
   });
 }

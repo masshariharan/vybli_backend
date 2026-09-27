@@ -98,6 +98,20 @@ async function markDelivered(req, res) {
   return ok(res, { delivered: true }, 'Delivered');
 }
 
+/**
+ * The same ack, proven by the push's own receipt instead of a sign-in — what
+ * the phone's background handler sends, because a background refresh would
+ * rotate the session out from under the app still in memory.
+ */
+async function markDeliveredByReceipt(req, res) {
+  await chatService.markDeliveredByReceipt({
+    messageId: req.body.message_id,
+    recipientId: req.body.recipient_id,
+    receipt: req.body.receipt,
+  });
+  return ok(res, { delivered: true }, 'Delivered');
+}
+
 async function markRead(req, res) {
   const conversation = await chatService.markRead(req.user, req.params.id);
   return ok(
@@ -166,6 +180,7 @@ module.exports = {
   sendMessage,
   markRead,
   markDelivered,
+  markDeliveredByReceipt,
   deleteMessage,
   setMuted,
   setPinned,

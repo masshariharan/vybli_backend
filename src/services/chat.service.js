@@ -11,6 +11,7 @@ const push = require('./push.service');
 const activity = require('./activity.service');
 const { emitToUser, emitToAdmin } = require('../sockets/bus');
 const serialize = require('../utils/serialize');
+const deliveryReceipt = require('../utils/deliveryReceipt');
 
 /**
  * One-to-one messaging.
@@ -512,6 +513,21 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
   // (`POST /conversations/messages/delivered`), so the sender's second tick
   // does not wait for the app to be opened. A muted thread gets the same
   // acknowledgement from a silent, data-only push that shows nothing.
+  //
+  // Every one of those pushes carries a delivery receipt, and the phone acks
+  // with that rather than with its sign-in — see `utils/deliveryReceipt` for
+  // why the access token was the wrong thing to lean on in the background.
+  const ack = {
+    message_id: message.id,
+    recipient_id: side.peerId,
+    receipt: deliveryReceipt.sign(side.peerId, message.id),
+  };
+  const silent = () =>
+    push
+      .sendSilent(side.peerId, { kind: 'message_silent', conversation_id: conversationId, ...ack })
+      .catch((err) =>
+        console.error(`[chat] silent push failed for message ${message.id}`, err)
+      );
   const muted = side.isA ? updatedConversation.mutedByB : updatedConversation.mutedByA;
   if (!muted) {
     notificationService
@@ -521,20 +537,18 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
         title: user.profile?.name ?? 'New message',
         body: trimmed || attachment?.title || 'Sent an attachment',
         data: { conversation_id: conversationId, user_id: user.id, message_id: message.id },
+        // The push only — the receipt is not stored on the notification row.
+        pushData: ack,
       })
+      // Null means message notifications are switched off. The phone still
+      // received the message, so it still gets a silent push to ack it with;
+      // without one the sender's tick stayed single until the app was opened.
+      .then((row) => (row ? null : silent()))
       .catch((err) =>
         console.error(`[chat] notify failed for message ${message.id}`, err)
       );
   } else {
-    push
-      .sendSilent(side.peerId, {
-        kind: 'message_silent',
-        conversation_id: conversationId,
-        message_id: message.id,
-      })
-      .catch((err) =>
-        console.error(`[chat] silent push failed for message ${message.id}`, err)
-      );
+    silent();
   }
 
   // The sender's side only. A "message received" row on the recipient would
@@ -715,11 +729,26 @@ async function openOrCreate(user, otherId) {
   return conversation;
 }
 
+/**
+ * The delivery ack from a push, proven by the receipt the push carried rather
+ * than by a session (see `utils/deliveryReceipt`). A receipt that does not
+ * match is refused outright — it is either forged or for another message.
+ */
+async function markDeliveredByReceipt({ messageId, recipientId, receipt }) {
+  if (!deliveryReceipt.verify(recipientId, messageId, receipt)) {
+    throw errors.forbidden('That delivery receipt is not valid.');
+  }
+  // `markDelivered` needs only the id: it already restricts the update to
+  // other people's messages in this user's own conversations.
+  await markDelivered({ id: recipientId }, { messageIds: [messageId] });
+}
+
 module.exports = {
   listThreads,
   getThread,
   markRead,
   markDelivered,
+  markDeliveredByReceipt,
   sendMessage,
   deleteMessage,
   setMuted,

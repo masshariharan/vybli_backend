@@ -47,7 +47,7 @@ async function wants(userId, kind) {
  * Returns null when the user has that kind switched off — callers do not
  * branch on it, they just call.
  */
-async function notify({ userId, kind, title, body = '', data = null }) {
+async function notify({ userId, kind, title, body = '', data = null, pushData = null }) {
   if (!(await wants(userId, kind))) return null;
 
   const row = await prisma.notification.create({
@@ -79,7 +79,7 @@ async function notify({ userId, kind, title, body = '', data = null }) {
     .sendNotification(userId, {
       title,
       body,
-      data: { kind, notification_id: row.id, ...(data ?? {}) },
+      data: { kind, notification_id: row.id, ...(data ?? {}), ...(pushData ?? {}) },
       // One row per conversation rather than one per message. Twenty from the
       // same person replace each other; twenty from twenty people do not.
       collapseKey: data?.conversation_id ? `chat_${data.conversation_id}` : null,

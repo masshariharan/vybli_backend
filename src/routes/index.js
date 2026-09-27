@@ -333,6 +333,17 @@ router.use('/favorites', favorites);
 // ── Chat ────────────────────────────────────────────────────────────────────
 
 const chat = express.Router();
+
+// A delivery ack from a push, proven by the receipt the push carried — no
+// sign-in, deliberately: it is sent from the phone's background handler, where
+// refreshing an expired access token would rotate the session out from under
+// the app still in memory. Declared before `authenticate` for that reason.
+chat.post(
+  '/messages/delivered/receipt',
+  validate({ body: S.chat.deliveredReceipt }),
+  h(chatController.markDeliveredByReceipt)
+);
+
 chat.use(authenticate, requireOnboarded);
 
 chat.get('/', validate({ query: S.chat.list }), h(chatController.listThreads));

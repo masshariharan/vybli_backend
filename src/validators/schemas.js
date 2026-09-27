@@ -222,6 +222,12 @@ const chat = {
     message_ids: z.array(z.string().trim().min(1).max(64)).min(1).max(100),
   }),
 
+  deliveredReceipt: z.object({
+    message_id: z.string().trim().min(1).max(64),
+    recipient_id: z.string().trim().min(1).max(64),
+    receipt: z.string().trim().min(1).max(128),
+  }),
+
   history: pagination.extend({
     // Cursor paging for a thread: messages arrive while you scroll, and
     // offsets shift under you.
