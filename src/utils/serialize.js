@@ -292,6 +292,9 @@ function avatar(entry) {
 
 // ── Messaging ───────────────────────────────────────────────────────────────
 
+/** What an out-of-date app shows for a message it cannot decrypt. */
+const LEGACY_ENCRYPTED_TEXT = '🔒 Encrypted message. Update Vybli to read it.';
+
 /**
  * One message. `author` is relative to whoever is asking — the client renders
  * "me" on the right and "them" on the left, and has no user id to compare
@@ -299,12 +302,19 @@ function avatar(entry) {
  */
 function message(row, viewerId) {
   if (!row) return null;
+  const envelope = row.envelope ?? null;
   return {
     id: row.id,
-    text: row.text ?? '',
+    // An encrypted message has no text here, only `envelope`, which the app
+    // decrypts. The sentence stands in for an app from before encryption,
+    // which reads `text` and knows nothing else — without it that app draws
+    // an empty bubble and nobody knows why.
+    text: envelope ? LEGACY_ENCRYPTED_TEXT : row.text ?? '',
     author: row.senderId === viewerId ? 'me' : 'them',
+    sender_id: row.senderId,
     sent_at: iso(row.createdAt),
     status: row.status,
+    envelope,
     attachment: row.attachmentKind
       ? {
           kind: row.attachmentKind,

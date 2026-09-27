@@ -8,6 +8,7 @@ const { createApp } = require('./app');
 const { attachSockets } = require('./sockets');
 const profileService = require('./services/profile.service');
 const callService = require('./services/call.service');
+const otpService = require('./services/otp.service');
 
 /**
  * Process entry point.
@@ -45,6 +46,19 @@ async function start() {
   // `ringing` or `connected` self-heals on its own rather than reading as
   // "busy" to whoever tries to reach that person next, indefinitely.
   callService.scheduleSweeps();
+
+  // OTP codes are phone numbers with a timestamp — personal data that is
+  // useless the moment a code expires. `purgeExpired` has always existed and
+  // nothing ever called it, so every number that ever asked for a code sat in
+  // `otp_codes` for good. Hourly; anything a day old goes (the daily
+  // wrong-guess cap only looks back that far).
+  const purge = () =>
+    otpService
+      .purgeExpired(24)
+      .then((n) => n > 0 && console.info(`[otp] purged ${n} old codes`))
+      .catch((err) => console.error('[otp] purge failed', err));
+  purge();
+  setInterval(purge, 3600_000).unref();
 
   // No host argument, so this binds every interface — loopback and the LAN
   // alike. That is what lets a phone on the same Wi-Fi reach it.

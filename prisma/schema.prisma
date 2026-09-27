@@ -15,7 +15,7 @@
 // earnings figures.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   /// Loads `include`d relations with SQL joins — one query per read — instead
   /// of one query per related table. Without it, looking up a conversation
   /// with both people and their profiles and privacy settings was seven
@@ -257,7 +257,8 @@ model User {
   activities        UserActivity[] @relation("ActivityUser")
   relatedActivities UserActivity[] @relation("ActivityRelatedUser")
 
-  devices DeviceToken[]
+  devices     DeviceToken[]
+  e2eeDevices E2eeDevice[]
 
   // Phone is unique only among live accounts — a deleted account keeps its row
   // (history references it) but frees the number, which a plain @unique cannot
@@ -408,6 +409,50 @@ model DeviceToken {
   @@map("device_tokens")
 }
 
+/// One app install's end-to-end encryption identity: the **public** half of an
+/// X25519 key pair whose private half never leaves that phone's secure
+/// storage.
+///
+/// This table is a directory, nothing more. The server cannot read a message
+/// with anything in it — it only tells a sender which devices to encrypt for,
+/// and a recipient which key a sender's device used. That is also its one
+/// power, and the reason the client pins what it sees here (trust on first
+/// use) and warns when a peer's keys change: a server that swapped a key in
+/// could read what was encrypted to it.
+///
+/// Not a [DeviceToken] and not a [UserSession], for the same reason those two
+/// are not each other: an FCM token rotates on its own schedule and a session
+/// rotates on every refresh, while this has to stay put for as long as the
+/// phone keeps its key — every message ever encrypted to it names it.
+///
+/// Revoked, never deleted. A message encrypted by a device that has since
+/// signed out still has to be decryptable by the people who received it, and
+/// that needs the sender device's public key.
+model E2eeDevice {
+  id        String @id @default(cuid())
+  userId    String
+  /// Chosen by the phone, random, stable for the life of its key.
+  deviceId  String
+  /// Base64 of the 32-byte X25519 public key.
+  publicKey String
+  platform  String @default("android")
+
+  createdAt  DateTime  @default(now())
+  /// Bumped every time the app registers on arrival at signed-in. A device
+  /// that has not been seen for longer than a refresh token lives cannot
+  /// still be signed in, and is left out of the set a sender encrypts for.
+  lastSeenAt DateTime  @default(now())
+  /// Signed out, or its account signed out everywhere. Nothing is encrypted
+  /// to a revoked device.
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId, revokedAt])
+  @@map("e2ee_devices")
+}
+
 /// Codes are stored hashed — a leaked table must not let anyone sign in as
 /// somebody else, and an OTP is a password for the duration of its life.
 model OtpCode {
@@ -496,7 +541,18 @@ model Report {
   reason     String
   details    String?
   status     ReportStatus @default(open)
-  createdAt  DateTime     @default(now())
+
+  /// The messages the reporter chose to hand over with the report.
+  ///
+  /// Chats are end-to-end encrypted, so nobody but the two people in one can
+  /// read it — including whoever reviews this report. What the reporter's
+  /// phone decrypted and attached is therefore the only copy a moderator will
+  /// ever see: `[{ message_id, from, text, sent_at }]`, `from` being
+  /// `reporter` or `reported`. Their own copy, of their own conversation,
+  /// given deliberately — the same bargain as a screenshot, with the ids
+  /// alongside so it can be matched to the stored (still unreadable) rows.
+  evidence  Json?
+  createdAt DateTime @default(now())
 
   /// What was decided, and the administrator's working notes. Kept apart:
   /// the resolution is the outcome, the notes are the reasoning.
@@ -583,6 +639,20 @@ model Message {
   attachmentUrl      String?
   attachmentDuration String?
 
+  /// The end-to-end encrypted body, when the message has one — which every
+  /// message from a current app does. `text` and the attachment columns are
+  /// then empty: the server never had them.
+  ///
+  /// `{ v, sender_device, epk, iv, ct, keys: [{ device, iv, wk }] }`, every
+  /// value base64. `ct` is the message, sealed with a key only the devices
+  /// listed in `keys` can unwrap. See `src/utils/e2ee.js` for the exact
+  /// format and what the server checks about it (shape only — it cannot
+  /// check anything else).
+  ///
+  /// Null on messages sent before encryption existed, and on anything an
+  /// out-of-date app sends while `E2EE_REQUIRED` is off.
+  envelope Json?
+
   /// The sender's own id for this message, for exactly-once delivery.
   ///
   /// A send that times out has told the client nothing about whether it
@@ -629,14 +699,14 @@ model Call {
 
   isRandom Boolean @default(false)
 
-  startedAt   DateTime  @default(now())
+  startedAt       DateTime  @default(now())
   /// Set the moment the callee's device actually receives the live ring —
   /// not the same as `startedAt`, which only means the row was created. A
   /// callee who was offline when the call started gets this stamped later,
   /// if they come online before the ring times out; see `call.service.js`.
   ringDeliveredAt DateTime?
-  connectedAt DateTime?
-  endedAt     DateTime?
+  connectedAt     DateTime?
+  endedAt         DateTime?
 
   /// Derived from `connectedAt`..`endedAt` on the server. Never accepted from
   /// the client — it decides what the caller pays and what the earner earns.

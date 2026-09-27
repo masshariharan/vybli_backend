@@ -7,6 +7,7 @@ const firebase = require('./firebase.service');
 const activity = require('./activity.service');
 const relationship = require('./relationship.service');
 const favoriteService = require('./favorite.service');
+const e2eeService = require('./e2ee.service');
 const { emitToAdmin, emitToUser, emitToUsers, disconnectUser } = require('../sockets/bus');
 const {
   signAccessToken,
@@ -309,6 +310,9 @@ async function refresh({ refreshToken, device, ip }) {
 
   // A valid signature over a revoked session means the token leaked and was
   // already used, or the user logged out. Either way it is not a way in.
+  if (session?.revokedAt && session.refreshTokenHash === hashToken(refreshToken)) {
+    await revokeOnReuse(session);
+  }
   if (!session || session.revokedAt || session.expiresAt < new Date()) {
     throw errors.invalidToken('Please sign in again.');
   }
@@ -329,6 +333,46 @@ async function refresh({ refreshToken, device, ip }) {
 
   const tokens = await issueSession(user, { device, ip });
   return { ...tokens, user };
+}
+
+/**
+ * A refresh token presented again after it was already exchanged.
+ *
+ * Every refresh rotates the token, so a used one coming back means two
+ * parties hold it — the app and whoever copied it — and there is no telling
+ * which is which. The safe answer ends *every* session for the account: the
+ * real owner signs in again, the copy stops working. (Without this, the
+ * thief who refreshed first kept a valid session and the owner was the one
+ * signed out.)
+ *
+ * Not for a token revoked a few seconds ago: two refreshes the app itself
+ * raced — a resume and a socket reconnect at the same instant — present the
+ * same token twice legitimately, and punishing that would sign real people
+ * out of every device.
+ */
+const REUSE_GRACE_MS = 30_000;
+
+async function revokeOnReuse(session) {
+  if (Date.now() - session.revokedAt.getTime() < REUSE_GRACE_MS) return;
+  // Only a session retired by rotation — one this function would otherwise
+  // let a thief keep refreshing past. A logout's revoked token is simply dead.
+  const { count } = await prisma.userSession.updateMany({
+    where: { userId: session.userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  if (count > 0) {
+    console.warn(`[auth] refresh token reused for ${session.userId}; revoked ${count} session(s)`);
+    activity.record({
+      userId: session.userId,
+      type: 'logout',
+      description: 'Signed out everywhere: a sign-in token was used twice',
+      metadata: { reason: 'refresh_token_reuse', revoked: count },
+    });
+    emitToUser(session.userId, 'session:revoked', {
+      reason: 'For your security, please sign in again.',
+      at: new Date().toISOString(),
+    });
+  }
 }
 
 /** Ends one session, or every session for the user. */
@@ -357,6 +401,12 @@ async function logout({ userId, refreshToken, allDevices = false, deviceToken = 
   }
 
   if (allDevices) {
+    // Every phone stops being a reader of new encrypted messages at the same
+    // moment it stops being signed in. Each one re-registers its key the next
+    // time somebody signs in on it.
+    await e2eeService
+      .revokeAllFor(userId)
+      .catch((err) => console.error('[e2ee] could not revoke devices on logout', err));
     const { count } = await prisma.userSession.updateMany({
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
@@ -434,6 +484,14 @@ async function deleteAccount({ user, reason }) {
     // account's alone, and a deleted account has nothing left to be notified
     // about. Left behind, they were personal data kept for nothing.
     prisma.deviceToken.deleteMany({ where: { userId: user.id } }),
+    // Encryption keys are revoked, not deleted: nothing new is encrypted to
+    // this account's phones, but the messages it already sent still name
+    // these public keys, and the people it wrote to need them to go on
+    // reading their own history.
+    prisma.e2eeDevice.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: now },
+    }),
 
     // Money. `Wallet` cascades its own ledger (`WalletTransaction`) with it.
     prisma.wallet.deleteMany({ where: { userId: user.id } }),

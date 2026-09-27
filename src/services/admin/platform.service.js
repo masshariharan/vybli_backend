@@ -385,6 +385,9 @@ async function reportFeed({ status, userId, from, to, search, skip = 0, take = 2
       reported: summarise(r.reported),
       reason: r.reason,
       details: r.details,
+      // What the reporter's phone decrypted and attached — the only readable
+      // copy of an encrypted chat that exists anywhere on the server.
+      evidence: r.evidence ?? [],
       status: r.status,
       resolution: r.resolution,
       review_notes: r.reviewNotes,

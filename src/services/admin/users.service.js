@@ -1,6 +1,7 @@
 'use strict';
 
 const prisma = require('../../config/prisma');
+const fieldCrypto = require('../../utils/fieldCrypto');
 const { errors } = require('../../utils/errors');
 const avatarCatalog = require('../../config/avatarCatalog');
 const activity = require('../activity.service');
@@ -79,7 +80,8 @@ function summarise(user) {
           balance: Number(user.wallet.balance),
           available_balance: Number(user.wallet.availableBalance),
           total_earnings: Number(user.wallet.totalEarnings),
-          payout_upi_id: user.wallet.payoutUpiId ?? null,
+          // The administrator is the one who pays it, so the full ID.
+          payout_upi_id: fieldCrypto.open(user.wallet.payoutUpiId) ?? null,
         }
       : null,
   };
@@ -769,6 +771,7 @@ async function reports(userId, { skip = 0, take = 25 } = {}) {
     counterpart: summarise(counterpart),
     reason: r.reason,
     details: r.details,
+    evidence: r.evidence ?? [],
     status: r.status,
     resolution: r.resolution,
     review_notes: r.reviewNotes,

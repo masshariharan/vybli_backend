@@ -112,7 +112,20 @@ const STEP_LABELS = {
   ONBOARDING_COMPLETED: 'finished',
 };
 
-const setGender = (user, gender) => applyStep(user, { gender }, 'GENDER_COMPLETED');
+/**
+ * Gender decides the role — who earns and who pays — so it is fixed once
+ * sign-up is finished. These routes stay open after onboarding (a resumed
+ * sign-up re-sends earlier steps), and re-sending gender and then location
+ * used to re-derive `isEarner` on a finished, possibly verified account:
+ * a paying account could make itself an earner, verification and all.
+ */
+async function setGender(user, gender) {
+  const profile = user.profile;
+  if (profile?.onboardingStatus === 'ONBOARDING_COMPLETED' && profile.gender !== gender) {
+    throw errors.conflict('Gender cannot be changed after sign-up.', 'GENDER_LOCKED');
+  }
+  return applyStep(user, { gender }, 'GENDER_COMPLETED');
+}
 const setAge = (user, age) => applyStep(user, { age }, 'AGE_COMPLETED');
 
 /**
@@ -180,6 +193,8 @@ async function setLocation(user, cityId) {
   // knows about rather than a fault. Shape is enforced by
   // `S.onboarding.location`.
   const afterLocation = await applyStep(user, { cityId }, 'LOCATION_COMPLETED');
+  // A finished account keeps the role it signed up with; see [setGender].
+  if (user.profile?.onboardingStatus === 'ONBOARDING_COMPLETED') return afterLocation;
 
   const goal = afterLocation.user.profile.gender === 'female' ? 'earnMoney' : 'makeFriends';
   return applyStep(afterLocation.user, { goal, isEarner: goal === 'earnMoney' }, 'MODE_SELECTED');

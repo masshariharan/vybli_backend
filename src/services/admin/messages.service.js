@@ -1,5 +1,6 @@
 'use strict';
 
+const { Prisma } = require('@prisma/client');
 const prisma = require('../../config/prisma');
 const { errors } = require('../../utils/errors');
 const avatarCatalog = require('../../config/avatarCatalog');
@@ -23,6 +24,13 @@ const { summarise, PROFILE_INCLUDE } = require('./users.service');
  *
  * Nothing on this page is reachable by a mobile client. The user-facing chat
  * API only ever returns conversations the requester is a participant in.
+ *
+ * **Messages from current apps are end-to-end encrypted, and this page cannot
+ * read them.** It lists who wrote to whom and when, and marks the content
+ * `encrypted`. Only messages from before encryption (or from an out-of-date
+ * app while `E2EE_REQUIRED` is off) still have text, and message search only
+ * ever finds those. What a moderator reads in a report is the evidence the
+ * reporter's own phone decrypted and attached to it.
  */
 
 const CONVERSATION_INCLUDE = {
@@ -68,7 +76,12 @@ function serializeMessage(m) {
     // a two-person thread makes it derivable and storing it would be a second
     // place for it to be wrong.
     recipient_id: m.recipientId ?? null,
-    text: m.deletedAt ? null : m.text,
+    // End-to-end encrypted: there is no text to show, here or anywhere on the
+    // server, and the panel says so rather than showing an empty bubble. The
+    // only readable copy a moderator gets is what a reporter chose to attach
+    // to a report (`Report.evidence`).
+    encrypted: Boolean(m.envelope),
+    text: m.deletedAt || m.envelope ? null : m.text,
     attachment:
       m.deletedAt || !m.attachmentKind
         ? null
@@ -223,7 +236,7 @@ async function stats() {
   const month = new Date(today);
   month.setDate(month.getDate() - 30);
 
-  const [conversations, active, messages, todayCount, weekCount, monthCount, deleted] =
+  const [conversations, active, messages, todayCount, weekCount, monthCount, deleted, encrypted] =
     await Promise.all([
       prisma.conversation.count(),
       prisma.conversation.count({ where: { lastMessageAt: { gte: week } } }),
@@ -232,6 +245,7 @@ async function stats() {
       prisma.message.count({ where: { createdAt: { gte: week } } }),
       prisma.message.count({ where: { createdAt: { gte: month } } }),
       prisma.message.count({ where: { deletedAt: { not: null } } }),
+      prisma.message.count({ where: { envelope: { not: Prisma.DbNull } } }),
     ]);
 
   return {
@@ -242,6 +256,7 @@ async function stats() {
     messages_this_week: weekCount,
     messages_this_month: monthCount,
     deleted_messages: deleted,
+    encrypted_messages: encrypted,
   };
 }
 

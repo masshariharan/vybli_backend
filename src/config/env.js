@@ -79,6 +79,8 @@ const env = {
     expirySeconds: num('OTP_EXPIRY', 300),
     length: num('OTP_LENGTH', 6),
     maxAttempts: num('OTP_MAX_ATTEMPTS', 5),
+    // Wrong guesses allowed per number per day, across every code sent to it.
+    maxDailyFailures: num('OTP_MAX_DAILY_FAILURES', 15),
     resendCooldownSeconds: num('OTP_RESEND_COOLDOWN', 30),
     // Returns the code in the API response instead of sending it, so the app
     // (and the e2e test suite) is testable without an SMS gateway. A plain
@@ -99,6 +101,38 @@ const env = {
     windowMs: num('RATE_LIMIT_WINDOW_MS', 60_000),
     max: num('RATE_LIMIT_MAX', 120),
   },
+
+  /**
+   * End-to-end encrypted chat.
+   *
+   * `required` refuses a message that arrives without an encrypted envelope.
+   * Only an app from before encryption sends one, so this is the switch that
+   * retires those builds: off while they are still in people's hands (their
+   * messages are stored readable, exactly as before), on once the update has
+   * shipped — after which the server never receives a readable message again.
+   * Current apps encrypt either way; this only decides what happens to old
+   * ones.
+   */
+  e2ee: {
+    required: bool('E2EE_REQUIRED', false),
+  },
+
+  /**
+   * The key for columns encrypted at rest (`utils/fieldCrypto`) — base64 of
+   * 32 random bytes, `openssl rand -base64 32`. Optional: without it those
+   * columns are stored readable, as they always were, and the boot log says
+   * so. Losing it makes what it encrypted unreadable, so it is kept like the
+   * JWT secrets, never beside a database backup.
+   */
+  dataEncryptionKey: (() => {
+    const raw = process.env.DATA_ENCRYPTION_KEY;
+    if (!raw) return null;
+    const bytes = Buffer.from(raw, 'base64');
+    if (bytes.length !== 32) {
+      throw new Error('DATA_ENCRYPTION_KEY must be base64 of exactly 32 bytes.');
+    }
+    return bytes;
+  })(),
 
   economy: {
     /// The earner's cut of what a caller actually spent on a call — the
@@ -414,6 +448,12 @@ if (!env.sms.configured && !env.firebase.configured) {
     'No way for anyone to sign in. Configure either Firebase ' +
       '(FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) ' +
       'or an SMS provider (MSG91_AUTH_KEY, MSG91_TEMPLATE_ID).'
+  );
+}
+if (!env.dataEncryptionKey && !isTest) {
+  console.warn(
+    '[boot] DATA_ENCRYPTION_KEY is not set — payout UPI IDs are stored unencrypted. ' +
+      'Set it to `openssl rand -base64 32`.'
   );
 }
 if (env.admin.password && !env.admin.passwordHash) {

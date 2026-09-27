@@ -18,6 +18,7 @@ const {
   cityId,
   pagination,
 } = require('./common');
+const { DEVICE_ID: E2EE_DEVICE_ID, isPublicKey } = require('../utils/e2ee');
 
 /**
  * Every request schema, grouped by the flow it belongs to.
@@ -213,6 +214,23 @@ const users = {
 
 // ── Messaging ───────────────────────────────────────────────────────────────
 
+// ── End-to-end encryption ───────────────────────────────────────────────────
+
+const e2ee = {
+  deviceParam: z.object({ deviceId: z.string().regex(E2EE_DEVICE_ID) }),
+  register: z.object({
+    // Base64 of a 32-byte X25519 public key — the only key this server holds.
+    public_key: z
+      .string()
+      .length(44)
+      .refine(isPublicKey, 'Must be a base64 X25519 public key'),
+    platform: z.enum(['android', 'ios']).default('android'),
+  }),
+  lookup: z.object({
+    user_ids: z.array(z.string().trim().min(1).max(64)).min(1).max(100),
+  }),
+};
+
 const chat = {
   conversationParam: z.object({ id: cuid }),
 
@@ -248,8 +266,12 @@ const chat = {
         .optional(),
       // Lets the client reconcile its optimistic bubble with the saved row.
       client_id: z.string().trim().max(64).optional(),
+      // The end-to-end encrypted message. Its shape is checked by
+      // `utils/e2ee.parseEnvelope` inside the service, which the socket path
+      // reaches too; here it only has to be an object.
+      envelope: z.record(z.unknown()).optional(),
     })
-    .refine((d) => d.text.trim().length > 0 || d.attachment, {
+    .refine((d) => d.envelope || d.text.trim().length > 0 || d.attachment, {
       message: 'Write a message or attach something',
       path: ['text'],
     }),
@@ -327,6 +349,18 @@ const moderation = {
     // Reporting and blocking almost always go together, so the client can ask
     // for both in one call.
     also_block: z.boolean().default(false),
+    // Messages from the chat with this person, decrypted by the reporter's
+    // own phone — chats are end-to-end encrypted, so this is the only way a
+    // moderator can ever read them. See `Report.evidence`.
+    evidence: z
+      .array(
+        z.object({
+          message_id: z.string().trim().min(1).max(64),
+          text: z.string().max(4000),
+        })
+      )
+      .max(50)
+      .optional(),
   }),
 };
 
@@ -375,6 +409,7 @@ module.exports = {
   discovery,
   users,
   chat,
+  e2ee,
   calls,
   wallet,
   moderation,

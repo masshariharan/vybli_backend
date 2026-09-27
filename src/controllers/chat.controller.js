@@ -76,6 +76,7 @@ async function sendMessage(req, res) {
     text: req.body.text,
     attachment: req.body.attachment,
     clientId: req.body.client_id,
+    envelope: req.body.envelope,
   });
 
   return created(

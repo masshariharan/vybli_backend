@@ -108,12 +108,18 @@ async function listBlocked(user, { skip, take }) {
  * Re-reporting the same person is allowed: a second incident is a second
  * report, and deduplicating them would hide a pattern from whoever reviews.
  */
-async function report(user, { userId: targetId, reason, details, alsoBlock = false }) {
+async function report(user, { userId: targetId, reason, details, alsoBlock = false, evidence }) {
   if (user.id === targetId) throw errors.badRequest('You cannot report yourself');
   await relationship.loadCounterpart(targetId);
 
   const created = await prisma.report.create({
-    data: { reporterId: user.id, reportedId: targetId, reason, details: details ?? null },
+    data: {
+      reporterId: user.id,
+      reportedId: targetId,
+      reason,
+      details: details ?? null,
+      evidence: (await checkedEvidence(user.id, targetId, evidence)) ?? undefined,
+    },
   });
 
   let blocked = false;
@@ -144,6 +150,47 @@ async function report(user, { userId: targetId, reason, details, alsoBlock = fal
   });
 
   return { report: created, blocked };
+}
+
+/**
+ * The messages a reporter attached, checked against what the server does
+ * know about them.
+ *
+ * The text is the reporter's word — the stored rows are ciphertext, so
+ * nothing here can confirm what they said. Everything else is not taken on
+ * trust: each id must be a real message in a conversation between exactly
+ * these two people, and who wrote it and when come from the stored row, not
+ * from the client. An id that fails is dropped, so a report cannot put words
+ * in the mouth of someone the reporter never spoke to, or pass their own
+ * message off as the other person's.
+ */
+async function checkedEvidence(reporterId, reportedId, evidence) {
+  if (!evidence?.length) return null;
+  const [userAId, userBId] = relationship.orderPair(reporterId, reportedId);
+  const rows = await prisma.message.findMany({
+    where: {
+      id: { in: evidence.map((e) => e.message_id) },
+      conversation: { userAId, userBId },
+    },
+    select: { id: true, senderId: true, createdAt: true, envelope: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const checked = evidence
+    .filter((e) => byId.has(e.message_id))
+    .map((e) => {
+      const row = byId.get(e.message_id);
+      return {
+        message_id: row.id,
+        from: row.senderId === reporterId ? 'reporter' : 'reported',
+        text: e.text,
+        sent_at: row.createdAt.toISOString(),
+        // Said so a reviewer never mistakes it for something the server read.
+        supplied_by_reporter: true,
+        was_encrypted: Boolean(row.envelope),
+      };
+    })
+    .sort((a, b) => a.sent_at.localeCompare(b.sent_at));
+  return checked.length ? checked : null;
 }
 
 module.exports = { block, unblock, listBlocked, report };

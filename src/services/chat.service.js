@@ -12,6 +12,14 @@ const activity = require('./activity.service');
 const { emitToUser, emitToAdmin } = require('../sockets/bus');
 const serialize = require('../utils/serialize');
 const deliveryReceipt = require('../utils/deliveryReceipt');
+const e2ee = require('../utils/e2ee');
+const e2eeService = require('./e2ee.service');
+const env = require('../config/env');
+
+/** What a notification says about an encrypted message — all the server knows. */
+const ENCRYPTED_PREVIEW = 'Sent you a message';
+/** The plaintext cap, enforced here so the socket path cannot skip it. */
+const MAX_TEXT = 4000;
 
 /**
  * One-to-one messaging.
@@ -403,11 +411,27 @@ function isUniqueViolation(error) {
  * both people, which is everything the guard needs), then the block check and
  * the retry lookup side by side, then the write.
  */
-async function sendMessage(user, conversationId, { text = '', attachment, clientId }) {
-  const trimmed = (text ?? '').trim();
-  if (!trimmed && !attachment) {
+async function sendMessage(user, conversationId, { text = '', attachment, clientId, envelope }) {
+  // End-to-end encrypted, which every current app is: the message is the
+  // envelope, and there is no readable text or attachment to store — see
+  // `utils/e2ee`. Whatever plaintext fields rode along are dropped, not kept
+  // beside the ciphertext.
+  //
+  // Checked here rather than only in the route's schema because the socket's
+  // `message:send` reaches this with no schema in front of it.
+  const sealed = envelope != null ? e2ee.parseEnvelope(envelope) : null;
+  if (!sealed && env.e2ee.required) throw errors.e2eeRequired();
+
+  const trimmed = sealed ? '' : (text ?? '').trim();
+  if (!sealed && !trimmed && !attachment) {
     throw errors.badRequest('Write a message or attach something');
   }
+  if (trimmed.length > MAX_TEXT) throw errors.badRequest('That message is too long');
+  // An image URL is fetched by the recipient's phone the moment the bubble
+  // draws, so any URL a sender can put here is a way to learn the
+  // recipient's IP address and when they looked. There are no uploads yet —
+  // nothing legitimate has a URL to send — so it is not stored at all.
+  const plainAttachment = sealed || !attachment ? null : { ...attachment, image_url: undefined };
 
   const conversation = await getConversationOr404(conversationId, user.id);
   const side = sideOf(conversation, user.id);
@@ -432,6 +456,17 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
   ]);
   if (already) return { message: already };
 
+  // Encrypted for exactly the devices that exist right now — or refused with
+  // the list that does, for the app to re-encrypt against. After the retry
+  // lookup on purpose: a retry of a stored message is answered with that
+  // message even if a device has come or gone since.
+  if (sealed) {
+    await e2eeService.assertEnvelopeCoversConversation(sealed, {
+      senderId: user.id,
+      peerId: side.peerId,
+    });
+  }
+
   const now = new Date();
 
   // The insert and the conversation bump in **one statement** — Postgres runs
@@ -447,12 +482,13 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
         INSERT INTO "messages" (
           "id", "conversationId", "senderId", "clientId", "text", "status",
           "attachmentKind", "attachmentTitle", "attachmentSubtitle",
-          "attachmentUrl", "attachmentDuration", "createdAt"
+          "attachmentUrl", "attachmentDuration", "envelope", "createdAt"
         ) VALUES (
           ${newId()}, ${conversationId}, ${user.id}, ${clientId ?? null}, ${trimmed},
-          'sent', ${attachment?.kind ?? null}::"AttachmentKind",
-          ${attachment?.title ?? null}, ${attachment?.subtitle ?? null},
-          ${attachment?.image_url ?? null}, ${attachment?.duration_label ?? null},
+          'sent', ${plainAttachment?.kind ?? null}::"AttachmentKind",
+          ${plainAttachment?.title ?? null}, ${plainAttachment?.subtitle ?? null},
+          ${plainAttachment?.image_url ?? null}, ${plainAttachment?.duration_label ?? null},
+          ${sealed ? JSON.stringify(sealed) : null}::jsonb,
           ${now}
         )
         RETURNING *
@@ -535,7 +571,13 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
         userId: side.peerId,
         kind: 'message',
         title: user.profile?.name ?? 'New message',
-        body: trimmed || attachment?.title || 'Sent an attachment',
+        // The server cannot say what an encrypted message says, and must not
+        // try: this body is stored on the notification row and handed to
+        // FCM, and either would be a readable copy of a message that is
+        // meant to have none.
+        body: sealed
+          ? ENCRYPTED_PREVIEW
+          : trimmed || plainAttachment?.title || 'Sent an attachment',
         data: { conversation_id: conversationId, user_id: user.id, message_id: message.id },
         // The push only — the receipt is not stored on the notification row.
         pushData: ack,
@@ -559,15 +601,15 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
     type: 'message_sent',
     relatedUserId: side.peerId,
     relatedEntityId: message.id,
-    description: attachment
-      ? `Sent ${attachment.kind === 'image' ? 'a photo' : 'an attachment'}`
+    description: plainAttachment
+      ? `Sent ${plainAttachment.kind === 'image' ? 'a photo' : 'an attachment'}`
       : `Sent a message`,
     metadata: {
       conversation_id: conversationId,
-      // Length rather than content: the timeline is a summary, and the
-      // message itself is one click away in the conversation view.
-      length: trimmed.length,
-      has_attachment: Boolean(attachment),
+      // Nothing about the content — not even its length, which is all the
+      // timeline could say about an encrypted one anyway.
+      encrypted: Boolean(sealed),
+      has_attachment: Boolean(plainAttachment),
     },
     status: 'sent',
   });
@@ -597,7 +639,19 @@ async function deleteMessage(user, messageId) {
 
   const updated = await prisma.message.update({
     where: { id: messageId },
-    data: { deletedAt: new Date(), text: '', attachmentKind: null },
+    // Everything that carried content goes, ciphertext included — a deleted
+    // message should not keep a copy that a stolen device key could still
+    // open.
+    data: {
+      deletedAt: new Date(),
+      text: '',
+      envelope: Prisma.DbNull,
+      attachmentKind: null,
+      attachmentTitle: null,
+      attachmentSubtitle: null,
+      attachmentUrl: null,
+      attachmentDuration: null,
+    },
   });
 
   const conversation = await prisma.conversation.findUnique({

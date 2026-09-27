@@ -171,6 +171,43 @@ const errors = {
       code: 'MESSAGING_DISABLED_PEER',
     }),
 
+  /** End-to-end encryption */
+  // The device list the sender encrypted for is not the one that exists now —
+  // a device signed in or out since the sender last looked. `details.devices`
+  // is the current list, so the client can re-encrypt and resend in one step.
+  e2eeDevicesChanged: (devices) =>
+    new AppError('The devices in this chat have changed. Sending again…', {
+      status: 409,
+      code: 'E2EE_DEVICES_CHANGED',
+      details: { devices },
+    }),
+  // Nobody to encrypt for: the other person has never opened an app that can
+  // decrypt. Sending them plaintext instead would quietly undo the guarantee.
+  e2eePeerUnavailable: () =>
+    new AppError(
+      'This person needs to update Vybli before they can receive end-to-end encrypted messages.',
+      { status: 409, code: 'E2EE_PEER_UNAVAILABLE' }
+    ),
+  // The phone sent from a device key this server does not hold (or has
+  // revoked). It re-registers and sends again.
+  e2eeDeviceUnknown: () =>
+    new AppError('This device is not set up for encrypted chat yet.', {
+      status: 409,
+      code: 'E2EE_DEVICE_UNKNOWN',
+    }),
+  e2eeDeviceKeyMismatch: () =>
+    new AppError('This device id is already registered with a different key.', {
+      status: 409,
+      code: 'E2EE_DEVICE_KEY_MISMATCH',
+    }),
+  // A plaintext send while `E2EE_REQUIRED` is on — only an out-of-date app
+  // does that.
+  e2eeRequired: () =>
+    new AppError('Please update Vybli. Messages are now end-to-end encrypted.', {
+      status: 426,
+      code: 'E2EE_REQUIRED',
+    }),
+
   /** Calls */
   callTypeDisabled: (type) =>
     new AppError(`This person has ${type} calls switched off.`, {

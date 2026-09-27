@@ -57,6 +57,9 @@ function verifyAccessToken(token) {
     return jwt.verify(token, env.jwt.secret, {
       audience: ACCESS_AUDIENCE,
       issuer: 'vybli',
+      // Only the algorithm these are signed with — never whatever the token's
+      // own header claims.
+      algorithms: ['HS256'],
     });
   } catch (err) {
     // An expired token is worth distinguishing: the client should silently
@@ -73,6 +76,7 @@ function verifyRefreshToken(token) {
     return jwt.verify(token, env.jwt.refreshSecret, {
       audience: REFRESH_AUDIENCE,
       issuer: 'vybli',
+      algorithms: ['HS256'],
     });
   } catch {
     throw errors.invalidToken('Please sign in again.');

@@ -13,6 +13,8 @@ const {
 } = require('../middleware/rateLimit');
 const S = require('../validators/schemas');
 const prisma = require('../config/prisma');
+const env = require('../config/env');
+const { errors } = require('../utils/errors');
 
 const authController = require('../controllers/auth.controller');
 const onboardingController = require('../controllers/onboarding.controller');
@@ -20,6 +22,7 @@ const profileController = require('../controllers/profile.controller');
 const discoveryController = require('../controllers/discovery.controller');
 const favoriteController = require('../controllers/favorite.controller');
 const chatController = require('../controllers/chat.controller');
+const e2eeController = require('../controllers/e2ee.controller');
 const callController = require('../controllers/call.controller');
 const walletController = require('../controllers/wallet.controller');
 const {
@@ -72,11 +75,14 @@ router.get('/health', async (_req, res) => {
       ),
     ]);
   } catch (error) {
+    // The reason goes to this process's log, not to whoever asked: a
+    // driver's error names hosts, ports and users, and this route is public.
+    console.error('[health] database unreachable:', error.message);
     return res.status(503).json({
       success: false,
       message: 'Vybli API is up but the database is not reachable',
       error: 'DATABASE_UNAVAILABLE',
-      data: { status: 'degraded', database: error.message },
+      data: { status: 'degraded', database: 'unreachable' },
     });
   }
 
@@ -116,14 +122,25 @@ router.use('/admin', adminRoutes);
 
 const auth = express.Router();
 
+// The OTP sign-in exists only where something can deliver a code. A
+// Firebase-only deployment used to mount it anyway: each request stored a
+// fresh code, failed to text it, and left it live in the database — a code
+// nobody was sent, so nobody noticed it being guessed at.
+const otpEnabled = (_req, _res, next) =>
+  env.sms.configured || env.otp.devMode
+    ? next()
+    : next(errors.notFound('Route', 'ROUTE_NOT_FOUND'));
+
 auth.post(
   '/otp/request',
+  otpEnabled,
   otpRequestLimiter,
   validate({ body: S.auth.requestOtp }),
   h(authController.requestOtp)
 );
 auth.post(
   '/otp/verify',
+  otpEnabled,
   otpVerifyLimiter,
   validate({ body: S.auth.verifyOtp }),
   h(authController.verifyOtp)
@@ -365,6 +382,12 @@ chat.post(
   validate({ params: S.chat.conversationParam, body: S.chat.send }),
   h(chatController.sendMessage)
 );
+// Both members' device keys, for encrypting to them and decrypting from them.
+chat.get(
+  '/:id/keys',
+  validate({ params: S.chat.conversationParam }),
+  h(e2eeController.conversationKeys)
+);
 chat.post(
   '/:id/read',
   validate({ params: S.chat.conversationParam }),
@@ -393,6 +416,33 @@ chat.delete(
 );
 
 router.use('/conversations', chat);
+
+// ── End-to-end encryption keys ──────────────────────────────────────────────
+//
+// The public-key directory — see `services/e2ee.service`. Signed-in only, not
+// onboarded: a phone registers its key on arriving at signed-in, the same
+// moment it registers its push token, whichever step of sign-up it is on.
+
+const keys = express.Router();
+keys.use(authenticate);
+keys.get('/devices', h(e2eeController.listDevices));
+keys.post(
+  '/devices/lookup',
+  validate({ body: S.e2ee.lookup }),
+  h(e2eeController.lookupDevices)
+);
+keys.put(
+  '/devices/:deviceId',
+  writeLimiter,
+  validate({ params: S.e2ee.deviceParam, body: S.e2ee.register }),
+  h(e2eeController.registerDevice)
+);
+keys.delete(
+  '/devices/:deviceId',
+  validate({ params: S.e2ee.deviceParam }),
+  h(e2eeController.revokeDevice)
+);
+router.use('/e2ee', keys);
 
 // ── Calls ───────────────────────────────────────────────────────────────────
 

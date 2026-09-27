@@ -159,6 +159,7 @@ function verify(token) {
     const payload = jwt.verify(token, env.admin.jwtSecret, {
       issuer: ISSUER,
       audience: AUDIENCE,
+      algorithms: ['HS256'],
     });
     if (payload.typ !== 'admin' || payload.sub !== ADMIN_SUBJECT) {
       throw new Error('not an admin token');

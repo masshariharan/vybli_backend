@@ -1,6 +1,7 @@
 'use strict';
 
 const prisma = require('../config/prisma');
+const fieldCrypto = require('../utils/fieldCrypto');
 const env = require('../config/env');
 const activity = require('./activity.service');
 const { errors } = require('../utils/errors');
@@ -638,7 +639,7 @@ async function getUpiAccount(userId) {
   if (!hasLinkedUpiAccount(wallet)) return { linked: false };
   return {
     linked: true,
-    upiId: wallet.payoutUpiId,
+    upiId: fieldCrypto.open(wallet.payoutUpiId),
   };
 }
 
@@ -652,12 +653,13 @@ async function getUpiAccount(userId) {
 async function setUpiAccount(userId, { upiId }) {
   await prisma.wallet.upsert({
     where: { userId },
+    // Encrypted at rest — see `utils/fieldCrypto`.
     create: {
       userId,
-      payoutUpiId: upiId,
+      payoutUpiId: fieldCrypto.seal(upiId),
     },
     update: {
-      payoutUpiId: upiId,
+      payoutUpiId: fieldCrypto.seal(upiId),
     },
   });
   activity.record({
@@ -709,7 +711,9 @@ async function withdraw(user, { amount } = {}) {
       // Pending until a real payout provider confirms it.
       status: 'pending',
       title: 'Withdrawal requested',
-      subtitle: `To ${wallet.payoutUpiId} • 1–2 business days`,
+      // Masked: the ledger and the notification below are copies that
+      // outlive the wallet row and are far less guarded than it.
+      subtitle: `To ${fieldCrypto.maskUpi(fieldCrypto.open(wallet.payoutUpiId))} • 1–2 business days`,
       rupeeDelta: -requested,
     },
   });
@@ -723,7 +727,7 @@ async function withdraw(user, { amount } = {}) {
     userId: user.id,
     kind: 'transaction',
     title: 'Withdrawal requested',
-    body: `₹${requested} is on its way to ${wallet.payoutUpiId}.`,
+    body: `₹${requested} is on its way to ${fieldCrypto.maskUpi(fieldCrypto.open(wallet.payoutUpiId))}.`,
     data: { transaction_id: transaction.id, amount: requested },
   });
 

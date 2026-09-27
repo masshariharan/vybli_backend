@@ -79,7 +79,7 @@ async function requestOtp({ dialCode, phone, purpose = 'login' }) {
   const codeHash = await bcrypt.hash(code, 10);
   const expiresAt = new Date(now.getTime() + env.otp.expirySeconds * 1000);
 
-  await prisma.$transaction([
+  const [, created] = await prisma.$transaction([
     // Retire outstanding codes first — exactly one live code per number.
     prisma.otpCode.updateMany({
       where: { dialCode, phone, purpose, consumedAt: null },
@@ -90,7 +90,17 @@ async function requestOtp({ dialCode, phone, purpose = 'login' }) {
     }),
   ]);
 
-  await deliver({ dialCode, phone, code });
+  try {
+    await deliver({ dialCode, phone, code });
+  } catch (error) {
+    // A code nobody was sent must not stay usable. Left live, it is a
+    // six-digit secret that only an attacker is trying — and the owner of the
+    // number, never texted, has no idea anyone is.
+    await prisma.otpCode
+      .update({ where: { id: created.id }, data: { consumedAt: new Date() } })
+      .catch(() => {});
+    throw error;
+  }
 
   return {
     expiresAt,
@@ -106,6 +116,23 @@ async function requestOtp({ dialCode, phone, purpose = 'login' }) {
  * second session.
  */
 async function verifyOtp({ dialCode, phone, code, purpose = 'login' }) {
+  // Across every code for this number, not only the current one. The
+  // per-code counter alone reset with each new code, so requesting a fresh
+  // one after every fifth wrong guess made the limit five guesses per
+  // cooldown, indefinitely.
+  const recent = await prisma.otpCode.aggregate({
+    where: {
+      dialCode,
+      phone,
+      purpose,
+      createdAt: { gte: new Date(Date.now() - 24 * 3600_000) },
+    },
+    _sum: { attempts: true },
+  });
+  if ((recent._sum.attempts ?? 0) >= env.otp.maxDailyFailures) {
+    throw errors.otpTooManyAttempts();
+  }
+
   const record = await prisma.otpCode.findFirst({
     where: { dialCode, phone, purpose, consumedAt: null },
     orderBy: { createdAt: 'desc' },

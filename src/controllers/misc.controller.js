@@ -118,6 +118,7 @@ const moderation = {
       reason: req.body.reason,
       details: req.body.details,
       alsoBlock: req.body.also_block,
+      evidence: req.body.evidence,
     });
     return created(
       res,

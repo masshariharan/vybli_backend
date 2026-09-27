@@ -11,6 +11,22 @@ const env = require('../config/env');
  * hitting a hundred different numbers is the case an IP limit misses entirely.
  */
 
+/**
+ * The number an OTP request is about, the same however it was typed.
+ *
+ * Keyed on the raw body, `"9876543210"`, `" 9876543210"` and `"+91 98765
+ * 43210"` were three different limits for one phone — so the per-number cap
+ * was only ever as tight as an attacker's patience with whitespace. Digits
+ * only, the last ten of them (the national number, for India), under the
+ * dial code's digits.
+ */
+function phoneKey(req) {
+  const digits = String(req.body?.phone ?? '').replace(/\D/g, '');
+  if (!digits) return `ip:${req.ip}`;
+  const dial = String(req.body?.dial_code ?? '+91').replace(/\D/g, '') || '91';
+  return `${dial}:${digits.slice(-10)}`;
+}
+
 const jsonLimit = (message, code) => (_req, res) =>
   res.status(429).json({ success: false, message, error: code });
 
@@ -29,7 +45,7 @@ const otpRequestLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => `${req.body?.dial_code ?? ''}${req.body?.phone ?? req.ip}`,
+  keyGenerator: phoneKey,
   handler: jsonLimit(
     'Too many codes requested for this number. Try again in a few minutes.',
     'OTP_RATE_LIMITED'
@@ -48,7 +64,7 @@ const otpVerifyLimiter = rateLimit({
   max: 15,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => `${req.body?.dial_code ?? ''}${req.body?.phone ?? req.ip}`,
+  keyGenerator: phoneKey,
   handler: jsonLimit(
     'Too many verification attempts. Please wait a few minutes.',
     'OTP_RATE_LIMITED'

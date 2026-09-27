@@ -10,6 +10,36 @@ const chatService = require('../services/chat.service');
 const callService = require('../services/call.service');
 const relationship = require('../services/relationship.service');
 const serialize = require('../utils/serialize');
+const S = require('../validators/schemas');
+const { errors, AppError } = require('../utils/errors');
+const { requireOnboarded } = require('../middleware/auth');
+
+/**
+ * Messages per minute one account may send over the socket — the same
+ * allowance `writeLimiter` gives the HTTP route.
+ */
+const sendAllowance = (() => {
+  const WINDOW_MS = 60_000;
+  const MAX = 60;
+  const windows = new Map();
+  return {
+    take(userId) {
+      const now = Date.now();
+      const w = windows.get(userId);
+      if (!w || now - w.start >= WINDOW_MS) {
+        windows.set(userId, { start: now, count: 1 });
+        if (windows.size > 10_000) {
+          for (const [id, entry] of windows) {
+            if (now - entry.start >= WINDOW_MS) windows.delete(id);
+          }
+        }
+        return true;
+      }
+      w.count += 1;
+      return w.count <= MAX;
+    },
+  };
+})();
 const adminAuth = require('../services/admin/auth.service');
 const connections = require('./connections');
 
@@ -190,7 +220,57 @@ function attachSockets(httpServer) {
 
   attachAdminNamespace(io);
 
+  const sweep = setInterval(() => {
+    sweepRevokedSockets(io).catch((err) => console.error('[socket] session sweep failed', err));
+  }, SESSION_SWEEP_MS);
+  sweep.unref();
+
   return io;
+}
+
+/** How often live sockets are re-checked against their sign-in. */
+const SESSION_SWEEP_MS = 30_000;
+
+/**
+ * Closes the sockets of every account that is no longer signed in anywhere.
+ *
+ * A handshake is checked once, and a socket can then stay open for days. So
+ * without this, "log out everywhere", an administrator's suspension or
+ * sign-out, and account deletion all left an already-open socket sending
+ * messages and placing calls — `session:revoked` only *asks* the app to
+ * leave, and a client that ignores it (or a stolen token that was never in
+ * the app) kept going.
+ *
+ * Judged per account, not per socket's own session, on purpose: every token
+ * refresh revokes the session it replaces, so "this socket's session is
+ * revoked" is true of every healthy socket fifteen minutes after it
+ * connected, and closing on it would drop everyone's presence and calls four
+ * times an hour. An account with no live session left at all has nobody
+ * signed in who could be holding a legitimate socket.
+ *
+ * One query per sweep for every connected account together.
+ */
+async function sweepRevokedSockets(io) {
+  const sockets = [...io.of('/').sockets.values()];
+  if (sockets.length === 0) return;
+  const userIds = [...new Set(sockets.map((s) => s.userId).filter(Boolean))];
+  const now = new Date();
+  const stillSignedIn = await prisma.user.findMany({
+    where: {
+      id: { in: userIds },
+      status: 'active',
+      deletedAt: null,
+      sessions: { some: { revokedAt: null, expiresAt: { gt: now } } },
+    },
+    select: { id: true },
+  });
+  const live = new Set(stillSignedIn.map((u) => u.id));
+  for (const socket of sockets) {
+    if (!live.has(socket.userId)) {
+      socket.emit('session:revoked', { reason: 'Your session has ended.', at: now.toISOString() });
+      socket.disconnect(true);
+    }
+  }
 }
 
 /** Marks the user online and sends them what they missed. */
@@ -333,8 +413,13 @@ function registerPresence(io, socket) {
    */
   socket.on('presence:watch', async ({ user_ids: ids = [] } = {}, ack) => {
     try {
+      // Nobody on either side of a block. A block is a full severance, and
+      // this used to be the one channel it did not reach: someone blocked
+      // could go on watching every online/offline change of the person who
+      // blocked them, live, by id.
+      const blocked = await relationship.blockedIdsFor(socket.userId);
       const wanted = [...new Set(Array.isArray(ids) ? ids : [])]
-        .filter((id) => typeof id === 'string' && id !== socket.userId)
+        .filter((id) => typeof id === 'string' && id !== socket.userId && !blocked.has(id))
         .slice(0, MAX_WATCHED);
 
       unwatchAll(socket.id);
@@ -423,13 +508,31 @@ function registerChat(io, socket) {
    */
   socket.on('message:send', async (payload = {}, ack) => {
     try {
+      // The HTTP route's other two gates. Neither existed here: an account
+      // mid sign-up could message, and a script could send as fast as the
+      // socket carried it.
+      await new Promise((resolve, reject) =>
+        requireOnboarded({ user: socket.user }, null, (err) => (err ? reject(err) : resolve()))
+      );
+      if (!sendAllowance.take(socket.userId)) {
+        throw new AppError('You are doing that too quickly.', { status: 429, code: 'RATE_LIMITED' });
+      }
+      // The same schema the HTTP route runs. Without it this path took any
+      // shape at all — a 40 kB "text", an attachment made of objects — and
+      // handed it straight to the database.
+      const parsed = S.chat.send.safeParse(payload ?? {});
+      if (!parsed.success) {
+        throw errors.validation(parsed.error.flatten().fieldErrors);
+      }
+      const body = parsed.data;
       const { message } = await chatService.sendMessage(
         socket.user,
         payload.conversation_id,
         {
-          text: payload.text ?? '',
-          attachment: payload.attachment,
-          clientId: payload.client_id,
+          text: body.text,
+          attachment: body.attachment,
+          clientId: body.client_id,
+          envelope: body.envelope,
         }
       );
       ack?.({
@@ -443,7 +546,11 @@ function registerChat(io, socket) {
       ack?.({
         success: false,
         error: err.code ?? 'INTERNAL_ERROR',
-        message: err.message,
+        // Only a deliberate error's own sentence — a driver's message can
+        // carry table names, SQL and values, and this goes to the client.
+        message: err.expose ? err.message : 'Something went wrong on our end',
+        // `E2EE_DEVICES_CHANGED` carries the current device list here.
+        details: err.expose ? err.details : undefined,
       });
     }
   });
@@ -515,7 +622,7 @@ function registerCalls(io, socket) {
       ack?.({
         success: false,
         error: err.code ?? 'INTERNAL_ERROR',
-        message: err.message,
+        message: err.expose ? err.message : 'Something went wrong on our end',
       });
     }
   };
