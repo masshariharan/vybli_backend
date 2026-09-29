@@ -144,23 +144,30 @@ const CALL_INCLUDE = {
 };
 
 /**
- * Who pays and who earns on this call — a role, not a caller/callee position.
+ * Who pays and who earns on this call — determined by gender and isEarner status.
  *
- * Unambiguous for an earner/non-earner call, which is the only kind that is
- * billed. A same-side call — two accounts with "Show All Users" on, see
- * `relationship.canPair` — is placed at a rate of zero, so the fallback below
- * never actually moves money for it; it also keeps an in-flight call from
- * crashing if a profile's role changes mid-call.
+ * Female-to-Female: free (no payer, no earner).
+ * Male-to-Male: caller pays, no earner (100% to Vybli).
+ * Male-to-Female/Female-to-Male: caller pays, callee earns if isEarner.
  */
 function payerAndEarner(call) {
-  const callerIsEarner = Boolean(call.caller?.profile?.isEarner);
+  const callerGender = call.caller?.profile?.gender;
+  const calleeGender = call.callee?.profile?.gender;
   const calleeIsEarner = Boolean(call.callee?.profile?.isEarner);
-  if (callerIsEarner === calleeIsEarner) {
-    return { payerId: call.callerId, earnerId: calleeIsEarner ? call.calleeId : null };
+
+  if (callerGender === 'female' && calleeGender === 'female') {
+    return { payerId: null, earnerId: null };
   }
-  return callerIsEarner
-    ? { payerId: call.calleeId, earnerId: call.callerId }
-    : { payerId: call.callerId, earnerId: call.calleeId };
+
+  if (callerGender === 'male' && calleeGender === 'male') {
+    return { payerId: call.callerId, earnerId: null };
+  }
+
+  const calleeIsOppositeGender = callerGender !== calleeGender;
+  return {
+    payerId: call.callerId,
+    earnerId: calleeIsOppositeGender && calleeIsEarner ? call.calleeId : null,
+  };
 }
 
 /**
@@ -220,34 +227,24 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
   // Run under both people's locks (see `start`), so two people calling each
   // other at the same instant cannot both get through: whichever lands second
   // sees the first call here.
-  const callerMayPay = !user.profile?.isEarner;
+  // With gender-based pricing, we can't know if caller pays until we know callee's
+  // gender, so we conservatively fetch the balance (it may be unneeded for F-F calls).
   const [callee, , callerBalance] = await Promise.all([
     relationship.assertCanCall(user, calleeId, type),
     assertNotBusy(user.id, 'caller'),
-    callerMayPay ? walletService.getBalance(user.id) : null,
+    walletService.getBalance(user.id),
   ]);
 
-  // The rate is the earner's, not the callee's — an earner calling out still
-  // sets the price, and the other side still pays it.
-  //
-  // A same-side call has no earner and no payer, so it is free: rate zero,
-  // no balance check, and nothing for the per-minute billing to charge or the
-  // bookkeeping to pay out (see `billOneMinute` and `finaliseBookkeeping`).
-  // That is what lets "Show All Users" connect two people on the same side
-  // without inventing a second billing model — the paid path below is exactly
-  // the one every earner/non-earner call has always taken.
-  const callerIsEarner = Boolean(user.profile?.isEarner);
-  const sameSide = relationship.isSameSide(user, callee);
-  const earnerProfile = callerIsEarner ? user.profile : callee.profile;
-  const payerId = callerIsEarner ? calleeId : user.id;
+  // Gender-based pricing:
+  // Female-to-Female: free (rate = 0, no payer)
+  // Male-to-Male: ₹5/voice, ₹20/video (caller pays, no earner)
+  // Cross-gender: ₹5/voice, ₹20/video (caller pays, callee may earn if isEarner)
+  const callerGender = user.profile?.gender;
+  const calleeGender = callee.profile?.gender;
+  const isFemaleToFemale = callerGender === 'female' && calleeGender === 'female';
 
-  const ratePerMinute = sameSide
-    ? 0
-    : Number(
-        type === 'voice'
-          ? earnerProfile.voiceRatePerMinute
-          : earnerProfile.videoRatePerMinute
-      );
+  const ratePerMinute = isFemaleToFemale ? 0 : (type === 'voice' ? 5 : 20);
+  const payerId = isFemaleToFemale ? null : user.id;
 
   if (ratePerMinute > 0 && payerId === user.id) {
     const balance = callerBalance ?? (await walletService.getBalance(payerId));
@@ -529,10 +526,12 @@ async function acceptUnlocked(user, callId) {
   // from waiting on a transaction it is about to run anyway.
   const { payerId } = payerAndEarner(call);
   const rate = Number(call.ratePerMinute);
-  const balance = await walletService.getBalance(payerId);
-  if (rate > 0 && balance < rate) {
-    await finalise(call, { status: 'ended', reason: 'insufficientBalance' });
-    throw errors.insufficientBalance(rate, balance);
+  if (rate > 0 && payerId) {
+    const balance = await walletService.getBalance(payerId);
+    if (balance < rate) {
+      await finalise(call, { status: 'ended', reason: 'insufficientBalance' });
+      throw errors.insufficientBalance(rate, balance);
+    }
   }
 
   // Compare-and-set, like `finalise`: the caller may have hung up, or the

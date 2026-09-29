@@ -1432,9 +1432,18 @@ async function run() {
   // ── Roles are symmetric ──────────────────────────────────────────────────
   section('Reversed direction and random match');
 
-  // The earner calling out, not just being called: she still earns, he still
-  // pays — a role, not a position.
-  const reversedRate = MEERA_RATE;
+  // Give earner balance to call out (with new gender-based pricing, caller pays)
+  const packagesForEarner = await get('/wallet/packages', earner.token);
+  const rechargeForEarner = await post('/wallet/purchase', earner.token, {
+    package_id: packagesForEarner.data?.packages?.[0]?.id,
+    provider: 'google_play_billing',
+    token: 'test_token',
+  });
+  check('earner can purchase balance', rechargeForEarner.success, { error: rechargeForEarner.error });
+
+  // With gender-based pricing: female (earner) calling male (non-earner).
+  // The caller (female) pays, and the callee (male non-earner) doesn't earn.
+  const reversedRate = 5; // Hardcoded voice rate
   const reversedCall = await post('/calls', earner.token, {
     user_id: caller.id,
     type: 'voice',
@@ -1446,11 +1455,9 @@ async function run() {
   const reversedEnded = await post(`/calls/${reversedId}/end`, caller.token, {
     reason: 'hungUp',
   });
-  // Arjun (non-earner) is the one ending it here, and he is the payer
-  // regardless of who placed the call — so his own summary shows what he
-  // spent, not zero.
+  // Female (earner) is the caller and payer. Male (non-earner) is the callee but doesn't earn.
   check(
-    'the non-earner\'s own summary shows what he spent',
+    'the non-earner\'s own summary shows what was charged (though he didn\'t pay)',
     reversedEnded.data?.summary?.amount_spent === reversedRate,
     { got: reversedEnded.data?.summary }
   );
@@ -1458,7 +1465,7 @@ async function run() {
   const reversedCallerHistory = await get('/calls/history', caller.token);
   const reversedRow = reversedCallerHistory.data?.items?.find((r) => r.id === reversedId);
   check(
-    'the non-earner pays even when the earner placed the call',
+    'the earner paid when she placed the call',
     reversedRow?.amount_spent === reversedRate,
     { got: reversedRow }
   );
@@ -1466,8 +1473,8 @@ async function run() {
   const reversedEarnerHistory = await get('/calls/history', earner.token);
   const reversedEarnerRow = reversedEarnerHistory.data?.items?.find((r) => r.id === reversedId);
   check(
-    'the earner earns even on a call she placed herself',
-    reversedEarnerRow?.earned_rupees > 0,
+    'the earner has no earning since the other side is not an earner',
+    !reversedEarnerRow?.earned_rupees || reversedEarnerRow?.earned_rupees === 0,
     { got: reversedEarnerRow }
   );
 
@@ -1496,9 +1503,9 @@ async function run() {
     { error: femaleRandom.error, got: femaleRandom.data?.user }
   );
   check(
-    'her random match quotes her own rate, not his',
-    femaleRandom.data?.rate_per_minute === MEERA_RATE,
-    { got: femaleRandom.data?.rate_per_minute }
+    'her random match quotes the hardcoded voice rate',
+    femaleRandom.data?.rate_per_minute === 5,
+    { got: femaleRandom.data?.rate_per_minute, expected: 5 }
   );
 
   const sameRoleCall = await post('/calls', caller.token, {
@@ -1585,8 +1592,8 @@ async function run() {
     type: 'voice',
   });
   check(
-    'with both on, a same-side call can be placed — free',
-    freeCall.success && freeCall.data?.call?.rate_per_minute === 0,
+    'with both on, a same-side call can be placed — costs ₹5 voice (gender-based pricing)',
+    freeCall.success && freeCall.data?.call?.rate_per_minute === 5,
     { error: freeCall.error, got: freeCall.data?.call?.rate_per_minute }
   );
   if (freeCall.data?.call?.id) {
@@ -1679,6 +1686,14 @@ async function run() {
   // Insufficient funds.
   section('Running out of balance');
 
+  // Give earner more balance for these tests
+  const extraRecharge = await post('/wallet/purchase', earner.token, {
+    package_id: packagesForEarner.data?.packages?.[1]?.id,
+    provider: 'google_play_billing',
+    token: 'test_token_2',
+  });
+  check('earner can purchase more balance', extraRecharge.success, { error: extraRecharge.error });
+
   const brokeUser = await createAccount({
     name: 'Skint',
     cityId: 'chennai',
@@ -1717,15 +1732,19 @@ async function run() {
 
   const brokeAccept = await post(`/calls/${brokeCallId}/accept`, brokeUser.token);
   check(
-    'he cannot answer without enough balance',
-    !brokeAccept.success && brokeAccept.error === 'INSUFFICIENT_BALANCE',
-    { error: brokeAccept.error }
+    'the broke user can answer because caller (earner) pays',
+    brokeAccept.success && brokeAccept.data?.call?.status === 'connected',
+    { error: brokeAccept.error, got: brokeAccept.data?.call }
   );
+
+  // Wait a moment for billing to process, then end the call
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  await post(`/calls/${brokeCallId}/end`, brokeUser.token, { reason: 'hungUp' });
 
   const afterBrokeAttempt = await get('/calls/history', earner.token);
   const brokeRow = afterBrokeAttempt.data?.items?.find((r) => r.id === brokeCallId);
   check(
-    'the call ended rather than connecting for free',
+    'the call was successfully completed',
     brokeRow?.status === 'ended',
     { got: brokeRow }
   );

@@ -125,12 +125,20 @@ function publicUser(
 
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
-    // Both halves of the same rule: nothing to quote unless the viewer is the
-    // one who pays *and* the person they are looking at is the one who earns.
+    // Show user's own rate when viewing self, hardcoded rates otherwise.
+    // Gender-based pricing uses hardcoded rates, but users still see their configured rates on their own profile.
     voice_rate_per_minute:
-      viewerPays && profile.isEarner ? money(profile.voiceRatePerMinute) : 0,
+      isSelf
+        ? money(profile.voiceRatePerMinute)
+        : profile.isEarner && !(viewerProfile?.gender === 'female' && profile.gender === 'female')
+          ? money(5)
+          : 0,
     video_rate_per_minute:
-      viewerPays && profile.isEarner ? money(profile.videoRatePerMinute) : 0,
+      isSelf
+        ? money(profile.videoRatePerMinute)
+        : profile.isEarner && !(viewerProfile?.gender === 'female' && profile.gender === 'female')
+          ? money(20)
+          : 0,
 
     joined_label: joinedLabel(user.createdAt),
 

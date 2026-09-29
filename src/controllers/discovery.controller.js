@@ -64,12 +64,16 @@ async function randomMatch(req, res) {
   // Who the match is isn't known until the query above returns, so this
   // can't run any earlier alongside it.
   const favorited = await favoriteService.isFavorite(req.userId, match.id);
-  // The earner's rate, whichever side of the match that is — see
-  // `serialize.publicUser`'s `viewerProfile` doc for why.
-  const rateOwner = req.user.profile?.isEarner ? req.user.profile : match.profile;
-  // A same-side match ("Show All Users") is a free call — see
-  // `call.service.startUnlocked`, which places it at zero.
-  const sameSide = relationship.isSameSide(req.user, match);
+
+  // Gender-based pricing: Female-to-Female is free, others are ₹5/voice or ₹20/video.
+  const viewerGender = req.user.profile?.gender;
+  const matchGender = match.profile?.gender;
+  const isFemaleToFemale = viewerGender === 'female' && matchGender === 'female';
+  const ratePerMinute = isFemaleToFemale
+    ? 0
+    : req.body.type === 'voice'
+      ? 5
+      : 20;
 
   return ok(
     res,
@@ -81,13 +85,7 @@ async function randomMatch(req, res) {
         favorited,
       }),
       type: req.body.type,
-      rate_per_minute: sameSide
-        ? 0
-        : Number(
-            req.body.type === 'voice'
-              ? rateOwner.voiceRatePerMinute
-              : rateOwner.videoRatePerMinute
-          ),
+      rate_per_minute: ratePerMinute,
     },
     'Match found'
   );
