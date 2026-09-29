@@ -36,85 +36,66 @@ const prisma = createPrismaClient();
  * plus whatever bonus is thrown in for free. No separate "quantity" any more:
  * the rupee paid and the rupee credited are the same unit.
  */
+/**
+ * Every row spells out every flag, so an upsert also clears a flag an older
+ * build had set — a package that was "popular" last release stops being it.
+ */
 const RECHARGE_PACKAGES = [
-  { id: 'pkg_100', priceInr: 100, bonusInr: 0, sortOrder: 1 },
-  {
-    id: 'pkg_500',
-    priceInr: 500,
-    bonusInr: 25,
-    tagline: 'Good for ~40 min of voice',
-    sortOrder: 2,
-  },
-  {
-    id: 'pkg_1000',
-    priceInr: 1000,
-    bonusInr: 100,
-    isPopular: true,
-    tagline: 'Most people pick this',
-    sortOrder: 3,
-  },
-  {
-    id: 'pkg_2500',
-    priceInr: 2500,
-    bonusInr: 350,
-    tagline: 'Great for daily callers',
-    sortOrder: 4,
-  },
-  {
-    id: 'pkg_5000',
-    priceInr: 5000,
-    bonusInr: 1000,
-    isBestValue: true,
-    tagline: 'Best value',
-    sortOrder: 5,
-  },
+  { id: 'pkg_25', priceInr: 25, bonusInr: 0, isPopular: false, isBestValue: false, tagline: '5 min of voice', sortOrder: 1 },
+  { id: 'pkg_50', priceInr: 50, bonusInr: 5, isPopular: false, isBestValue: false, tagline: '11 min of voice', sortOrder: 2 },
+  { id: 'pkg_100', priceInr: 100, bonusInr: 15, isPopular: true, isBestValue: false, tagline: '23 min of voice', sortOrder: 3 },
+  { id: 'pkg_200', priceInr: 200, bonusInr: 35, isPopular: false, isBestValue: false, tagline: '47 min of voice', sortOrder: 4 },
+  { id: 'pkg_500', priceInr: 500, bonusInr: 100, isPopular: false, isBestValue: true, tagline: '30 min of video', sortOrder: 5 },
+  { id: 'pkg_1000', priceInr: 1000, bonusInr: 250, isPopular: false, isBestValue: false, tagline: '62 min of video', sortOrder: 6 },
+  { id: 'pkg_2000', priceInr: 2000, bonusInr: 600, isPopular: false, isBestValue: false, tagline: '130 min of video', sortOrder: 7 },
 ];
 
 /** VIP plans. 1 / 2 / 3 months, priced in days so a month never has to mean
  * a fixed number of calendar days at purchase time. */
 const VIP_PLANS = [
-  { id: 'vip_1m', days: 30, priceInr: 899, bonusInr: 250, sortOrder: 1 },
-  {
-    id: 'vip_2m',
-    days: 60,
-    priceInr: 1299,
-    bonusInr: 350,
-    isBest: true,
-    sortOrder: 2,
-  },
-  { id: 'vip_3m', days: 90, priceInr: 1899, bonusInr: 520, sortOrder: 3 },
+  { id: 'vip_1m', days: 30, priceInr: 99, bonusInr: 20, isBest: false, sortOrder: 1 },
+  { id: 'vip_2m', days: 60, priceInr: 179, bonusInr: 45, isBest: false, sortOrder: 2 },
+  { id: 'vip_3m', days: 90, priceInr: 249, bonusInr: 75, isBest: true, sortOrder: 3 },
 ];
 
-async function seedPackages() {
-  for (const pkg of RECHARGE_PACKAGES) {
-    await prisma.rechargePackage.upsert({
-      where: { id: pkg.id },
-      create: pkg,
-      update: pkg,
+/**
+ * Upserts `rows`, then retires every row of the table this build no longer
+ * declares. An upsert alone never removes anything, so a package dropped from
+ * the list above would otherwise stay on sale forever.
+ *
+ * Retired, not deleted: purchase ledger rows reference these ids.
+ */
+async function converge(model, rows) {
+  for (const row of rows) {
+    await model.upsert({
+      where: { id: row.id },
+      create: { ...row, isActive: true },
+      update: { ...row, isActive: true },
     });
   }
-  return RECHARGE_PACKAGES.length;
+  const { count } = await model.updateMany({
+    where: { id: { notIn: rows.map((r) => r.id) }, isActive: true },
+    data: { isActive: false },
+  });
+  return { active: rows.length, retired: count };
+}
+
+async function seedPackages() {
+  return converge(prisma.rechargePackage, RECHARGE_PACKAGES);
 }
 
 async function seedVipPlans() {
-  for (const plan of VIP_PLANS) {
-    await prisma.vipPlan.upsert({
-      where: { id: plan.id },
-      create: plan,
-      update: plan,
-    });
-  }
-  return VIP_PLANS.length;
+  return converge(prisma.vipPlan, VIP_PLANS);
 }
 
 async function main() {
   console.info('[seed] starting');
 
   const packages = await seedPackages();
-  console.info(`[seed] ${packages} recharge packages`);
+  console.info(`[seed] ${packages.active} recharge packages (${packages.retired} retired)`);
 
   const vipPlans = await seedVipPlans();
-  console.info(`[seed] ${vipPlans} VIP plans`);
+  console.info(`[seed] ${vipPlans.active} VIP plans (${vipPlans.retired} retired)`);
 
   console.info('[seed] done');
 }
