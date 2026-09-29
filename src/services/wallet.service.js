@@ -43,6 +43,32 @@ async function getSummary(userId) {
   return prisma.wallet.findUnique({ where: { userId } }) ?? wallet;
 }
 
+function isVipActive(wallet, now = new Date()) {
+  return Boolean(wallet?.vipExpiresAt && wallet.vipExpiresAt > now);
+}
+
+/** Percent off calls this user gets right now — 0 for anyone not VIP. */
+async function vipCallDiscountPct(userId) {
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId },
+    select: { vipExpiresAt: true, vipCallDiscountPct: true },
+  });
+  return isVipActive(wallet) ? wallet.vipCallDiscountPct : 0;
+}
+
+/**
+ * The discount a membership carries once `plan` is added to `wallet`.
+ *
+ * Buying on top of a running membership extends one term rather than queuing
+ * a second, so the term keeps the better of the two rates — a user who tops
+ * a 3-month plan up with a 1-month one must not lose the 3-month discount.
+ * A lapsed membership starts over at the new plan's rate.
+ */
+function discountAfterPurchase(wallet, plan, now) {
+  const incoming = plan.callDiscountPct ?? 0;
+  return isVipActive(wallet, now) ? Math.max(wallet.vipCallDiscountPct ?? 0, incoming) : incoming;
+}
+
 function getBalance(userId) {
   return prisma.wallet
     .findUnique({ where: { userId }, select: { balance: true } })
@@ -311,6 +337,7 @@ async function purchaseVip(user, { planId, purchaseToken }) {
       emitToUser(user.id, 'wallet:updated', {
         balance: Number(updated.balance),
         vip_expires_at: expiresAt.toISOString(),
+        vip_call_discount_pct: updated.vipCallDiscountPct,
       });
       activity.record({
         userId: user.id,
@@ -337,14 +364,17 @@ async function purchaseVip(user, { planId, purchaseToken }) {
 
   const wallet = await getOrCreateWallet(user.id);
   const now = new Date();
-  const base = wallet.vipExpiresAt && wallet.vipExpiresAt > now ? wallet.vipExpiresAt : now;
+  const base = isVipActive(wallet, now) ? wallet.vipExpiresAt : now;
   const expiresAt = new Date(base.getTime() + plan.days * 86_400_000);
   const bonus = Number(plan.bonusInr);
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.wallet.update({
       where: { userId: user.id },
-      data: { vipExpiresAt: expiresAt },
+      data: {
+        vipExpiresAt: expiresAt,
+        vipCallDiscountPct: discountAfterPurchase(wallet, plan, now),
+      },
     });
     return creditBalance({
       userId: user.id,
@@ -368,6 +398,7 @@ async function purchaseVip(user, { planId, purchaseToken }) {
   emitToUser(user.id, 'wallet:updated', {
     balance: Number(updated.balance),
     vip_expires_at: expiresAt.toISOString(),
+    vip_call_discount_pct: updated.vipCallDiscountPct,
   });
 
   activity.record({
@@ -473,14 +504,20 @@ async function verifyOrReplayGooglePlayVip({ userId, productId, purchaseToken, p
 
   const before = await getOrCreateWallet(userId);
   const now = new Date();
-  const base = before.vipExpiresAt && before.vipExpiresAt > now ? before.vipExpiresAt : now;
+  const base = isVipActive(before, now) ? before.vipExpiresAt : now;
   const expiresAt = new Date(base.getTime() + plan.days * 86_400_000);
   const bonus = Number(plan.bonusInr);
 
   let wallet;
   try {
     wallet = await prisma.$transaction(async (tx) => {
-      await tx.wallet.update({ where: { userId }, data: { vipExpiresAt: expiresAt } });
+      await tx.wallet.update({
+        where: { userId },
+        data: {
+          vipExpiresAt: expiresAt,
+          vipCallDiscountPct: discountAfterPurchase(before, plan, now),
+        },
+      });
       return creditBalance({
         userId,
         amount: bonus,
@@ -791,6 +828,7 @@ module.exports = {
   getOrCreateWallet,
   getSummary,
   getBalance,
+  vipCallDiscountPct,
   spend,
   creditBalance,
   listPackages,

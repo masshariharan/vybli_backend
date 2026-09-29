@@ -779,6 +779,12 @@ model Wallet {
   /// `vipExpiresAt` is in the future is the one thing worth checking.
   vipExpiresAt DateTime?
 
+  /// Percent off voice and video calls while VIP is active — the best
+  /// `VipPlan.callDiscountPct` among the plans that built the current term.
+  /// Meaningless once `vipExpiresAt` has passed; read it through
+  /// `walletService.vipCallDiscountPct`, which checks.
+  vipCallDiscountPct Int @default(0)
+
   /// The UPI ID a withdrawal pays out to. Null until the earner links one.
   payoutUpiId String?
 
@@ -883,6 +889,8 @@ model VipPlan {
   days      Int
   priceInr  Decimal @db.Decimal(10, 2)
   bonusInr  Decimal @default(0) @db.Decimal(10, 2)
+  /// Percent off voice and video calls while this membership is active.
+  callDiscountPct Int @default(0)
   /// The plan editorially called out as the best deal — at most one should
   /// carry this at a time.
   isBest    Boolean @default(false)

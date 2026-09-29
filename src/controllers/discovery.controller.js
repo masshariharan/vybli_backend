@@ -6,7 +6,9 @@ const avatarCatalog = require('../config/avatarCatalog');
 const geoip = require('../services/geoip.service');
 const favoriteService = require('../services/favorite.service');
 const relationship = require('../services/relationship.service');
+const walletService = require('../services/wallet.service');
 const serialize = require('../utils/serialize');
+const callPricing = require('../utils/callPricing');
 const { ok, paginated } = require('../utils/respond');
 const { q } = require('../middleware/validate');
 const { toSkipTake } = require('../validators/common');
@@ -63,17 +65,18 @@ async function randomMatch(req, res) {
   });
   // Who the match is isn't known until the query above returns, so this
   // can't run any earlier alongside it.
-  const favorited = await favoriteService.isFavorite(req.userId, match.id);
+  const [favorited, discountPct] = await Promise.all([
+    favoriteService.isFavorite(req.userId, match.id),
+    walletService.vipCallDiscountPct(req.userId),
+  ]);
 
-  // Gender-based pricing: Female-to-Female is free, others are ₹5/voice or ₹20/video.
-  const viewerGender = req.user.profile?.gender;
-  const matchGender = match.profile?.gender;
-  const isFemaleToFemale = viewerGender === 'female' && matchGender === 'female';
-  const ratePerMinute = isFemaleToFemale
-    ? 0
-    : req.body.type === 'voice'
-      ? 5
-      : 20;
+  // The same figure `call.service.startUnlocked` will charge, VIP discount
+  // included — see `utils/callPricing`.
+  const ratePerMinute = callPricing.ratePerMinute(req.body.type, {
+    callerGender: req.user.profile?.gender,
+    calleeGender: match.profile?.gender,
+    discountPct,
+  });
 
   return ok(
     res,

@@ -3,6 +3,7 @@
 const env = require('../config/env');
 const avatarCatalog = require('../config/avatarCatalog');
 const { canPair } = require('./pairing');
+const { BASE_RATE } = require('./callPricing');
 
 /**
  * The wire format.
@@ -125,19 +126,21 @@ function publicUser(
 
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
-    // Show user's own rate when viewing self, hardcoded rates otherwise.
-    // Gender-based pricing uses hardcoded rates, but users still see their configured rates on their own profile.
+    // Show user's own rate when viewing self, list prices otherwise.
+    // Gender-based pricing uses fixed list prices (`utils/callPricing`), but
+    // users still see their configured rates on their own profile. A VIP
+    // viewer's discount is applied by the client, from its own wallet.
     voice_rate_per_minute:
       isSelf
         ? money(profile.voiceRatePerMinute)
         : profile.isEarner && !(viewerProfile?.gender === 'female' && profile.gender === 'female')
-          ? money(5)
+          ? money(BASE_RATE.voice)
           : 0,
     video_rate_per_minute:
       isSelf
         ? money(profile.videoRatePerMinute)
         : profile.isEarner && !(viewerProfile?.gender === 'female' && profile.gender === 'female')
-          ? money(20)
+          ? money(BASE_RATE.video)
           : 0,
 
     joined_label: joinedLabel(user.createdAt),
@@ -261,8 +264,12 @@ function userSummary(user, { viewer = null } = {}) {
     // "Show All Users" is the one exception to that, and the one place a
     // viewer *is* needed: two earners can now share a thread, and a free call
     // has no price. Without a viewer the old answer stands.
-    voice_rate_per_minute: quotesRate ? money(profile.voiceRatePerMinute) : 0,
-    video_rate_per_minute: quotesRate ? money(profile.videoRatePerMinute) : 0,
+    //
+    // The list price, not the profile's own rate columns: calls are billed at
+    // the fixed `utils/callPricing` rates, and quoting the columns here put
+    // their ₹12/min default in the chat header.
+    voice_rate_per_minute: quotesRate ? money(BASE_RATE.voice) : 0,
+    video_rate_per_minute: quotesRate ? money(BASE_RATE.video) : 0,
 
     // See [interaction]. Null when the caller had no viewer to hand over.
     can_interact: canInteract,
@@ -434,6 +441,10 @@ function walletSummary(wallet, { isEarner = false } = {}) {
     is_earner: isEarner,
     min_withdrawal: env.economy.minWithdrawalInr,
     vip_expires_at: iso(wallet?.vipExpiresAt),
+    // Zero once the membership has lapsed, so the client never has to
+    // re-derive "is this discount still good" from the expiry itself.
+    vip_call_discount_pct:
+      wallet?.vipExpiresAt && wallet.vipExpiresAt > new Date() ? wallet.vipCallDiscountPct ?? 0 : 0,
   };
 }
 
@@ -477,6 +488,7 @@ function vipPlan(row) {
     days: row.days,
     price_inr: money(row.priceInr),
     bonus_inr: money(row.bonusInr),
+    call_discount_pct: row.callDiscountPct ?? 0,
     is_best: row.isBest,
   };
 }

@@ -12,6 +12,7 @@ const activity = require('./activity.service');
 const { emitToUser, emitToAdmin } = require('../sockets/bus');
 const connections = require('../sockets/connections');
 const serialize = require('../utils/serialize');
+const callPricing = require('../utils/callPricing');
 
 /**
  * Calls, and the money they move.
@@ -229,22 +230,26 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
   // sees the first call here.
   // With gender-based pricing, we can't know if caller pays until we know callee's
   // gender, so we conservatively fetch the balance (it may be unneeded for F-F calls).
-  const [callee, , callerBalance] = await Promise.all([
+  const [callee, , callerBalance, discountPct] = await Promise.all([
     relationship.assertCanCall(user, calleeId, type),
     assertNotBusy(user.id, 'caller'),
     walletService.getBalance(user.id),
+    walletService.vipCallDiscountPct(user.id),
   ]);
 
-  // Gender-based pricing:
+  // Gender-based pricing (see `utils/callPricing`):
   // Female-to-Female: free (rate = 0, no payer)
   // Male-to-Male: ₹5/voice, ₹20/video (caller pays, no earner)
   // Cross-gender: ₹5/voice, ₹20/video (caller pays, callee may earn if isEarner)
-  const callerGender = user.profile?.gender;
-  const calleeGender = callee.profile?.gender;
-  const isFemaleToFemale = callerGender === 'female' && calleeGender === 'female';
-
-  const ratePerMinute = isFemaleToFemale ? 0 : (type === 'voice' ? 5 : 20);
-  const payerId = isFemaleToFemale ? null : user.id;
+  // A VIP caller's discount comes off the rate itself, so the earner's share —
+  // a fixed cut of what was actually charged — is taken on the discounted
+  // price, and the membership's expiry mid-call does not change this call.
+  const ratePerMinute = callPricing.ratePerMinute(type, {
+    callerGender: user.profile?.gender,
+    calleeGender: callee.profile?.gender,
+    discountPct,
+  });
+  const payerId = ratePerMinute > 0 ? user.id : null;
 
   if (ratePerMinute > 0 && payerId === user.id) {
     const balance = callerBalance ?? (await walletService.getBalance(payerId));

@@ -968,7 +968,7 @@ async function run() {
   section('Wallet');
 
   const packages = await get('/wallet/packages', caller.token);
-  check('recharge packages come from the database', packages.data?.packages?.length === 5);
+  check('recharge packages come from the database', packages.data?.packages?.length === 7);
 
   const wallet0 = await get('/wallet', caller.token);
   check('a new wallet starts empty', wallet0.data?.wallet?.balance === 0, {
@@ -983,19 +983,19 @@ async function run() {
   // PAYMENTS_UNAVAILABLE without a purchase_token to verify, which is the
   // point of the flag.
   check('a purchase succeeds', bought.success, { error: bought.error });
-  check('the bonus is included', bought.data?.amount_added === 1100, {
+  check('the bonus is included', bought.data?.amount_added === 1250, {
     got: bought.data?.amount_added,
   });
 
   const wallet1 = await get('/wallet', caller.token);
-  check('the balance reflects the purchase', wallet1.data?.wallet?.balance === 1100, {
+  check('the balance reflects the purchase', wallet1.data?.wallet?.balance === 1250, {
     got: wallet1.data?.wallet?.balance,
   });
 
   const ledger = await get('/wallet/transactions', caller.token);
   check(
     'the purchase is on the ledger',
-    ledger.data?.items?.some((t) => t.kind === 'purchase' && t.amount === 1100)
+    ledger.data?.items?.some((t) => t.kind === 'purchase' && t.amount === 1250)
   );
 
   const earnerLedger = await get('/wallet/transactions', earner.token);
@@ -1093,14 +1093,26 @@ async function run() {
   check('VIP plans come from the database', plans.data?.plans?.length === 3, {
     got: plans.data?.plans?.length,
   });
-  const plan2m = plans.data?.plans?.find((p) => p.id === 'vip_2m');
-  check('the 2-month plan is flagged best', plan2m?.is_best === true, plan2m);
+  const plan3m = plans.data?.plans?.find((p) => p.id === 'vip_3m');
+  check('the 3-month plan is flagged best', plan3m?.is_best === true, plan3m);
+  check(
+    'each plan carries its call discount',
+    plans.data?.plans?.map((p) => p.call_discount_pct).join() === '10,10,15',
+    { got: plans.data?.plans?.map((p) => p.call_discount_pct) }
+  );
+
+  const beforeVip = await get('/wallet', vipUser.token);
+  check(
+    'a non-member has no call discount',
+    beforeVip.data?.wallet?.vip_call_discount_pct === 0,
+    { got: beforeVip.data?.wallet?.vip_call_discount_pct }
+  );
 
   const boughtVip = await post('/wallet/vip/purchase', vipUser.token, {
     plan_id: 'vip_2m',
   });
   check('a VIP purchase succeeds', boughtVip.success, { error: boughtVip.error });
-  check('the bonus is reported', boughtVip.data?.bonus_inr === 350, {
+  check('the bonus is reported', boughtVip.data?.bonus_inr === 45, {
     got: boughtVip.data?.bonus_inr,
   });
   check(
@@ -1113,19 +1125,24 @@ async function run() {
   const walletAfterVip = await get('/wallet', vipUser.token);
   check(
     'the bonus landed in the wallet',
-    walletAfterVip.data?.wallet?.balance === 350,
+    walletAfterVip.data?.wallet?.balance === 45,
     { got: walletAfterVip.data?.wallet?.balance }
   );
   check(
     'the wallet reports the same VIP expiry',
     walletAfterVip.data?.wallet?.vip_expires_at === boughtVip.data?.vip_expires_at
   );
+  check(
+    'the membership carries the 2-month plan\'s 10% call discount',
+    walletAfterVip.data?.wallet?.vip_call_discount_pct === 10,
+    { got: walletAfterVip.data?.wallet?.vip_call_discount_pct }
+  );
 
   const vipLedger = await get('/wallet/transactions', vipUser.token);
   check(
     'the VIP purchase is on the ledger',
     vipLedger.data?.items?.some(
-      (t) => t.title === 'VIP membership' && t.amount === 350
+      (t) => t.title === 'VIP membership' && t.amount === 45
     )
   );
 
@@ -1136,6 +1153,23 @@ async function run() {
     'a second purchase extends the membership rather than resetting it',
     new Date(secondVip.data?.vip_expires_at) > new Date(boughtVip.data?.vip_expires_at),
     { before: boughtVip.data?.vip_expires_at, after: secondVip.data?.vip_expires_at }
+  );
+
+  const thirdVip = await post('/wallet/vip/purchase', vipUser.token, {
+    plan_id: 'vip_3m',
+  });
+  check(
+    'topping up with the 3-month plan raises the discount to 15%',
+    thirdVip.data?.wallet?.vip_call_discount_pct === 15,
+    { got: thirdVip.data?.wallet?.vip_call_discount_pct }
+  );
+  const fourthVip = await post('/wallet/vip/purchase', vipUser.token, {
+    plan_id: 'vip_1m',
+  });
+  check(
+    'a later, cheaper top-up keeps the better 15% rather than dropping it',
+    fourthVip.data?.wallet?.vip_call_discount_pct === 15,
+    { got: fourthVip.data?.wallet?.vip_call_discount_pct }
   );
 
   const missingPlan = await post('/wallet/vip/purchase', vipUser.token, {
@@ -1355,8 +1389,8 @@ async function run() {
   const walletDuring = await get('/wallet', caller.token);
   check(
     'the first minute is charged the moment it connects',
-    walletDuring.data?.wallet?.balance === 1100 - rate,
-    { expected: 1100 - rate, got: walletDuring.data?.wallet?.balance }
+    walletDuring.data?.wallet?.balance === 1250 - rate,
+    { expected: 1250 - rate, got: walletDuring.data?.wallet?.balance }
   );
 
   const active = await get('/calls/active', caller.token);
@@ -1883,6 +1917,26 @@ async function run() {
     promotions: true,
   });
   check('notification settings persist', notifSettings.data?.notifications?.promotions === true);
+
+  // ── VIP call discount ─────────────────────────────────────────────────────
+  // `vipUser` holds a 15% membership (see the VIP section). Placed late, so
+  // nothing earlier that counts the earner's calls sees this one; it is
+  // hung up while still ringing, so no minute is billed and nothing is earned.
+  section('VIP call discount');
+
+  const vipSocket = await goOnline(vipUser);
+  const vipCall = await post('/calls', vipUser.token, { user_id: earner.id, type: 'voice' });
+  check('a VIP can place a call', vipCall.success, { error: vipCall.error });
+  check(
+    'the call is snapshotted at the VIP rate — ₹5 less 15%',
+    vipCall.data?.call?.rate_per_minute === 4.25,
+    { got: vipCall.data?.call?.rate_per_minute }
+  );
+  if (vipCall.data?.call?.id) {
+    await post(`/calls/${vipCall.data.call.id}/end`, vipUser.token, { reason: 'hungUp' });
+  }
+  vipSocket.disconnect();
+  await put('/me/presence', vipUser.token, { status: 'offline' });
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
   // Runs before the session tests, which revoke these tokens.
