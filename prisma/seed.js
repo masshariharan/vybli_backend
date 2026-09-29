@@ -53,9 +53,9 @@ const RECHARGE_PACKAGES = [
 /** VIP plans. 1 / 2 / 3 months, priced in days so a month never has to mean
  * a fixed number of calendar days at purchase time. */
 const VIP_PLANS = [
-  { id: 'vip_1m', days: 30, priceInr: 99, bonusInr: 20, callDiscountPct: 10, isBest: false, sortOrder: 1 },
-  { id: 'vip_2m', days: 60, priceInr: 179, bonusInr: 45, callDiscountPct: 10, isBest: false, sortOrder: 2 },
-  { id: 'vip_3m', days: 90, priceInr: 249, bonusInr: 75, callDiscountPct: 15, isBest: true, sortOrder: 3 },
+  { id: 'vip_1m', days: 30, priceInr: 199, bonusInr: 50, callDiscountPct: 10, isBest: false, sortOrder: 1 },
+  { id: 'vip_2m', days: 60, priceInr: 349, bonusInr: 100, callDiscountPct: 10, isBest: false, sortOrder: 2 },
+  { id: 'vip_3m', days: 90, priceInr: 499, bonusInr: 175, callDiscountPct: 15, isBest: true, sortOrder: 3 },
 ];
 
 /**

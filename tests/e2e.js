@@ -1112,7 +1112,7 @@ async function run() {
     plan_id: 'vip_2m',
   });
   check('a VIP purchase succeeds', boughtVip.success, { error: boughtVip.error });
-  check('the bonus is reported', boughtVip.data?.bonus_inr === 45, {
+  check('the bonus is reported', boughtVip.data?.bonus_inr === 100, {
     got: boughtVip.data?.bonus_inr,
   });
   check(
@@ -1125,7 +1125,7 @@ async function run() {
   const walletAfterVip = await get('/wallet', vipUser.token);
   check(
     'the bonus landed in the wallet',
-    walletAfterVip.data?.wallet?.balance === 45,
+    walletAfterVip.data?.wallet?.balance === 100,
     { got: walletAfterVip.data?.wallet?.balance }
   );
   check(
@@ -1142,7 +1142,7 @@ async function run() {
   check(
     'the VIP purchase is on the ledger',
     vipLedger.data?.items?.some(
-      (t) => t.title === 'VIP membership' && t.amount === 45
+      (t) => t.title === 'VIP membership' && t.amount === 100
     )
   );
 
