@@ -29,4 +29,25 @@ function ratePerMinute(type, { callerGender, calleeGender, discountPct = 0 } = {
   return Math.round(base * (100 - pct)) / 100;
 }
 
-module.exports = { BASE_RATE, ratePerMinute };
+/**
+ * Which side of a call pays: 'caller', 'callee', or null for a free call.
+ *
+ * Women on Vybli are earners only — they never pay, whoever dialled. So in a
+ * call between a man and a woman **the man pays**, whether he placed it or
+ * she did; she is the one who earns. Two men: the caller pays, as before.
+ * Two women: free.
+ *
+ * This used to be "the caller pays" for every billed call, which charged a
+ * woman for calling a man and stopped her at "You do not have enough balance
+ * for this call · Add money" — an action no earner account should ever see.
+ *
+ * A gender this does not recognise falls back to the caller, as it always
+ * did.
+ */
+function payerSide({ callerGender, calleeGender } = {}) {
+  if (callerGender === 'female' && calleeGender === 'female') return null;
+  if (callerGender === 'female' && calleeGender === 'male') return 'callee';
+  return 'caller';
+}
+
+module.exports = { BASE_RATE, ratePerMinute, payerSide };

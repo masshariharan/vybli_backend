@@ -1475,9 +1475,12 @@ async function run() {
   });
   check('earner can purchase balance', rechargeForEarner.success, { error: rechargeForEarner.error });
 
-  // With gender-based pricing: female (earner) calling male (non-earner).
-  // The caller (female) pays, and the callee (male non-earner) doesn't earn.
+  // A woman calling a man. Women are earners only and never pay, whoever
+  // dialled: the man pays, and she — the earner — earns. (This used to bill
+  // her as the caller.)
   const reversedRate = 5; // Hardcoded voice rate
+  const earnerWalletBefore = (await get('/wallet', earner.token)).data?.wallet?.balance;
+  const callerWalletBefore = (await get('/wallet', caller.token)).data?.wallet?.balance;
   const reversedCall = await post('/calls', earner.token, {
     user_id: caller.id,
     type: 'voice',
@@ -1486,29 +1489,26 @@ async function run() {
   const reversedId = reversedCall.data?.call?.id;
   const reversedAccepted = await post(`/calls/${reversedId}/accept`, caller.token);
   check('the non-earner answers', reversedAccepted.success, { error: reversedAccepted.error });
-  const reversedEnded = await post(`/calls/${reversedId}/end`, caller.token, {
-    reason: 'hungUp',
-  });
-  // Female (earner) is the caller and payer. Male (non-earner) is the callee but doesn't earn.
-  check(
-    'the non-earner\'s own summary shows what was charged (though he didn\'t pay)',
-    reversedEnded.data?.summary?.amount_spent === reversedRate,
-    { got: reversedEnded.data?.summary }
-  );
+  await post(`/calls/${reversedId}/end`, caller.token, { reason: 'hungUp' });
 
-  const reversedCallerHistory = await get('/calls/history', caller.token);
-  const reversedRow = reversedCallerHistory.data?.items?.find((r) => r.id === reversedId);
+  const earnerWalletAfter = (await get('/wallet', earner.token)).data?.wallet?.balance;
+  const callerWalletAfter = (await get('/wallet', caller.token)).data?.wallet?.balance;
   check(
-    'the earner paid when she placed the call',
-    reversedRow?.amount_spent === reversedRate,
-    { got: reversedRow }
+    'the woman who placed the call paid nothing',
+    earnerWalletAfter === earnerWalletBefore,
+    { before: earnerWalletBefore, after: earnerWalletAfter }
+  );
+  check(
+    'the man she called paid for it',
+    callerWalletBefore - callerWalletAfter === reversedRate,
+    { before: callerWalletBefore, after: callerWalletAfter }
   );
 
   const reversedEarnerHistory = await get('/calls/history', earner.token);
   const reversedEarnerRow = reversedEarnerHistory.data?.items?.find((r) => r.id === reversedId);
   check(
-    'the earner has no earning since the other side is not an earner',
-    !reversedEarnerRow?.earned_rupees || reversedEarnerRow?.earned_rupees === 0,
+    'and she earned from it, though she was the one who dialled',
+    reversedEarnerRow?.earned_rupees > 0,
     { got: reversedEarnerRow }
   );
 
@@ -1764,22 +1764,20 @@ async function run() {
   );
   const brokeCallId = earnerCallsBroke.data?.call?.id;
 
+  // He is the one who pays — the man always does — so it is his balance that
+  // is checked, when he answers, and put to him.
   const brokeAccept = await post(`/calls/${brokeCallId}/accept`, brokeUser.token);
   check(
-    'the broke user can answer because caller (earner) pays',
-    brokeAccept.success && brokeAccept.data?.call?.status === 'connected',
+    'a broke man cannot answer a woman\'s call, because he is the one who pays',
+    !brokeAccept.success && brokeAccept.error === 'INSUFFICIENT_BALANCE',
     { error: brokeAccept.error, got: brokeAccept.data?.call }
   );
-
-  // Wait a moment for billing to process, then end the call
-  await new Promise(resolve => setTimeout(resolve, 1500));
-  await post(`/calls/${brokeCallId}/end`, brokeUser.token, { reason: 'hungUp' });
 
   const afterBrokeAttempt = await get('/calls/history', earner.token);
   const brokeRow = afterBrokeAttempt.data?.items?.find((r) => r.id === brokeCallId);
   check(
-    'the call was successfully completed',
-    brokeRow?.status === 'ended',
+    'and the call ends without charging her',
+    brokeRow?.status === 'ended' && !brokeRow?.amount_spent,
     { got: brokeRow }
   );
 

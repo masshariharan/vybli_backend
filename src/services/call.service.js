@@ -145,29 +145,29 @@ const CALL_INCLUDE = {
 };
 
 /**
- * Who pays and who earns on this call — determined by gender and isEarner status.
+ * Who pays and who earns on this call — by gender, see
+ * `callPricing.payerSide`.
  *
  * Female-to-Female: free (no payer, no earner).
  * Male-to-Male: caller pays, no earner (100% to Vybli).
- * Male-to-Female/Female-to-Male: caller pays, callee earns if isEarner.
+ * Man and woman, **whoever dialled**: the man pays, and the woman earns if
+ * she is an earner. Women never pay — a woman calling a man used to be
+ * charged as the caller.
  */
 function payerAndEarner(call) {
   const callerGender = call.caller?.profile?.gender;
   const calleeGender = call.callee?.profile?.gender;
-  const calleeIsEarner = Boolean(call.callee?.profile?.isEarner);
+  const side = callPricing.payerSide({ callerGender, calleeGender });
+  if (side === null) return { payerId: null, earnerId: null };
 
-  if (callerGender === 'female' && calleeGender === 'female') {
-    return { payerId: null, earnerId: null };
-  }
-
-  if (callerGender === 'male' && calleeGender === 'male') {
-    return { payerId: call.callerId, earnerId: null };
-  }
-
-  const calleeIsOppositeGender = callerGender !== calleeGender;
+  const payerId = side === 'caller' ? call.callerId : call.calleeId;
+  // The other party earns only across genders, and only as an earner.
+  const other = side === 'caller' ? call.callee : call.caller;
+  const otherId = side === 'caller' ? call.calleeId : call.callerId;
+  const crossGender = callerGender !== calleeGender;
   return {
-    payerId: call.callerId,
-    earnerId: calleeIsOppositeGender && calleeIsEarner ? call.calleeId : null,
+    payerId,
+    earnerId: crossGender && other?.profile?.isEarner ? otherId : null,
   };
 }
 
@@ -230,27 +230,41 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
   // sees the first call here.
   // With gender-based pricing, we can't know if caller pays until we know callee's
   // gender, so we conservatively fetch the balance (it may be unneeded for F-F calls).
-  const [callee, , callerBalance, discountPct] = await Promise.all([
-    relationship.assertCanCall(user, calleeId, type),
-    assertNotBusy(user.id, 'caller'),
-    walletService.getBalance(user.id),
-    walletService.vipCallDiscountPct(user.id),
-  ]);
+  // Both sides' VIP discount, because either may be the one paying — a woman
+  // calling a man is billed to him (see `callPricing.payerSide`).
+  const [callee, , callerBalance, callerDiscountPct, calleeDiscountPct] =
+    await Promise.all([
+      relationship.assertCanCall(user, calleeId, type),
+      assertNotBusy(user.id, 'caller'),
+      walletService.getBalance(user.id),
+      walletService.vipCallDiscountPct(user.id),
+      walletService.vipCallDiscountPct(calleeId),
+    ]);
 
   // Gender-based pricing (see `utils/callPricing`):
   // Female-to-Female: free (rate = 0, no payer)
   // Male-to-Male: ₹5/voice, ₹20/video (caller pays, no earner)
-  // Cross-gender: ₹5/voice, ₹20/video (caller pays, callee may earn if isEarner)
-  // A VIP caller's discount comes off the rate itself, so the earner's share —
-  // a fixed cut of what was actually charged — is taken on the discounted
-  // price, and the membership's expiry mid-call does not change this call.
+  // Man and woman: ₹5/voice, ₹20/video — the man pays, whoever dialled, and
+  // the woman may earn. Women never pay.
+  // The payer's VIP discount comes off the rate itself, so the earner's
+  // share — a fixed cut of what was actually charged — is taken on the
+  // discounted price, and the membership's expiry mid-call does not change
+  // this call.
+  const side = callPricing.payerSide({
+    callerGender: user.profile?.gender,
+    calleeGender: callee.profile?.gender,
+  });
   const ratePerMinute = callPricing.ratePerMinute(type, {
     callerGender: user.profile?.gender,
     calleeGender: callee.profile?.gender,
-    discountPct,
+    discountPct: side === 'callee' ? calleeDiscountPct : callerDiscountPct,
   });
-  const payerId = ratePerMinute > 0 ? user.id : null;
+  const payerId =
+    ratePerMinute > 0 && side ? (side === 'caller' ? user.id : calleeId) : null;
 
+  // Only a paying caller is checked here. When the callee pays — a woman
+  // ringing a man — their balance is theirs to know, and is checked in
+  // `accept`, where it is charged and reported to them.
   if (ratePerMinute > 0 && payerId === user.id) {
     const balance = callerBalance ?? (await walletService.getBalance(payerId));
     if (balance < ratePerMinute) throw errors.insufficientBalance(ratePerMinute, balance);

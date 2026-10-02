@@ -70,13 +70,18 @@ async function randomMatch(req, res) {
     walletService.vipCallDiscountPct(req.userId),
   ]);
 
-  // The same figure `call.service.startUnlocked` will charge, VIP discount
-  // included — see `utils/callPricing`.
-  const ratePerMinute = callPricing.ratePerMinute(req.body.type, {
+  // What *this* caller would pay — the figure `call.service.startUnlocked`
+  // charges them, VIP discount included (see `utils/callPricing`). Nothing
+  // when the other side pays: a woman calling a man is billed to him, so she
+  // is quoted no price at all.
+  const genders = {
     callerGender: req.user.profile?.gender,
     calleeGender: match.profile?.gender,
-    discountPct,
-  });
+  };
+  const ratePerMinute =
+    callPricing.payerSide(genders) === 'caller'
+      ? callPricing.ratePerMinute(req.body.type, { ...genders, discountPct })
+      : 0;
 
   return ok(
     res,
