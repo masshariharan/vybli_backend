@@ -423,6 +423,58 @@ function isUniqueViolation(error) {
  * both people, which is everything the guard needs), then the block check and
  * the retry lookup side by side, then the write.
  */
+/**
+ * Charges one message to the sender, if the sender pays for messages.
+ *
+ * Paying accounts are men who are not earners and not active VIPs — women,
+ * earners and VIPs send free. The price goes to Vybli in full: chat has no
+ * earner share. The debit is a single conditional UPDATE, so two sends racing
+ * each other cannot both spend the last rupee.
+ *
+ * No ledger row per message — a busy chat would bury every recharge and call
+ * in the wallet history. The balance itself is the record, pushed to the
+ * sender's phone as `wallet:balance` after each charge.
+ *
+ * Returns the amount charged (0 when free), for [refundMessage] if the send
+ * then fails.
+ */
+async function chargeForMessage(user) {
+  const price = env.economy.messagePriceInr;
+  if (!(price > 0)) return 0;
+  const profile = user.profile;
+  if (!profile || profile.gender === 'female' || profile.isEarner) return 0;
+
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId: user.id },
+    select: { vipExpiresAt: true, balance: true },
+  });
+  if (wallet?.vipExpiresAt && wallet.vipExpiresAt > new Date()) return 0;
+
+  const rows = await prisma.$queryRaw`
+    UPDATE "wallets"
+    SET "balance" = "balance" - ${price}, "updatedAt" = NOW()
+    WHERE "userId" = ${user.id} AND "balance" >= ${price}
+    RETURNING "balance"`;
+  if (rows.length === 0) {
+    throw errors.insufficientBalanceForMessage(price, Number(wallet?.balance ?? 0));
+  }
+  emitToUser(user.id, 'wallet:balance', { balance: Number(rows[0].balance) });
+  return price;
+}
+
+/** Puts a message charge back after a send that did not go through. */
+async function refundMessage(user, amount) {
+  if (!(amount > 0)) return;
+  const rows = await prisma.$queryRaw`
+    UPDATE "wallets"
+    SET "balance" = "balance" + ${amount}, "updatedAt" = NOW()
+    WHERE "userId" = ${user.id}
+    RETURNING "balance"`;
+  if (rows.length > 0) {
+    emitToUser(user.id, 'wallet:balance', { balance: Number(rows[0].balance) });
+  }
+}
+
 async function sendMessage(user, conversationId, { text = '', attachment, clientId, envelope }) {
   // End-to-end encrypted, which every current app is: the message is the
   // envelope, and there is no readable text or attachment to store — see
@@ -479,6 +531,11 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
     });
   }
 
+  // Charged once every check has passed, just before the write — and put
+  // back if the write fails. A retry of a stored message returned above, so
+  // it is never charged twice.
+  const charged = await chargeForMessage(user);
+
   const now = new Date();
 
   // The insert and the conversation bump in **one statement** — Postgres runs
@@ -515,6 +572,11 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
       SELECT m.*, c."mutedByA" AS "_mutedByA", c."mutedByB" AS "_mutedByB"
       FROM m, c`;
   } catch (error) {
+    // Nothing was sent, so nothing is owed — including when the other copy
+    // of a racing retry already stored it and paid for it.
+    await refundMessage(user, charged).catch((err) =>
+      console.error(`[chat] could not refund a message charge for ${user.id}`, err)
+    );
     // Two copies of the same retry racing each other: the other one stored
     // it first. Answer with that, as the lookup above would have.
     if (clientId && isUniqueViolation(error)) {

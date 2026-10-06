@@ -151,7 +151,11 @@ const env = {
     /// are both plain rupees.
     earnerShare: num('EARNER_SHARE', 0.7),
     earningClearHours: num('EARNING_CLEAR_HOURS', 48),
-    minWithdrawalInr: num('MIN_WITHDRAWAL_INR', 500),
+    minWithdrawalInr: num('MIN_WITHDRAWAL_INR', 100),
+    /// What one chat message costs a paying account, in rupees. It goes to
+    /// Vybli in full — chat has no earner share. Women, earners and active
+    /// VIPs send free.
+    messagePriceInr: num('MESSAGE_PRICE_INR', 1),
   },
 
   /**

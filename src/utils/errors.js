@@ -258,6 +258,12 @@ const errors = {
       code: 'INSUFFICIENT_BALANCE',
       details: { required, balance },
     }),
+  insufficientBalanceForMessage: (required, balance) =>
+    new AppError('You do not have enough balance to send a message.', {
+      status: 402,
+      code: 'INSUFFICIENT_BALANCE',
+      details: { required, balance },
+    }),
   paymentFailed: (message = 'Your bank declined the payment. No money was deducted.') =>
     new AppError(message, { status: 402, code: 'PAYMENT_FAILED' }),
   /** The client named a Play Billing purchase but sent no purchase token with it. */
