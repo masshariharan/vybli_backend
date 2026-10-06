@@ -165,6 +165,8 @@ async function removeCreatedAccounts() {
       prisma.report.deleteMany({
         where: { OR: [{ reporterId: { in: ids } }, { reportedId: { in: ids } }] },
       }),
+      // Restricted for the same reason as reports.
+      prisma.supportMessage.deleteMany({ where: { userId: { in: ids } } }),
     ]);
 
     const { count } = await prisma.user.deleteMany({
@@ -1857,6 +1859,51 @@ async function run() {
   });
   check('a report can be filed', report.success);
   check('report-and-block works in one call', report.data?.blocked === true);
+
+  // ── Help & Support ────────────────────────────────────────────────────────
+  section('Help & Support');
+
+  const supportSent = await post('/support/messages', caller.token, {
+    message: '  The call screen froze after I tapped End.  ',
+    category: 'bug',
+  });
+  check('a support message can be sent', supportSent.status === 201 && supportSent.success, {
+    status: supportSent.status,
+    error: supportSent.error,
+  });
+  check(
+    'and comes back open, with its category',
+    supportSent.data?.message?.status === 'open' &&
+      supportSent.data?.message?.category === 'bug' &&
+      Boolean(supportSent.data?.message?.id && supportSent.data?.message?.created_at),
+    supportSent.data
+  );
+
+  const supportShort = await post('/support/messages', caller.token, {
+    message: '   too short   ',
+    category: 'question',
+  });
+  check(
+    'a message under ten characters, once trimmed, is refused',
+    supportShort.status === 422 && supportShort.error === 'VALIDATION_ERROR',
+    { status: supportShort.status, error: supportShort.error }
+  );
+
+  const supportBadCategory = await post('/support/messages', caller.token, {
+    message: 'This is a perfectly long message.',
+    category: 'complaint',
+  });
+  check('an unknown category is refused', supportBadCategory.status === 422, {
+    status: supportBadCategory.status,
+  });
+
+  const supportAnon = await post('/support/messages', null, {
+    message: 'Nobody signed in sent this.',
+    category: 'question',
+  });
+  check('sending one needs a signed-in account', supportAnon.status === 401, {
+    status: supportAnon.status,
+  });
 
   // ── Notifications ─────────────────────────────────────────────────────────
   section('Notifications');

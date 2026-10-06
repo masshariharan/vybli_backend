@@ -9,6 +9,7 @@ const {
   otpRequestLimiter,
   otpVerifyLimiter,
   writeLimiter,
+  supportLimiter,
   paymentLimiter,
 } = require('../middleware/rateLimit');
 const S = require('../validators/schemas');
@@ -30,6 +31,7 @@ const {
   devices,
   moderation,
   verification,
+  support,
 } = require('../controllers/misc.controller');
 const livekitController = require('../controllers/livekit.controller');
 const adminRoutes = require('./admin');
@@ -629,5 +631,23 @@ mod.post(
 );
 
 router.use('/moderation', mod);
+
+// ── Support ─────────────────────────────────────────────────────────────────
+//
+// The Help & Support screen's "send us a message". `authenticate` only, like
+// moderation: somebody stuck half-way through onboarding is exactly who might
+// need to ask for help.
+
+const sup = express.Router();
+sup.use(authenticate);
+
+sup.post(
+  '/messages',
+  supportLimiter,
+  validate({ body: S.support.message }),
+  h(support.send)
+);
+
+router.use('/support', sup);
 
 module.exports = router;

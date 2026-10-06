@@ -188,6 +188,19 @@ enum ReportStatus {
   dismissed
 }
 
+/// What a Help & Support message is about — the two choices the app offers.
+enum SupportCategory {
+  question
+  bug
+}
+
+/// A support inbox is a to-do list, not a case tracker: a message is either
+/// still waiting for somebody or it has been dealt with.
+enum SupportStatus {
+  open
+  resolved
+}
+
 // ── Identity ────────────────────────────────────────────────────────────────
 
 /// Auth identity only. Everything a person *is* lives on [UserProfile], so a
@@ -250,6 +263,8 @@ model User {
   blocksReceived Block[]  @relation("Blocked")
   reportsMade    Report[] @relation("Reporter")
   reportsAgainst Report[] @relation("Reported")
+
+  supportMessages SupportMessage[]
 
   favoritesMade     Favorite[] @relation("FavoritedBy")
   favoritedByOthers Favorite[] @relation("FavoriteUser")
@@ -573,6 +588,38 @@ model Report {
   @@index([reporterId])
   @@index([status, createdAt])
   @@map("reports")
+}
+
+/// A message sent from the app's Help & Support screen — a question, or a bug.
+///
+/// One-way, into the admin panel's Support inbox. There is no reply thread:
+/// an administrator reads it, deals with it and marks it resolved, with an
+/// optional note for whoever looks at it next.
+model SupportMessage {
+  id       String          @id @default(cuid())
+  userId   String
+  category SupportCategory
+  message  String
+  status   SupportStatus   @default(open)
+
+  resolvedAt DateTime?
+  /// Admin username who resolved it, not a foreign key — same reasoning as
+  /// [Report.resolvedBy].
+  resolvedBy String?
+  /// The administrator's optional note on what was done about it.
+  adminNote  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// `Restrict`, like [Report]: what somebody told support is part of the
+  /// platform's record and outlives the account. Account deletion never
+  /// hard-deletes the `User` row, so this never actually fires.
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@map("support_messages")
 }
 
 // ── Messaging ───────────────────────────────────────────────────────────────
@@ -1043,6 +1090,7 @@ enum ActivityType {
   block
   unblock
   report
+  support_message
   notification
   account_status_changed
   account_deleted

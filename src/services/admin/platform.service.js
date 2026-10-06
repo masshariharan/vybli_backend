@@ -272,6 +272,36 @@ async function verificationFeed({ status, userId, skip = 0, take = 25 }) {
 }
 
 /**
+ * The "to verify" queue: every woman whose review is still pending, oldest
+ * request first — the people the Vybli team still has to phone. The call
+ * itself is an ordinary phone call outside the app; the decision afterwards
+ * is [decideVerification], as always.
+ */
+async function verificationQueue({ skip = 0, take = 25 }) {
+  const where = { gender: 'female', verificationStatus: 'pending', isVerified: false };
+
+  const [rows, total] = await Promise.all([
+    prisma.userProfile.findMany({
+      where,
+      include: { user: { include: { languages: true } } },
+      orderBy: [{ verificationRequestedAt: { sort: 'asc', nulls: 'last' } }, { userId: 'asc' }],
+      skip,
+      take,
+    }),
+    prisma.userProfile.count({ where }),
+  ]);
+
+  return {
+    items: rows.map((p) => ({
+      user: summarise({ ...p.user, profile: p, languages: p.user.languages }),
+      verification_requested_at: p.verificationRequestedAt?.toISOString() ?? null,
+      verification_status: p.verificationStatus,
+    })),
+    total,
+  };
+}
+
+/**
  * Decides an earner's identity review.
  *
  * A rejection **requires a reason**, because the user is shown it and because
@@ -424,6 +454,87 @@ async function resolveReport(reportId, { status, resolution, notes, reviewer }) 
     status: updated.status,
     resolution: updated.resolution,
     reported_id: report.reportedId,
+  };
+}
+
+// ── Support ─────────────────────────────────────────────────────────────────
+
+/**
+ * The Help & Support inbox: what people sent from the app's support screen.
+ *
+ * Newest first rather than a queue like reports — a support message is
+ * usually answered by reading the latest few, and the status filter is what
+ * separates what still needs doing from what has been done.
+ */
+async function supportFeed({ status, category, userId, from, to, search, skip = 0, take = 25 }) {
+  const where = {};
+  if (status) where.status = status;
+  if (category) where.category = category;
+  if (userId) where.userId = userId;
+  if (from || to) {
+    where.createdAt = {};
+    if (from) where.createdAt.gte = new Date(from);
+    if (to) where.createdAt.lte = new Date(to);
+  }
+  if (search) {
+    where.OR = [
+      { message: { contains: search, mode: 'insensitive' } },
+      { user: { profile: { name: { contains: search, mode: 'insensitive' } } } },
+      { user: { phone: { contains: search } } },
+    ];
+  }
+
+  const [rows, total] = await Promise.all([
+    prisma.supportMessage.findMany({
+      where,
+      include: { user: { include: PROFILE_INCLUDE } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip,
+      take,
+    }),
+    prisma.supportMessage.count({ where }),
+  ]);
+
+  return {
+    items: rows.map((m) => ({
+      id: m.id,
+      user: summarise(m.user),
+      category: m.category,
+      message: m.message,
+      status: m.status,
+      admin_note: m.adminNote,
+      resolved_at: m.resolvedAt?.toISOString() ?? null,
+      resolved_by: m.resolvedBy,
+      created_at: m.createdAt.toISOString(),
+    })),
+    total,
+  };
+}
+
+async function resolveSupportMessage(id, { note, reviewer }) {
+  const existing = await prisma.supportMessage.findUnique({ where: { id } });
+  if (!existing) throw errors.notFound('Support message', 'SUPPORT_MESSAGE_NOT_FOUND');
+  if (existing.status === 'resolved') {
+    throw errors.conflict('This message has already been resolved.', 'SUPPORT_ALREADY_RESOLVED');
+  }
+
+  const updated = await prisma.supportMessage.update({
+    where: { id },
+    data: {
+      status: 'resolved',
+      adminNote: typeof note === 'string' && note.trim() ? note.trim().slice(0, 1000) : null,
+      resolvedAt: new Date(),
+      resolvedBy: reviewer,
+    },
+  });
+
+  return {
+    id: updated.id,
+    status: updated.status,
+    admin_note: updated.adminNote,
+    resolved_at: updated.resolvedAt.toISOString(),
+    resolved_by: updated.resolvedBy,
+    user_id: updated.userId,
   };
 }
 
@@ -803,9 +914,12 @@ module.exports = {
   liveCalls,
   livekitRooms,
   verificationFeed,
+  verificationQueue,
   decideVerification,
   reportFeed,
   resolveReport,
+  supportFeed,
+  resolveSupportMessage,
   blockFeed,
   walletFeed,
   transactionFeed,

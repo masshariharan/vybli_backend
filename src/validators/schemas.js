@@ -376,6 +376,17 @@ const moderation = {
   }),
 };
 
+// ── Support ─────────────────────────────────────────────────────────────────
+
+const support = {
+  // The app's Help & Support form: a question, or a bug. Length is checked
+  // after trimming, so ten spaces and a letter is not a message.
+  message: z.object({
+    message: z.string().trim().min(10).max(500),
+    category: z.enum(['question', 'bug']),
+  }),
+};
+
 // ── Notifications ───────────────────────────────────────────────────────────
 
 const notifications = {
@@ -425,6 +436,7 @@ module.exports = {
   calls,
   wallet,
   moderation,
+  support,
   notifications,
   devices,
   favorites,

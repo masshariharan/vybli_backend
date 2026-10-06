@@ -340,6 +340,58 @@ const post = (path, token, body) => api('POST', path, { token, body });
     );
   }
 
+  const support = await get('/admin/support-messages?status=open&limit=5', token);
+  check('the support inbox loads', support.success, { error: support?.error });
+  check(
+    'filtered to open messages only',
+    (support.data?.items ?? []).every((m) => m.status === 'open'),
+    { statuses: [...new Set((support.data?.items ?? []).map((m) => m.status))] }
+  );
+  if (support.data?.items?.[0]) {
+    const m = support.data.items[0];
+    check('a support row names who sent it', Boolean(m.user?.id && m.user?.phone !== undefined));
+  }
+
+  const badSupportFilter = await api('GET', '/admin/support-messages?status=pending', {
+    token,
+    raw: true,
+  });
+  check('an unknown support status filter is refused', badSupportFilter.status === 400, {
+    status: badSupportFilter.status,
+  });
+
+  const missingSupport = await api('POST', '/admin/support-messages/does-not-exist/resolve', {
+    token,
+    body: { note: 'x' },
+    raw: true,
+  });
+  check('resolving an unknown support message is a 404', missingSupport.status === 404, {
+    status: missingSupport.status,
+  });
+
+  // ── Verification queue ────────────────────────────────────────────────────
+  section('Verification queue');
+
+  const toVerify = await get('/admin/verification/queue?limit=5', token);
+  check('the to-verify queue loads', toVerify.success, { error: toVerify?.error });
+  check(
+    'with the usual pagination envelope',
+    Array.isArray(toVerify.data?.items) && typeof toVerify.data?.pagination?.total === 'number',
+    toVerify.data?.pagination
+  );
+  if (toVerify.data?.items?.[0]) {
+    const r = toVerify.data.items[0];
+    check(
+      'a queue row says who, her phone number, and since when',
+      Boolean(r.user?.id) &&
+        typeof r.user?.phone === 'string' &&
+        'verification_requested_at' in r &&
+        r.verification_status === 'pending' &&
+        r.user?.gender === 'female',
+      r
+    );
+  }
+
   // ── Everything else responds ──────────────────────────────────────────────
   section('Remaining endpoints');
 

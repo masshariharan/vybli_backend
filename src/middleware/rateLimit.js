@@ -81,6 +81,23 @@ const writeLimiter = rateLimit({
   handler: jsonLimit('You are doing that too quickly.', 'RATE_LIMITED'),
 });
 
+/**
+ * Help & Support messages. Each one lands in a person's inbox in the admin
+ * panel, so a handful per user is plenty — enough to follow up on a message,
+ * not enough to flood the queue.
+ */
+const supportLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.userId ?? req.ip,
+  handler: jsonLimit(
+    'You have sent several messages already. Please wait a few minutes.',
+    'RATE_LIMITED'
+  ),
+});
+
 /** Anything that moves money. */
 const paymentLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -96,5 +113,6 @@ module.exports = {
   otpRequestLimiter,
   otpVerifyLimiter,
   writeLimiter,
+  supportLimiter,
   paymentLimiter,
 };

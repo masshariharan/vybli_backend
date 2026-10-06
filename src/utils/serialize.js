@@ -520,6 +520,16 @@ function notification(row) {
   };
 }
 
+/** What the app gets back after sending a Help & Support message. */
+function supportMessage(row) {
+  return {
+    id: row.id,
+    category: row.category,
+    status: row.status,
+    created_at: iso(row.createdAt),
+  };
+}
+
 function privacySettings(row) {
   return {
     profile_visible_to_everyone: row.profileVisibleToEveryone,
@@ -571,6 +581,7 @@ module.exports = {
   vipPlan,
   earning,
   notification,
+  supportMessage,
   privacySettings,
   notificationSettings,
   discoverySettings,

@@ -485,6 +485,7 @@ it. With a provider configured but its verification failing, the answer is
 | POST | `/moderation/block` | `{ "user_id" }` |
 | DELETE | `/moderation/block/:id` | Unblock |
 | POST | `/moderation/report` | `{ "user_id", "reason", "details", "also_block" }` |
+| POST | `/support/messages` | `{ "message", "category": "question" \| "bug" }` → 201 `{ "message": { id, category, status, created_at } }` |
 | GET | `/verification/status` | `{ "is_verified", "status", "rejection_reason" }` |
 
 **Blocking is a full severance**, not a discovery filter: the friendship and
@@ -510,6 +511,14 @@ Onboarding completes without waiting on a decision — an account would
 otherwise be locked out of every route past onboarding for as long as the
 queue is. Being discoverable stays gated on `isVerified`, which is separate
 and starts `false`.
+
+### Verification phone call
+
+Before deciding, the Vybli team **phones** a woman waiting for review — an
+ordinary phone call to the number she signed up with, made outside the app —
+then approves or rejects from the admin panel as above. Nothing about that
+call goes through the API: the app only ever sees the outcome, through
+`/verification/status`, `profile:updated` and the usual notification.
 
 ---
 
@@ -542,8 +551,11 @@ registration endpoint exists, and there is no admin table in Postgres.
 | GET | `/admin/friend-requests` | |
 | GET | `/admin/verifications` | The identity-review queue, oldest request first |
 | POST | `/admin/verifications/:id/decide` | `:id` is the user id. `{ decision, reason }` — reason required to reject |
+| GET | `/admin/verification/queue` | "To verify": every woman still `pending` and not verified, oldest `verification_requested_at` first (`?page=&limit=`). Items `{ user, verification_requested_at, verification_status }` — `user` is the usual user summary, `phone` in full (`"+91 98…"`) for the team to ring. Decide with `/admin/verifications/:id/decide` |
 | GET | `/admin/reports`, `/admin/blocks` | |
 | POST | `/admin/reports/:id/resolve` | `{ status, resolution, notes }` |
+| GET | `/admin/support-messages` | Help & Support inbox, newest first. `?status=open\|resolved&category=&search=&from=&to=` |
+| POST | `/admin/support-messages/:id/resolve` | `{ note }` — note optional. **Audited** |
 | GET | `/admin/wallets`, `/admin/earnings`, `/admin/transactions` | |
 | GET | `/admin/notifications` | |
 | GET | `/admin/audit-logs` | Read-only. There is no write route |
@@ -583,6 +595,7 @@ second unaudited path to the same power.
 | `admin:call_started` / `admin:call_ended` | Call lifecycle, with the participants |
 | `admin:verification_pending` | An earner finished onboarding and was queued for review |
 | `admin:report_filed` | Somebody was reported |
+| `admin:support_message` | Somebody sent a Help & Support message |
 
 ---
 
@@ -674,6 +687,7 @@ a stranger cannot fake a typing indicator or reach into someone else's call.
 | OTP request | 5 / 15 min **per phone number** |
 | OTP verify | 15 / 15 min per number |
 | Writes (messages, requests, reports) | 60 / min per user |
+| Support messages | 5 / 10 min per user |
 | Payments | 10 / min per user |
 
 OTP limits key on the **number**, not the IP — one attacker hitting a hundred

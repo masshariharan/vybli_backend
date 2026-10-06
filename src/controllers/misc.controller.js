@@ -4,15 +4,16 @@ const notificationService = require('../services/notification.service');
 const pushService = require('../services/push.service');
 const moderationService = require('../services/moderation.service');
 const verificationService = require('../services/verification.service');
+const supportService = require('../services/support.service');
 const serialize = require('../utils/serialize');
 const { ok, created, paginated } = require('../utils/respond');
 const { q } = require('../middleware/validate');
 const { toSkipTake } = require('../validators/common');
 
 /**
- * Notifications, devices, moderation and verification status.
+ * Notifications, devices, moderation, verification status and support.
  *
- * Small surfaces sharing one file rather than four files of forty lines each
+ * Small surfaces sharing one file rather than five files of forty lines each
  * — none of them has enough behaviour to earn its own.
  */
 
@@ -141,4 +142,20 @@ const verification = {
   },
 };
 
-module.exports = { notifications, devices, moderation, verification };
+// ── Support ─────────────────────────────────────────────────────────────────
+
+const support = {
+  async send(req, res) {
+    const row = await supportService.send(req.user, {
+      message: req.body.message,
+      category: req.body.category,
+    });
+    return created(
+      res,
+      { message: serialize.supportMessage(row) },
+      'Thanks — our support team will look into it'
+    );
+  },
+};
+
+module.exports = { notifications, devices, moderation, verification, support };

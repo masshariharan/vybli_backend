@@ -159,6 +159,17 @@ const audit = {
       metadata: { status, resolution: resolution ?? null },
     }),
 
+  resolvedSupportMessage: (req, { supportMessageId, userId, note }) =>
+    write({
+      req,
+      userId,
+      action: 'support.resolved',
+      targetType: 'support_message',
+      targetId: supportMessageId,
+      description: `Support message resolved${note ? ` — ${note}` : ''}`,
+      metadata: { note: note ?? null },
+    }),
+
   changedAccountStatus: (req, { userId, status, reason }) =>
     write({
       req,

@@ -555,6 +555,18 @@ router.post(
   })
 );
 
+// The panel's "To verify" list: every woman still pending review, oldest
+// request first. The Vybli team phones her (an ordinary phone call, outside
+// the app) and then decides with `/verifications/:id/decide` above.
+router.get(
+  '/verification/queue',
+  h(async (req, res) => {
+    const p = page(req);
+    const result = await platform.verificationQueue(p);
+    return listed(res, result, p, 'Verification queue');
+  })
+);
+
 // ── Moderation ──────────────────────────────────────────────────────────────
 
 router.get(
@@ -597,6 +609,54 @@ router.post(
       resolution,
     });
     return ok(res, result, 'Report updated');
+  })
+);
+
+// ── Support ─────────────────────────────────────────────────────────────────
+
+router.get(
+  '/support-messages',
+  h(async (req, res) => {
+    // Checked here rather than handed to Prisma, where an unknown enum value
+    // is a 500 instead of a bad request.
+    const status = str(req.query.status);
+    const category = str(req.query.category);
+    if ((status && !['open', 'resolved'].includes(status)) ||
+        (category && !['question', 'bug'].includes(category))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status must be open or resolved, and category question or bug.',
+        error: 'BAD_REQUEST',
+      });
+    }
+
+    const p = page(req);
+    const result = await platform.supportFeed({
+      ...p,
+      ...range(req),
+      status,
+      category,
+      userId: str(req.query.user_id),
+      search: str(req.query.search),
+    });
+    return listed(res, result, p, 'Support messages');
+  })
+);
+
+router.post(
+  '/support-messages/:id/resolve',
+  h(async (req, res) => {
+    const { note } = req.body ?? {};
+    const result = await platform.resolveSupportMessage(req.params.id, {
+      note,
+      reviewer: env.admin.username,
+    });
+    audit.resolvedSupportMessage(req, {
+      supportMessageId: req.params.id,
+      userId: result.user_id,
+      note: result.admin_note,
+    });
+    return ok(res, result, 'Support message resolved');
   })
 );
 
