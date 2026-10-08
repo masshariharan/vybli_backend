@@ -96,6 +96,25 @@ function usageRowData(day, raw, pricing) {
   };
 }
 
+/**
+ * Swaps a set of day rows for new ones, atomically, in two statements.
+ *
+ * One upsert per day in a batch transaction cost a round trip each, and
+ * against a remote database the 42-day first backfill ran past Prisma's
+ * five-second transaction limit and rolled back. A bulk delete plus a bulk
+ * insert is two round trips however many days there are — and is still an
+ * overwrite, never an increment, so a repeated sync cannot double-count.
+ */
+function replaceDays(model, where, rows) {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx[model].deleteMany({ where });
+      if (rows.length) await tx[model].createMany({ data: rows });
+    },
+    { timeout: 30_000, maxWait: 10_000 }
+  );
+}
+
 // ── Usage sync (Cloud Monitoring) ───────────────────────────────────────────
 
 async function syncUsage(now = new Date()) {
@@ -177,14 +196,12 @@ async function syncUsage(now = new Date()) {
       )
     : new Map();
 
-  await prisma.$transaction(
-    [...days.entries()].map(([day, counts]) => {
-      const prev = existing.get(day);
-      for (const field of keep) counts[field] = prev?.[field] ?? 0;
-      const data = usageRowData(day, counts, pricing);
-      return prisma.smsUsageDay.upsert({ where: { day }, create: { day, ...data }, update: data });
-    })
-  );
+  const rows = [...days.entries()].map(([day, counts]) => {
+    const prev = existing.get(day);
+    for (const field of keep) counts[field] = prev?.[field] ?? 0;
+    return { day, ...usageRowData(day, counts, pricing) };
+  });
+  await replaceDays('smsUsageDay', { day: { in: rows.map((r) => r.day) } }, rows);
 
   const through = windows[windows.length - 1].end;
   await saveState({
@@ -250,24 +267,22 @@ async function syncBilling(now = new Date()) {
     }
   }
 
-  const ops = [...byDay.entries()].map(([day, d]) => {
-    const data = {
-      ...d,
-      cost: P.round4(d.cost),
-      credits: P.round4(d.credits),
-      netCost: P.round4(d.netCost),
-      netCostInr: P.round4(d.netCostInr),
-    };
-    return prisma.smsBillingDay.upsert({ where: { day }, create: { day, ...data }, update: data });
-  });
-  // A day inside the window that no longer has SMS rows was revised to
-  // nothing; drop it rather than keep showing a charge Google withdrew.
-  ops.push(
-    prisma.smsBillingDay.deleteMany({
-      where: { ...(firstDay ? { day: { gte: firstDay } } : {}), NOT: { day: { in: [...byDay.keys()] } } },
-    })
+  const billRows = [...byDay.entries()].map(([day, d]) => ({
+    day,
+    ...d,
+    cost: P.round4(d.cost),
+    credits: P.round4(d.credits),
+    netCost: P.round4(d.netCost),
+    netCostInr: P.round4(d.netCostInr),
+  }));
+  // The whole window is replaced, so a day Google revised to nothing drops
+  // out rather than keep showing a charge it withdrew. Days the export
+  // returned from before the window (first run reads everything) go too.
+  await replaceDays(
+    'smsBillingDay',
+    { OR: [...(firstDay ? [{ day: { gte: firstDay } }] : [{}]), { day: { in: billRows.map((r) => r.day) } }] },
+    billRows
   );
-  await prisma.$transaction(ops);
 
   const skus = [...new Set(rows.flatMap((r) => r.skus.split(' | ')).filter(Boolean))];
   await saveState({ billingSyncedAt: now, billingAttemptAt: now, billingError: null });
@@ -670,14 +685,8 @@ async function updatePricing({ rateUsd, usdToInr, freePerDay, applyTo = 'recent'
   const rows = await prisma.smsUsageDay.findMany({
     where: applyTo === 'all' ? {} : { day: { gte: firstDay } },
   });
-  await prisma.$transaction(
-    rows.map((r) =>
-      prisma.smsUsageDay.update({
-        where: { day: r.day },
-        data: usageRowData(r.day, { ...r, regions: r.regions ?? {} }, pricing),
-      })
-    )
-  );
+  const repriced = rows.map((r) => ({ day: r.day, ...usageRowData(r.day, { ...r, regions: r.regions ?? {} }, pricing) }));
+  await replaceDays('smsUsageDay', { day: { in: repriced.map((r) => r.day) } }, repriced);
 
   emitToAdmin('admin:sms_usage_synced', { at: new Date().toISOString() });
   return { pricing, repriced_days: rows.length };
