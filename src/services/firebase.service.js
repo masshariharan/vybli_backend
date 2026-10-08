@@ -89,16 +89,18 @@ async function verifyPhoneToken(idToken) {
 
   let decoded;
   try {
-    decoded = await admin
-      .auth(client())
-      .verifyIdToken(idToken, env.firebase.hasServiceAccount);
+    // Signature and claims only. The revocation check is separate, below, so
+    // that a credential problem cannot reject a perfectly valid sign-in.
+    decoded = await admin.auth(client()).verifyIdToken(idToken);
   } catch (err) {
-    // Expired, revoked, wrong project, or forged. None of them is something
-    // the user can act on beyond trying again, and naming which would tell a
-    // prober how close they got.
+    // Expired, wrong project, or forged. None of them is something the user
+    // can act on beyond trying again, and naming which would tell a prober
+    // how close they got.
     console.warn('[firebase] token rejected:', err.code || err.message);
     throw errors.invalidToken('That sign-in could not be verified. Please try again.');
   }
+
+  if (env.firebase.hasServiceAccount) await assertNotRevoked(idToken);
 
   // How long ago the user actually proved they hold the number, not when the
   // token was minted — `iat` refreshes silently, `auth_time` does not.
@@ -116,6 +118,39 @@ async function verifyPhoneToken(idToken) {
 
   const parsed = splitE164(raw);
   return { ...parsed, firebaseUid: decoded.uid, e164: raw };
+}
+
+/**
+ * The revocation half of the check, which needs to read the Firebase user
+ * record — and so needs the service account to hold Firebase Auth read access
+ * (`roles/firebaseauth.viewer`).
+ *
+ * It used to ride along inside `verifyIdToken(token, true)`. A service account
+ * without that role — the push-notification one usually is — then failed
+ * every sign-in with `auth/insufficient-permission`, reported to the user as
+ * "That sign-in could not be verified" for a code that was correct. Only a
+ * definite answer rejects now: revoked or disabled. Not being able to ask is
+ * logged and let through; the signature and the freshness check still hold.
+ */
+let revocationWarned = false;
+
+async function assertNotRevoked(idToken) {
+  try {
+    await admin.auth(client()).verifyIdToken(idToken, true);
+  } catch (err) {
+    if (err.code === 'auth/id-token-revoked' || err.code === 'auth/user-disabled') {
+      console.warn('[firebase] token rejected:', err.code);
+      throw errors.invalidToken('That sign-in could not be verified. Please try again.');
+    }
+    if (!revocationWarned) {
+      revocationWarned = true;
+      console.warn(
+        '[firebase] revocation check skipped:',
+        err.code || err.message,
+        '— grant the service account roles/firebaseauth.viewer to enable it.'
+      );
+    }
+  }
 }
 
 /**
