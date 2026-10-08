@@ -95,6 +95,25 @@ router.get('/health', async (_req, res) => {
   });
 });
 
+// ── App version ─────────────────────────────────────────────────────────────
+
+// Public: the app asks before anyone signs in, because a build too old to
+// talk to this server has to be stopped at the door, not after the login
+// screen. Whether an update exists at all is Google Play's answer, not this
+// one — see `appUpdate` in `config/env`.
+router.get('/app/version', (_req, res) =>
+  res.json({
+    success: true,
+    message: 'App version policy',
+    data: {
+      android: {
+        min_supported_build: env.appUpdate.androidMinSupportedBuild,
+        message: env.appUpdate.message || null,
+      },
+    },
+  })
+);
+
 // ── LiveKit ─────────────────────────────────────────────────────────────────
 
 // Public by design: LiveKit posts here from its own infrastructure with no

@@ -414,6 +414,21 @@ const env = {
       return Boolean(this.url && this.apiKey && this.apiSecret);
     },
   },
+
+  /**
+   * Which installed builds of the app may keep running.
+   *
+   * Google Play decides whether a newer build *exists* for a handset; this
+   * only decides whether that update is optional or required. A build below
+   * `androidMinSupportedBuild` (the Android `versionCode` — the number after
+   * the `+` in pubspec's `version`) is blocked behind an "Update required"
+   * screen until it updates. 0 means nothing is ever forced.
+   */
+  appUpdate: {
+    androidMinSupportedBuild: num('ANDROID_MIN_SUPPORTED_BUILD', 0),
+    /// Shown on the update prompt instead of the app's own wording, when set.
+    message: (process.env.APP_UPDATE_MESSAGE || '').trim(),
+  },
 };
 
 // Guard rails, checked at boot rather than left as a comment nobody reads.

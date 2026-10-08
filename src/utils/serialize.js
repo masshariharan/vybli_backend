@@ -3,7 +3,7 @@
 const env = require('../config/env');
 const avatarCatalog = require('../config/avatarCatalog');
 const { canPair } = require('./pairing');
-const { BASE_RATE } = require('./callPricing');
+const { BASE_RATE, quotedRate } = require('./callPricing');
 
 /**
  * The wire format.
@@ -73,8 +73,6 @@ function publicUser(
   if (!user) return null;
   const profile = user.profile ?? user;
   const privacy = user.privacySettings ?? {};
-  // Nothing to charge an earner, so nothing to quote her.
-  const viewerPays = !viewerProfile?.isEarner;
 
   // A viewer always sees their own detail in full, whatever they have hidden
   // from everyone else.
@@ -126,22 +124,15 @@ function publicUser(
 
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
-    // Show user's own rate when viewing self, list prices otherwise.
-    // Gender-based pricing uses fixed list prices (`utils/callPricing`), but
-    // users still see their configured rates on their own profile. A VIP
+    // Your own configured rate on your own profile; otherwise what *you*
+    // would pay to call this person — see `callPricing.quotedRate`. A VIP
     // viewer's discount is applied by the client, from its own wallet.
-    voice_rate_per_minute:
-      isSelf
-        ? money(profile.voiceRatePerMinute)
-        : profile.isEarner && !(viewerProfile?.gender === 'female' && profile.gender === 'female')
-          ? money(BASE_RATE.voice)
-          : 0,
-    video_rate_per_minute:
-      isSelf
-        ? money(profile.videoRatePerMinute)
-        : profile.isEarner && !(viewerProfile?.gender === 'female' && profile.gender === 'female')
-          ? money(BASE_RATE.video)
-          : 0,
+    voice_rate_per_minute: isSelf
+      ? money(profile.voiceRatePerMinute)
+      : money(rateQuote('voice', viewerProfile, user)),
+    video_rate_per_minute: isSelf
+      ? money(profile.videoRatePerMinute)
+      : money(rateQuote('video', viewerProfile, user)),
 
     joined_label: joinedLabel(user.createdAt),
 
@@ -216,9 +207,6 @@ function myProfile(user) {
 function userSummary(user, { viewer = null } = {}) {
   if (!user) return null;
   const canInteract = interaction(user, viewer);
-  // A same-side pair ("Show All Users") calls for free, so there is no price
-  // to quote either of them — see `call.service.startUnlocked`.
-  const quotesRate = profileIsEarner(user) && !(viewer?.profile && sameSideAs(viewer, user));
   const profile = user.profile ?? user;
   const privacy = user.privacySettings ?? {};
   const showPresence = privacy.showOnlineStatus !== false;
@@ -253,35 +241,33 @@ function userSummary(user, { viewer = null } = {}) {
 
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
-    // Only an earner has a rate worth quoting. A non-earner is never paid for
-    // a call, so their rate columns are meaningless — and a chat header that
-    // printed them put "₹12/min · ₹20/min" over a man the viewer would pay
-    // nothing to call, on the one screen where an earner should see no price
-    // at all. There is no viewer to consult here, and none is needed: a call
-    // always pairs an earner with a non-earner, so a peer who is not an earner
-    // means the viewer is, and the viewer is not being charged.
-    //
-    // "Show All Users" is the one exception to that, and the one place a
-    // viewer *is* needed: two earners can now share a thread, and a free call
-    // has no price. Without a viewer the old answer stands.
-    //
-    // The list price, not the profile's own rate columns: calls are billed at
-    // the fixed `utils/callPricing` rates, and quoting the columns here put
-    // their ₹12/min default in the chat header.
-    voice_rate_per_minute: quotesRate ? money(BASE_RATE.voice) : 0,
-    video_rate_per_minute: quotesRate ? money(BASE_RATE.video) : 0,
+    // What the viewer would pay to call this person — the same rule
+    // `call.service` bills by (see `callPricing.quotedRate`). A man is quoted
+    // a price for anyone; a woman, never.
+    voice_rate_per_minute: money(rateQuote('voice', viewer?.profile, user)),
+    video_rate_per_minute: money(rateQuote('video', viewer?.profile, user)),
 
     // See [interaction]. Null when the caller had no viewer to hand over.
     can_interact: canInteract,
   };
 }
 
-function profileIsEarner(user) {
-  return Boolean((user.profile ?? user).isEarner);
+/**
+ * What `viewerProfile` is quoted for calling `user` — `callPricing.quotedRate`.
+ * With no viewer to ask about (a few admin-side lists), the old answer: an
+ * earner's list price, nothing for anyone else.
+ */
+function rateQuote(type, viewerProfile, user) {
+  const quoted = quotedRate(type, {
+    viewerGender: viewerProfile?.gender,
+    peerGender: (user.profile ?? user).gender,
+  });
+  if (quoted !== null) return quoted;
+  return profileIsEarner(user) ? BASE_RATE[type] : 0;
 }
 
-function sameSideAs(viewer, user) {
-  return Boolean(viewer.profile?.isEarner) === profileIsEarner(user);
+function profileIsEarner(user) {
+  return Boolean((user.profile ?? user).isEarner);
 }
 
 // ── Reference data ──────────────────────────────────────────────────────────
