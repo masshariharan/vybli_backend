@@ -268,6 +268,70 @@ const env = {
   },
 
   /**
+   * Firebase SMS usage and cost, for the admin panel's SMS dashboard.
+   *
+   * The app asks Firebase to send the SMS straight from the phone, so this
+   * server never sees a send happen — the only trustworthy counts are
+   * Google's own. Usage comes from Cloud Monitoring (`identitytoolkit`
+   * metrics) and actual charges from the Cloud Billing export in BigQuery.
+   * The Cloud Billing API itself does not report costs; the export is the
+   * only machine-readable source of them.
+   *
+   * Credentials default to the Firebase service account above. It needs
+   * `roles/monitoring.viewer` on the Firebase project for usage, and —
+   * for actual charges — `roles/bigquery.jobUser` on the export's project
+   * plus `roles/bigquery.dataViewer` on its dataset.
+   *
+   * Pricing defaults are Identity Platform's published India rate
+   * (https://cloud.google.com/identity-platform/pricing, checked 2026-10-08):
+   * $0.07 per SMS, the first 10 SMS per project per day not billed. The
+   * admin panel can override all three without a redeploy.
+   */
+  smsMonitoring: {
+    enabled: bool('SMS_MONITORING_ENABLED', true),
+    projectId: (process.env.SMS_MONITORING_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || '').trim(),
+    clientEmail: (process.env.GCP_MONITORING_CLIENT_EMAIL || process.env.FIREBASE_CLIENT_EMAIL || '').trim(),
+    // Kept untrimmed: the PEM's own newlines matter, same as Firebase's key.
+    privateKey: process.env.GCP_MONITORING_PRIVATE_KEY || process.env.FIREBASE_PRIVATE_KEY || '',
+
+    /// `project.dataset.gcp_billing_export_v1_XXXXXX_XXXXXX_XXXXXX`. Empty
+    /// means actual charges are reported as unavailable, not as zero.
+    billingExportTable: (process.env.GCP_BILLING_EXPORT_TABLE || '').trim(),
+    /// Where the BigQuery job runs (and is billed). Defaults to the table's project.
+    billingQueryProject: (process.env.GCP_BILLING_QUERY_PROJECT || '').trim(),
+    /// BigQuery dataset location, e.g. `US`, `EU`, `asia-south1`.
+    billingLocation: (process.env.GCP_BILLING_LOCATION || '').trim(),
+
+    /// Google's billing day — the day the ten free SMS reset on.
+    timezone: (process.env.SMS_BILLING_TIMEZONE || 'America/Los_Angeles').trim(),
+    rateUsd: num('SMS_RATE_USD', 0.07),
+    freePerDay: num('SMS_FREE_PER_DAY', 10),
+    usdToInr: num('SMS_USD_TO_INR', 90),
+    /// Region the rate above applies to. SMS to other regions are counted but
+    /// flagged as unpriced rather than guessed at.
+    pricedRegion: (process.env.SMS_PRICED_REGION || 'IN').trim().toUpperCase(),
+
+    syncIntervalMinutes: num('SMS_SYNC_INTERVAL_MINUTES', 15),
+    /// Days re-read on each sync. Monitoring data settles within minutes;
+    /// three days covers a missed sync or a server that was down overnight.
+    usageLookbackDays: num('SMS_USAGE_LOOKBACK_DAYS', 3),
+    /// Monitoring keeps these metrics six weeks; the first sync backfills that.
+    usageBackfillDays: num('SMS_USAGE_BACKFILL_DAYS', 42),
+    /// Billing rows are revised for days after the fact.
+    billingLookbackDays: num('SMS_BILLING_LOOKBACK_DAYS', 35),
+
+    get hasCredentials() {
+      return Boolean(this.projectId && this.clientEmail && this.privateKey);
+    },
+    get usageConfigured() {
+      return this.enabled && this.hasCredentials;
+    },
+    get billingConfigured() {
+      return this.usageConfigured && Boolean(this.billingExportTable);
+    },
+  },
+
+  /**
    * Who carries the OTP.
    *
    * [configured] rather than a feature flag: with no provider set, `deliver`

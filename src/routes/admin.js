@@ -14,6 +14,7 @@ const dashboard = require('../services/admin/dashboard.service');
 const users = require('../services/admin/users.service');
 const messages = require('../services/admin/messages.service');
 const platform = require('../services/admin/platform.service');
+const smsUsage = require('../services/admin/sms-usage.service');
 
 /**
  * The admin API.
@@ -735,6 +736,70 @@ router.get(
       unreadOnly: req.query.unread === 'true',
     });
     return listed(res, result, p, 'Notifications');
+  })
+);
+
+// ── SMS OTP usage and cost ──────────────────────────────────────────────────
+
+/**
+ * Firebase phone-auth SMS: Google's own sent / verified / blocked counts,
+ * the estimated cost at the published rate, and what Google actually billed.
+ * Read-only with respect to sign-in — nothing here touches the OTP path.
+ */
+router.get(
+  '/sms-usage',
+  h(async (req, res) =>
+    ok(res, await smsUsage.summary({ days: Number(req.query.days) || 30 }), 'SMS usage')
+  )
+);
+
+router.get(
+  '/sms-usage/history',
+  h(async (req, res) => {
+    const p = page(req, 31);
+    const day = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
+    const result = await smsUsage.history({ ...p, from: day(req.query.from), to: day(req.query.to) });
+    return listed(res, result, p, 'SMS history');
+  })
+);
+
+/** Each run asks Google several questions, so the button is rate-limited. */
+const smsSyncLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Synced moments ago — try again in a minute.', error: 'TOO_MANY_REQUESTS' },
+});
+
+router.post(
+  '/sms-usage/sync',
+  smsSyncLimiter,
+  h(async (req, res) => {
+    const result = await smsUsage.sync({ reason: 'manual' });
+    return ok(res, result, result.usageError || result.billingError ? 'Synced with errors' : 'Synced');
+  })
+);
+
+router.put(
+  '/sms-usage/pricing',
+  h(async (req, res) => {
+    const b = req.body ?? {};
+    const result = await smsUsage.updatePricing({
+      rateUsd: b.rate_usd,
+      usdToInr: b.usd_to_inr,
+      freePerDay: b.free_per_day,
+      applyTo: b.apply_to ?? 'recent',
+    });
+    audit.write({
+      req,
+      action: 'sms.pricing_updated',
+      targetType: 'settings',
+      targetId: 'sms_pricing',
+      description: `SMS pricing set to $${result.pricing.rateUsd}/SMS at ₹${result.pricing.usdToInr}/$, ${result.pricing.freePerDay} free per day`,
+      metadata: { ...b, repriced_days: result.repriced_days },
+    });
+    return ok(res, result, 'Pricing updated');
   })
 );
 

@@ -1173,3 +1173,104 @@ model AdminAuditLog {
   @@index([userId, createdAt])
   @@map("admin_audit_logs")
 }
+
+// ── SMS OTP usage and cost ──────────────────────────────────────────────────
+
+/// One billing day of Firebase phone-auth SMS, as Google's own Cloud
+/// Monitoring reports it — never counted from app requests or sign-ins.
+///
+/// Keyed by the **billing day** (`YYYY-MM-DD` in `SMS_BILLING_TIMEZONE`, US
+/// Pacific by default), because that is the day Google applies its ten free
+/// SMS to. Each sync *overwrites* the days it re-reads rather than adding to
+/// them, which is what makes running it twice, or on two instances at once,
+/// unable to double-count anything.
+///
+/// The price and exchange rate are snapshotted onto the row when it is
+/// synced, so changing the pricing later re-prices only the days still inside
+/// the sync window — closed history keeps the rate it was charged at.
+model SmsUsageDay {
+  day String @id
+
+  /// SMS Google says it sent (`usage/sent_sms_count`). The billable figure.
+  sent Int @default(0)
+  /// Codes the user then entered correctly (`usage/verification_sms_count`).
+  verified Int @default(0)
+  /// Sends Google refused — region policy, abuse protection
+  /// (`usage/blocked_sms_count`). Not billed.
+  blocked Int @default(0)
+  /// `sendVerificationCode` requests that returned an error — bad number,
+  /// quota, reCAPTCHA failure. Not billed.
+  failed Int @default(0)
+
+  /// `{ "IN": { "sent": 12, "verified": 9, "blocked": 0 } }` — per region, so
+  /// a non-Indian number is visible rather than silently priced as Indian.
+  regions Json?
+
+  freeSms   Int     @default(0)
+  paidSms   Int     @default(0)
+  /// Paid SMS in regions with no configured rate. Counted, never priced.
+  unpricedSms Int   @default(0)
+  rateUsd   Decimal @db.Decimal(10, 4)
+  usdToInr  Decimal @db.Decimal(10, 4)
+  freePerDay Int
+  estCostUsd Decimal @default(0) @db.Decimal(14, 4)
+  estCostInr Decimal @default(0) @db.Decimal(14, 4)
+
+  syncedAt DateTime @updatedAt
+
+  @@map("sms_usage_days")
+}
+
+/// What Google actually billed for SMS on a day, from the Cloud Billing
+/// export in BigQuery. Arrives hours to a day after the usage, and can be
+/// revised for a few days after that — so the recent days are re-read on
+/// every sync and overwritten, never appended.
+model SmsBillingDay {
+  day      String @id
+  currency String
+
+  /// Gross cost, before credits, in [currency].
+  cost      Decimal @db.Decimal(14, 4)
+  /// Credits (negative) — free tier, promotions, committed-use.
+  credits   Decimal @db.Decimal(14, 4)
+  /// What was actually charged: `cost + credits`.
+  netCost   Decimal @db.Decimal(14, 4)
+  /// [netCost] in rupees — as-is when billed in INR, converted otherwise.
+  netCostInr Decimal @db.Decimal(14, 4)
+  /// The SMS count on the billing SKU — Google's own count of chargeable SMS.
+  billedSms Decimal @db.Decimal(14, 2)
+  /// Google's USD → [currency] rate for these rows, when it reports one.
+  conversionRate Decimal? @db.Decimal(14, 6)
+  /// Newest `export_time` among the rows, i.e. how fresh this day's figure is.
+  exportedAt DateTime?
+
+  syncedAt DateTime @updatedAt
+
+  @@map("sms_billing_days")
+}
+
+/// Singleton (`id = "sms"`): the pricing the operator set, and how the last
+/// syncs went. Pricing columns are null until the admin overrides the
+/// environment defaults.
+model SmsMonitorState {
+  id String @id @default("sms")
+
+  rateUsd    Decimal? @db.Decimal(10, 4)
+  usdToInr   Decimal? @db.Decimal(10, 4)
+  freePerDay Int?
+  pricingUpdatedAt DateTime?
+
+  usageSyncedAt   DateTime?
+  usageAttemptAt  DateTime?
+  usageError      String?
+  /// End of the newest Monitoring interval read — "usage is current to here".
+  usageDataThrough DateTime?
+
+  billingSyncedAt  DateTime?
+  billingAttemptAt DateTime?
+  billingError     String?
+
+  updatedAt DateTime @updatedAt
+
+  @@map("sms_monitor_state")
+}

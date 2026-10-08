@@ -10,6 +10,7 @@ const profileService = require('./services/profile.service');
 const callService = require('./services/call.service');
 const otpService = require('./services/otp.service');
 const retention = require('./services/retention.service');
+const smsUsage = require('./services/admin/sms-usage.service');
 
 /**
  * Process entry point.
@@ -79,6 +80,11 @@ async function start() {
       .catch((err) => console.error('[retention] message purge failed', err));
   expire();
   setInterval(expire, 3600_000).unref();
+
+  // Firebase SMS usage and cost for the admin dashboard, read from Google
+  // Cloud Monitoring and the billing export. Background only — it never runs
+  // on a request and cannot slow or fail a sign-in.
+  smsUsage.scheduleSync();
 
   // No host argument, so this binds every interface — loopback and the LAN
   // alike. That is what lets a phone on the same Wi-Fi reach it.
