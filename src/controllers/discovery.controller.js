@@ -80,7 +80,11 @@ async function randomMatch(req, res) {
   };
   const ratePerMinute =
     callPricing.payerSide(genders) === 'caller'
-      ? callPricing.ratePerMinute(req.body.type, { ...genders, discountPct })
+      ? callPricing.ratePerMinute(req.body.type, {
+          callerProfile: req.user.profile,
+          calleeProfile: match.profile,
+          discountPct,
+        })
       : 0;
 
   return ok(

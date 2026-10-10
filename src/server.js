@@ -7,6 +7,7 @@ const prisma = require('./config/prisma');
 const { createApp } = require('./app');
 const { attachSockets } = require('./sockets');
 const profileService = require('./services/profile.service');
+const pricing = require('./services/pricing.service');
 const callService = require('./services/call.service');
 const otpService = require('./services/otp.service');
 const retention = require('./services/retention.service');
@@ -28,9 +29,12 @@ async function start() {
 
   attachSockets(server);
 
+  // The pricing ladder before the first request: every card quotes a woman's
+  // level price from it. Never fatal — it falls back to the launch ladder.
   const [presenceReset, callsClosed] = await Promise.all([
     profileService.resetAllPresence(),
     callService.reconcileOnBoot(),
+    pricing.start(),
   ]);
 
   if (presenceReset > 0) {

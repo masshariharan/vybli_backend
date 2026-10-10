@@ -259,6 +259,9 @@ model User {
   callsReceived Call[]    @relation("CallCallee")
   earnings      Earning[]
 
+  callStats    EarnerCallStats[]
+  levelChanges EarnerLevelChange[]
+
   blocksMade     Block[]  @relation("Blocker")
   blocksReceived Block[]  @relation("Blocked")
   reportsMade    Report[] @relation("Reporter")
@@ -349,6 +352,15 @@ model UserProfile {
   voiceRatePerMinute Decimal @default(12) @db.Decimal(10, 2)
   videoRatePerMinute Decimal @default(20) @db.Decimal(10, 2)
 
+  /// A woman's call levels, 1 (Starter) to 6 (Elite) — one for voice and one
+  /// for video, earned separately; see `services/pricing.service.js`. Her
+  /// price per minute is her level's on the `CallLevel` ladder, so it is not
+  /// stored here: change the ladder and every price follows. Held on the
+  /// profile, rather than only in `EarnerCallStats`, because every feed and
+  /// profile already loads this row to quote a price.
+  voiceLevel Int @default(1)
+  videoLevel Int @default(1)
+
   /// Average of the ratings left on this person's calls. Recomputed on each
   /// new rating rather than stored as a running sum, so it cannot drift.
   rating     Float @default(0)
@@ -382,6 +394,8 @@ model UserProfile {
 
   @@index([isEarner, cityId, presence])
   @@index([presence])
+  @@index([voiceLevel])
+  @@index([videoLevel])
   @@map("user_profiles")
 }
 
@@ -799,6 +813,18 @@ model Call {
   amountSpent   Decimal @default(0) @db.Decimal(12, 2)
   ratePerMinute Decimal @default(0) @db.Decimal(10, 2)
 
+  /// The earner's cut and level, snapshotted when the call starts — like the
+  /// rate, so an admin change mid-call cannot change what this call pays
+  /// out. Null on calls from before levels existed, and on calls with no
+  /// earner.
+  earnerShare Decimal? @db.Decimal(5, 4)
+  earnerLevel Int?
+
+  /// When this call was added to the earner's level statistics. The
+  /// compare-and-set on it is what makes counting idempotent: a retried or
+  /// duplicated end event finds it already set and counts nothing.
+  statsCountedAt DateTime?
+
   endReason CallEndReason?
   rating    Int?
 
@@ -816,7 +842,101 @@ model Call {
   @@index([callerId, createdAt])
   @@index([calleeId, createdAt])
   @@index([status])
+  // Earnings by level, for the admin's pricing summary.
+  @@index([type, earnerLevel, endedAt])
   @@map("calls")
+}
+
+// ── Call levels ─────────────────────────────────────────────────────────────
+
+/// The pricing ladder: six levels per call type, each with what it takes to
+/// reach and what it costs per minute. Admin-editable; seeded with the
+/// launch values by the migration. See `services/pricing.service.js`.
+model CallLevel {
+  type             CallType
+  /// 1 (Starter) to 6 (Elite).
+  level            Int
+  name             String
+  /// Completed, billed call time needed, in seconds.
+  minSeconds       Int
+  /// Distinct men who have paid for a call with her, of this type.
+  minUniqueCallers Int
+  ratePerMinute    Decimal  @db.Decimal(10, 2)
+  updatedAt        DateTime @updatedAt
+
+  @@id([type, level])
+  @@map("call_levels")
+}
+
+/// Platform-wide pricing settings. One row, `id = 1`.
+model PricingSettings {
+  id          Int      @id @default(1)
+  /// The earner's share of what a call costs the payer — 0.30 is 30%.
+  earnerShare Decimal  @db.Decimal(5, 4)
+  updatedAt   DateTime @updatedAt
+
+  @@map("pricing_settings")
+}
+
+/// A woman's running totals for one call type — what her level is earned
+/// from. Voice and video are separate rows and never affect each other.
+model EarnerCallStats {
+  userId          String
+  type            CallType
+  /// Completed, billed call time, in seconds.
+  billableSeconds Int      @default(0)
+  /// Distinct paying men — see `EarnerCaller`.
+  uniqueCallers   Int      @default(0)
+  countedCalls    Int      @default(0)
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type])
+  @@map("earner_call_stats")
+}
+
+/// Each man who has paid for a call with a woman, once per call type. The
+/// primary key *is* the "count him only once" rule: a repeat caller's insert
+/// is skipped, so his minutes count but he does not count again.
+model EarnerCaller {
+  earnerId    String
+  callerId    String
+  type        CallType
+  firstCallId String
+  createdAt   DateTime @default(now())
+
+  @@id([earnerId, callerId, type])
+  @@map("earner_callers")
+}
+
+/// Every change to a woman's level — automatic, or made by an admin.
+model EarnerLevelChange {
+  id        String   @id @default(cuid())
+  userId    String
+  type      CallType
+  fromLevel Int
+  toLevel   Int
+  /// The level names and prices as they were — renaming a level later
+  /// must not rewrite history.
+  fromName  String
+  toName    String
+  fromRate  Decimal  @db.Decimal(10, 2)
+  toRate    Decimal  @db.Decimal(10, 2)
+  /// `auto` or `admin`.
+  source    String
+  reason    String?
+  /// The admin's username, for `admin`.
+  actor     String?
+  /// The call that tipped her over, for an automatic upgrade.
+  callId    String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("earner_level_changes")
 }
 
 // ── Money ───────────────────────────────────────────────────────────────────
@@ -945,19 +1065,19 @@ model RechargePackage {
 /// bonus it grants on top of the membership itself. Priced server-side, like
 /// [RechargePackage] — the client renders whatever this table says.
 model VipPlan {
-  id        String  @id
+  id              String  @id
   /// Membership length. Not months — a month has no fixed day count, and
   /// `vipExpiresAt` is computed by adding this many days to `now()`.
-  days      Int
-  priceInr  Decimal @db.Decimal(10, 2)
-  bonusInr  Decimal @default(0) @db.Decimal(10, 2)
+  days            Int
+  priceInr        Decimal @db.Decimal(10, 2)
+  bonusInr        Decimal @default(0) @db.Decimal(10, 2)
   /// Percent off voice and video calls while this membership is active.
-  callDiscountPct Int @default(0)
+  callDiscountPct Int     @default(0)
   /// The plan editorially called out as the best deal — at most one should
   /// carry this at a time.
-  isBest    Boolean @default(false)
-  sortOrder Int     @default(0)
-  isActive  Boolean @default(true)
+  isBest          Boolean @default(false)
+  sortOrder       Int     @default(0)
+  isActive        Boolean @default(true)
 
   @@map("vip_plans")
 }
@@ -1207,29 +1327,29 @@ model SmsUsageDay {
   day String @id
 
   /// SMS Google says it sent (`usage/sent_sms_count`). The billable figure.
-  sent Int @default(0)
+  sent     Int @default(0)
   /// Codes the user then entered correctly (`usage/verification_sms_count`).
   verified Int @default(0)
   /// Sends Google refused — region policy, abuse protection
   /// (`usage/blocked_sms_count`). Not billed.
-  blocked Int @default(0)
+  blocked  Int @default(0)
   /// `sendVerificationCode` requests that returned an error — bad number,
   /// quota, reCAPTCHA failure. Not billed.
-  failed Int @default(0)
+  failed   Int @default(0)
 
   /// `{ "IN": { "sent": 12, "verified": 9, "blocked": 0 } }` — per region, so
   /// a non-Indian number is visible rather than silently priced as Indian.
   regions Json?
 
-  freeSms   Int     @default(0)
-  paidSms   Int     @default(0)
+  freeSms     Int     @default(0)
+  paidSms     Int     @default(0)
   /// Paid SMS in regions with no configured rate. Counted, never priced.
-  unpricedSms Int   @default(0)
-  rateUsd   Decimal @db.Decimal(10, 4)
-  usdToInr  Decimal @db.Decimal(10, 4)
-  freePerDay Int
-  estCostUsd Decimal @default(0) @db.Decimal(14, 4)
-  estCostInr Decimal @default(0) @db.Decimal(14, 4)
+  unpricedSms Int     @default(0)
+  rateUsd     Decimal @db.Decimal(10, 4)
+  usdToInr    Decimal @db.Decimal(10, 4)
+  freePerDay  Int
+  estCostUsd  Decimal @default(0) @db.Decimal(14, 4)
+  estCostInr  Decimal @default(0) @db.Decimal(14, 4)
 
   syncedAt DateTime @updatedAt
 
@@ -1245,19 +1365,19 @@ model SmsBillingDay {
   currency String
 
   /// Gross cost, before credits, in [currency].
-  cost      Decimal @db.Decimal(14, 4)
+  cost           Decimal   @db.Decimal(14, 4)
   /// Credits (negative) — free tier, promotions, committed-use.
-  credits   Decimal @db.Decimal(14, 4)
+  credits        Decimal   @db.Decimal(14, 4)
   /// What was actually charged: `cost + credits`.
-  netCost   Decimal @db.Decimal(14, 4)
+  netCost        Decimal   @db.Decimal(14, 4)
   /// [netCost] in rupees — as-is when billed in INR, converted otherwise.
-  netCostInr Decimal @db.Decimal(14, 4)
+  netCostInr     Decimal   @db.Decimal(14, 4)
   /// The SMS count on the billing SKU — Google's own count of chargeable SMS.
-  billedSms Decimal @db.Decimal(14, 2)
+  billedSms      Decimal   @db.Decimal(14, 2)
   /// Google's USD → [currency] rate for these rows, when it reports one.
-  conversionRate Decimal? @db.Decimal(14, 6)
+  conversionRate Decimal?  @db.Decimal(14, 6)
   /// Newest `export_time` among the rows, i.e. how fresh this day's figure is.
-  exportedAt DateTime?
+  exportedAt     DateTime?
 
   syncedAt DateTime @updatedAt
 
@@ -1270,14 +1390,14 @@ model SmsBillingDay {
 model SmsMonitorState {
   id String @id @default("sms")
 
-  rateUsd    Decimal? @db.Decimal(10, 4)
-  usdToInr   Decimal? @db.Decimal(10, 4)
-  freePerDay Int?
+  rateUsd          Decimal?  @db.Decimal(10, 4)
+  usdToInr         Decimal?  @db.Decimal(10, 4)
+  freePerDay       Int?
   pricingUpdatedAt DateTime?
 
-  usageSyncedAt   DateTime?
-  usageAttemptAt  DateTime?
-  usageError      String?
+  usageSyncedAt    DateTime?
+  usageAttemptAt   DateTime?
+  usageError       String?
   /// End of the newest Monitoring interval read — "usage is current to here".
   usageDataThrough DateTime?
 

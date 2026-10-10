@@ -7,6 +7,8 @@ const favoriteService = require('../services/favorite.service');
 const serialize = require('../utils/serialize');
 const prisma = require('../config/prisma');
 const { districtAt } = require('../services/geo/district.service');
+const pricing = require('../services/pricing.service');
+const { errors } = require('../utils/errors');
 const { ok } = require('../utils/respond');
 
 async function getMe(req, res) {
@@ -172,8 +174,17 @@ async function setLocation(req, res) {
   return ok(res, { place }, 'Location recorded');
 }
 
+/** Her call levels and progress. Only women have them. */
+async function getLevels(req, res) {
+  if (req.user.profile?.gender !== 'female') {
+    throw errors.forbidden('Only women have call levels.', 'NOT_AN_EARNER');
+  }
+  return ok(res, { levels: await pricing.earnerLevels(req.userId) }, 'Your levels');
+}
+
 module.exports = {
   getMe,
+  getLevels,
   setLocation,
   setAvatar,
   updateMe,

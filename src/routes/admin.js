@@ -15,6 +15,8 @@ const users = require('../services/admin/users.service');
 const messages = require('../services/admin/messages.service');
 const platform = require('../services/admin/platform.service');
 const smsUsage = require('../services/admin/sms-usage.service');
+const pricingAdmin = require('../services/admin/pricing.service');
+const pricing = require('../services/pricing.service');
 
 /**
  * The admin API.
@@ -399,6 +401,101 @@ router.post(
       reason,
     });
     return ok(res, result, 'Wallet adjusted');
+  })
+);
+
+// ── Pricing & levels ────────────────────────────────────────────────────────
+// The level ladder, the earner share, women's levels and their history. Every
+// change is audited; the app reads the same values back through
+// `services/pricing.service`, so a price changed here is the price charged.
+
+router.get(
+  '/pricing',
+  h(async (req, res) =>
+    ok(res, await pricingAdmin.overview({ days: Number(req.query.days) || 30 }), 'Pricing')
+  )
+);
+
+router.put(
+  '/pricing/ladder/:type',
+  h(async (req, res) => {
+    const type = req.params.type;
+    const before = pricing.settingsView().ladder[type] ?? null;
+    const result = await pricing.updateLadder(type, req.body?.levels);
+    audit.changedLadder(req, {
+      type,
+      before,
+      after: result.ladder[type],
+      raised: result.raised,
+    });
+    return ok(res, result, 'Ladder saved');
+  })
+);
+
+router.put(
+  '/pricing/settings',
+  h(async (req, res) => {
+    const before = pricing.earnerShare();
+    const result = await pricing.updateEarnerShare(req.body?.earner_share);
+    audit.changedEarnerShare(req, { before, after: result.earner_share });
+    return ok(res, result, 'Settings saved');
+  })
+);
+
+router.get(
+  '/pricing/earners',
+  h(async (req, res) => {
+    const p = page(req);
+    const result = await pricingAdmin.earners({
+      ...p,
+      type: str(req.query.type) === 'video' ? 'video' : 'voice',
+      level: str(req.query.level),
+      search: str(req.query.search),
+      sort: str(req.query.sort) ?? 'level',
+    });
+    return listed(res, result, p, 'Earners');
+  })
+);
+
+router.get(
+  '/pricing/history',
+  h(async (req, res) => {
+    const p = page(req);
+    const result = await pricingAdmin.history({
+      ...p,
+      userId: str(req.query.user_id),
+      type: ['voice', 'video'].includes(req.query.type) ? req.query.type : undefined,
+      source: ['auto', 'admin'].includes(req.query.source) ? req.query.source : undefined,
+    });
+    return listed(res, result, p, 'Level history');
+  })
+);
+
+router.get(
+  '/users/:id/levels',
+  h(async (req, res) => ok(res, await pricingAdmin.forUser(req.params.id), 'Levels'))
+);
+
+router.post(
+  '/users/:id/levels',
+  h(async (req, res) => {
+    const { type, level, reason } = req.body ?? {};
+    const result = await pricing.setLevel(req.params.id, {
+      type,
+      level: Number(level),
+      reason,
+      actor: env.admin.username,
+    });
+    if (result.change) {
+      audit.setCallLevel(req, {
+        userId: req.params.id,
+        type,
+        from: result.change.from_level,
+        to: result.change.to_level,
+        reason: result.change.reason,
+      });
+    }
+    return ok(res, result, 'Level set');
   })
 );
 

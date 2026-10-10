@@ -555,10 +555,13 @@ async function verifyOrReplayGooglePlayVip({ userId, productId, purchaseToken, p
  * Earnings land in `pending` and mature after 48h, which is what the earning
  * screens promise.
  */
-async function recordEarning({ userId, callId, amountSpent, minutes, tx = prisma }) {
+async function recordEarning({ userId, callId, amountSpent, minutes, share, tx = prisma }) {
   if (amountSpent <= 0 || minutes <= 0) return null;
 
-  const amount = Number((amountSpent * env.economy.earnerShare).toFixed(2));
+  // The earner's cut — snapshotted on the call when it started (see
+  // `call.service.startUnlocked`), admin-configurable in Pricing & Levels.
+  const cut = share ?? require('./pricing.service').earnerShare();
+  const amount = Number((amountSpent * cut).toFixed(2));
   if (amount <= 0) return null;
 
   const clearsAt = new Date(Date.now() + env.economy.earningClearHours * 3600_000);

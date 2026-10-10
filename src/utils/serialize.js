@@ -3,7 +3,7 @@
 const env = require('../config/env');
 const avatarCatalog = require('../config/avatarCatalog');
 const { canPair } = require('./pairing');
-const { BASE_RATE, quotedRate } = require('./callPricing');
+const { listRate, quotedRate } = require('./callPricing');
 
 /**
  * The wire format.
@@ -124,14 +124,14 @@ function publicUser(
 
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
-    // Your own configured rate on your own profile; otherwise what *you*
-    // would pay to call this person — see `callPricing.quotedRate`. A VIP
+    // Your own price on your own profile — a woman's level price, nothing
+    // for a man; otherwise what *you* would pay to call this person — see `callPricing.quotedRate`. A VIP
     // viewer's discount is applied by the client, from its own wallet.
     voice_rate_per_minute: isSelf
-      ? money(profile.voiceRatePerMinute)
+      ? money(ownRate('voice', profile))
       : money(rateQuote('voice', viewerProfile, user)),
     video_rate_per_minute: isSelf
-      ? money(profile.videoRatePerMinute)
+      ? money(ownRate('video', profile))
       : money(rateQuote('video', viewerProfile, user)),
 
     joined_label: joinedLabel(user.createdAt),
@@ -257,18 +257,21 @@ function userSummary(user, { viewer = null } = {}) {
  * With no viewer to ask about (a few admin-side lists), the old answer: an
  * earner's list price, nothing for anyone else.
  */
-function rateQuote(type, viewerProfile, user) {
-  const quoted = quotedRate(type, {
-    viewerGender: viewerProfile?.gender,
-    peerGender: (user.profile ?? user).gender,
-  });
-  if (quoted !== null) return quoted;
-  return profileIsEarner(user) ? BASE_RATE[type] : 0;
+/** A woman's own price for [type] — her level's; a man has none. */
+function ownRate(type, profile) {
+  return profile.gender === 'female'
+    ? listRate(type, { callerProfile: { gender: 'male' }, calleeProfile: profile })
+    : 0;
 }
 
-function profileIsEarner(user) {
-  return Boolean((user.profile ?? user).isEarner);
+function rateQuote(type, viewerProfile, user) {
+  const peerProfile = user.profile ?? user;
+  const quoted = quotedRate(type, { viewerProfile, peerProfile });
+  if (quoted !== null) return quoted;
+  // No viewer: a woman's own level price, nothing for anyone else.
+  return ownRate(type, peerProfile);
 }
+
 
 // ── Reference data ──────────────────────────────────────────────────────────
 //

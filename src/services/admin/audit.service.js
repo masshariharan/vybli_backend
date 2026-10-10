@@ -205,6 +205,39 @@ const audit = {
       metadata: { balance: balance ?? 0, rupees: rupees ?? 0, reason },
     }),
 
+  changedLadder: (req, { type, before, after, raised }) =>
+    write({
+      req,
+      action: 'pricing.ladder_changed',
+      targetType: 'pricing',
+      targetId: type,
+      description: `${type === 'voice' ? 'Voice' : 'Video'} call level ladder changed${
+        raised ? ` — ${raised} ${raised === 1 ? 'woman' : 'women'} raised` : ''
+      }`,
+      metadata: { type, before, after, raised },
+    }),
+
+  changedEarnerShare: (req, { before, after }) =>
+    write({
+      req,
+      action: 'pricing.earner_share_changed',
+      targetType: 'pricing',
+      targetId: 'earner_share',
+      description: `Earner share changed from ${Math.round(before * 100)}% to ${Math.round(after * 100)}%`,
+      metadata: { before, after },
+    }),
+
+  setCallLevel: (req, { userId, type, from, to, reason }) =>
+    write({
+      req,
+      userId,
+      action: 'pricing.level_set',
+      targetType: 'user',
+      targetId: userId,
+      description: `${type === 'voice' ? 'Voice' : 'Video'} level set from ${from} to ${to} — ${reason}`,
+      metadata: { type, from, to, reason },
+    }),
+
   changedCatalogue: (req, { entity, id, change }) =>
     write({
       req,

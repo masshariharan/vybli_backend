@@ -9,20 +9,50 @@
  * charge cannot drift apart.
  */
 
-/** List prices, in rupees per minute. */
+/**
+ * What men pay to call men, in rupees per minute — a flat price, since no
+ * one earns from those calls. A call with a woman is priced by her level
+ * instead: see [listRate].
+ */
 const BASE_RATE = { voice: 5, video: 20 };
 
+/** Required lazily: the service needs the database; this file is a util. */
+const pricing = () => require('../services/pricing.service');
+
 /**
+ * The price per minute of a [type] call between these two profiles, before
+ * any discount:
+ *
+ *   two women        free
+ *   a man, a woman   her level's price for this call type
+ *   two men          `BASE_RATE`
+ *
+ * One function for the quote on a card, the random-match quote and the
+ * rate a call is billed at, so the three cannot disagree.
+ */
+function listRate(type, { callerProfile, calleeProfile } = {}) {
+  const callerGender = callerProfile?.gender;
+  const calleeGender = calleeProfile?.gender;
+  if (callerGender === 'female' && calleeGender === 'female') return 0;
+  if (callerGender && calleeGender && callerGender !== calleeGender) {
+    const woman = callerGender === 'female' ? callerProfile : calleeProfile;
+    return pricing().rateForLevel(type, pricing().levelOf(woman, type));
+  }
+  return BASE_RATE[type] ?? BASE_RATE.video;
+}
+
+/**
+ * What the payer is charged per minute: [listRate] less their VIP discount.
+ *
  * @param {'voice'|'video'} type
  * @param {object} opts
- * @param {string} [opts.callerGender]
- * @param {string} [opts.calleeGender]
+ * @param {object} [opts.callerProfile] `{ gender, voiceLevel, videoLevel }`
+ * @param {object} [opts.calleeProfile]
  * @param {number} [opts.discountPct] the payer's VIP call discount, 0–100
  */
-function ratePerMinute(type, { callerGender, calleeGender, discountPct = 0 } = {}) {
-  // Female-to-female calls are free — no payer, nothing to discount.
-  if (callerGender === 'female' && calleeGender === 'female') return 0;
-  const base = BASE_RATE[type] ?? BASE_RATE.video;
+function ratePerMinute(type, { callerProfile, calleeProfile, discountPct = 0 } = {}) {
+  const base = listRate(type, { callerProfile, calleeProfile });
+  if (!(base > 0)) return 0;
   const pct = Math.min(Math.max(discountPct, 0), 100);
   // Rounded to the paisa: the rate is stored as Decimal(10, 2), and billing
   // debits exactly the stored figure each minute.
@@ -56,17 +86,20 @@ function payerSide({ callerGender, calleeGender } = {}) {
  * own wallet). 0 when the viewer would not pay: a woman never does, and two
  * women call free.
  *
- * Decided by [payerSide] with the viewer as caller, so the price on a card
- * is the one `call.service` will actually charge. It used to be decided by
- * whether the peer was an earner, which hid the price on a man's card from
- * another man — who is charged ₹5/min for that call all the same.
+ * Decided by [payerSide] and [listRate] with the viewer as caller, so the
+ * price on a card is the one `call.service` will actually charge — her level
+ * price, for a man looking at a woman.
  *
  * `null` when either gender is unknown, so the caller can fall back.
  */
-function quotedRate(type, { viewerGender, peerGender } = {}) {
+function quotedRate(type, { viewerProfile, peerProfile } = {}) {
+  const viewerGender = viewerProfile?.gender;
+  const peerGender = peerProfile?.gender;
   if (!viewerGender || !peerGender) return null;
   const genders = { callerGender: viewerGender, calleeGender: peerGender };
-  return payerSide(genders) === 'caller' ? BASE_RATE[type] ?? BASE_RATE.video : 0;
+  return payerSide(genders) === 'caller'
+    ? listRate(type, { callerProfile: viewerProfile, calleeProfile: peerProfile })
+    : 0;
 }
 
-module.exports = { BASE_RATE, ratePerMinute, payerSide, quotedRate };
+module.exports = { BASE_RATE, listRate, ratePerMinute, payerSide, quotedRate };

@@ -275,6 +275,9 @@ me.put(
   validate({ body: S.profile.presence }),
   h(profileController.setPresence)
 );
+// A woman's voice and video levels, with her progress to the next — see
+// `services/pricing.service`. Men have none.
+me.get('/levels', h(profileController.getLevels));
 // The phone's last live fix, for the admin panel. Readable by nobody else —
 // see `UserProfile.locationLat`.
 me.put(

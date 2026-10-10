@@ -145,11 +145,10 @@ const env = {
   })(),
 
   economy: {
-    /// The earner's cut of what a caller actually spent on a call — the
-    /// other `1 - earnerShare` stays with the platform. Same 70/30 split as
-    /// before; there is no unit conversion any more since spend and earnings
-    /// are both plain rupees.
-    earnerShare: num('EARNER_SHARE', 0.7),
+    // The earner's share is no longer configured here: it is a database
+    // setting, edited in the admin panel's Pricing & Levels and snapshotted on
+    // each call — see `services/pricing.service.js`. `EARNER_SHARE` in an
+    // existing .env is ignored.
     earningClearHours: num('EARNING_CLEAR_HOURS', 48),
     minWithdrawalInr: num('MIN_WITHDRAWAL_INR', 100),
     /// What one chat message costs a paying account, in rupees. It goes to

@@ -13,6 +13,7 @@ const { emitToUser, emitToAdmin } = require('../sockets/bus');
 const connections = require('../sockets/connections');
 const serialize = require('../utils/serialize');
 const callPricing = require('../utils/callPricing');
+const pricing = require('./pricing.service');
 
 /**
  * Calls, and the money they move.
@@ -232,33 +233,53 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
   // gender, so we conservatively fetch the balance (it may be unneeded for F-F calls).
   // Both sides' VIP discount, because either may be the one paying — a woman
   // calling a man is billed to him (see `callPricing.payerSide`).
-  const [callee, , callerBalance, callerDiscountPct, calleeDiscountPct] =
+  const [callee, , callerBalance, callerDiscountPct, calleeDiscountPct, callerLevels] =
     await Promise.all([
       relationship.assertCanCall(user, calleeId, type),
       assertNotBusy(user.id, 'caller'),
       walletService.getBalance(user.id),
       walletService.vipCallDiscountPct(user.id),
       walletService.vipCallDiscountPct(calleeId),
+      // The caller's levels, read now: a call placed over the socket brings
+      // the user loaded at handshake, and a woman who levelled up since would
+      // otherwise be priced at her old level. The callee is loaded fresh by
+      // `assertCanCall` already.
+      prisma.userProfile.findUnique({
+        where: { userId: user.id },
+        select: { voiceLevel: true, videoLevel: true },
+      }),
     ]);
+  const callerProfile = { ...user.profile, ...callerLevels };
 
-  // Gender-based pricing (see `utils/callPricing`):
+  // Pricing (see `utils/callPricing`):
   // Female-to-Female: free (rate = 0, no payer)
-  // Male-to-Male: ₹5/voice, ₹20/video (caller pays, no earner)
-  // Man and woman: ₹5/voice, ₹20/video — the man pays, whoever dialled, and
-  // the woman may earn. Women never pay.
+  // Male-to-Male: the flat `BASE_RATE` (caller pays, no earner)
+  // Man and woman: her level's price for this call type — the man pays,
+  // whoever dialled, and she earns. Women never pay.
   // The payer's VIP discount comes off the rate itself, so the earner's
   // share — a fixed cut of what was actually charged — is taken on the
   // discounted price, and the membership's expiry mid-call does not change
-  // this call.
+  // this call. Her level and the share are snapshotted with the rate: a
+  // level-up or an admin change mid-call changes the *next* call, not this.
   const side = callPricing.payerSide({
     callerGender: user.profile?.gender,
     calleeGender: callee.profile?.gender,
   });
   const ratePerMinute = callPricing.ratePerMinute(type, {
-    callerGender: user.profile?.gender,
-    calleeGender: callee.profile?.gender,
+    callerProfile,
+    calleeProfile: callee.profile,
     discountPct: side === 'callee' ? calleeDiscountPct : callerDiscountPct,
   });
+  const woman =
+    user.profile?.gender === 'female' && callee.profile?.gender === 'male'
+      ? callerProfile
+      : user.profile?.gender === 'male' && callee.profile?.gender === 'female'
+        ? callee.profile
+        : null;
+  const earnerSnapshot =
+    woman && ratePerMinute > 0
+      ? { earnerShare: pricing.earnerShare(), earnerLevel: pricing.levelOf(woman, type) }
+      : {};
   const payerId =
     ratePerMinute > 0 && side ? (side === 'caller' ? user.id : calleeId) : null;
 
@@ -278,6 +299,7 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
       status: 'ringing',
       isRandom,
       ratePerMinute,
+      ...earnerSnapshot,
       ringDeliveredAt: null,
     },
     include: CALL_INCLUDE,
@@ -880,7 +902,7 @@ async function finaliseBookkeeping(call, updated, { status, reason, durationSeco
       })
     );
 
-    const { earnerId } = payerAndEarner(updated);
+    const { earnerId, payerId } = payerAndEarner(updated);
     if (earnerId) {
       writes.push(
         walletService
@@ -891,9 +913,18 @@ async function finaliseBookkeeping(call, updated, { status, reason, durationSeco
             // At least one — money was charged, so at least one minute was
             // billed, whatever rounding says.
             minutes: Math.max(1, billedMinutes(updated)),
+            // The share this call started with — see `startUnlocked`. Calls
+            // from before it was snapshotted take today's.
+            share:
+              updated.earnerShare != null
+                ? Number(updated.earnerShare)
+                : pricing.earnerShare(),
           })
           .then(() => emitToUser(earnerId, 'wallet:updated', {}))
       );
+      // Towards her level for this call type. Idempotent — see
+      // `pricing.recordCall` — so a duplicated end event counts nothing.
+      writes.push(pricing.recordCall({ call: updated, earnerId, payerId }));
     }
   }
 
