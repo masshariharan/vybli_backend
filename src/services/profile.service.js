@@ -95,6 +95,14 @@ async function updateProfile(user, payload) {
 
   if (operations.length > 0) await prisma.$transaction(operations);
 
+  if (data.cityId !== undefined) {
+    // Not awaited: the city is saved, and telling others is a courtesy that
+    // must never fail the save.
+    announceCity(user.id, data.cityId).catch((err) =>
+      console.error(`[profile] city change for ${user.id} not announced`, err)
+    );
+  }
+
   // Which fields moved, not their contents. The timeline answers "what did
   // they change and when"; the current values are on the profile itself, and
   // copying a bio into an audit row would duplicate it for ever.
@@ -199,6 +207,28 @@ async function setPresence(userId, status) {
   }
 
   return profile;
+}
+
+/**
+ * Tells the people who can see this user right now that their city changed —
+ * the same audience as a presence change: conversation peers, and anyone
+ * with their card or profile open (`presence:watch`). Everyone else reads
+ * the new city on their next fetch, as before.
+ *
+ * Only when the user shows their city at all: hiding it means nobody is told
+ * it moved, for the same reason a hidden presence is never broadcast.
+ */
+async function announceCity(userId, cityId) {
+  const privacy = await prisma.privacySettings.findUnique({
+    where: { userId },
+    select: { showCityOnProfile: true },
+  });
+  if (privacy?.showCityOnProfile === false) return;
+
+  const payload = { user_id: userId, city_id: cityId };
+  const peerIds = await relationship.conversationPeerIdsFor(userId);
+  if (peerIds.size > 0) emitToUsers([...peerIds], 'profile:city_changed', payload);
+  emitToPresenceWatchers(userId, 'profile:city_changed', payload);
 }
 
 /**
