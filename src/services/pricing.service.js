@@ -313,13 +313,16 @@ function announce(change, audience) {
     })
     .catch((err) => console.error('[pricing] rate change not announced', err));
 
-  if (change.toLevel > change.fromLevel) {
+  // Women only: the app never shows a man his levels — he earns nothing
+  // from them — so a "you reached Gold" would come from nowhere.
+  if (audience === 'female' && change.toLevel > change.fromLevel) {
     require('./notification.service')
       .notify({
         userId: change.userId,
-        kind: audience === 'female' ? 'earning' : 'system',
+        kind: 'earning',
         title: `You reached ${payload.level_name}!`,
-        body: `Your ${change.type} calls are now ₹${payload.rate_per_minute}/min.`,
+        // The level is the news; the amount is not shown to them in the app.
+        body: `Your ${change.type} call rate went up.`,
         data: { type: change.type, level: change.toLevel },
       })
       .catch((err) => console.error('[pricing] level notification failed', err));
