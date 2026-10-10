@@ -80,6 +80,8 @@ const fakePrisma = {
       return row;
     },
   },
+  callLevel: { findMany: async () => db.levelRows ?? [] },
+  pricingSettings: { findUnique: async () => ({ earnerShare: 0.3 }) },
   $transaction: async (fn) => fn(fakePrisma),
 };
 
@@ -145,7 +147,7 @@ function paidCall(callerId, { type = 'voice', minutes = 10, amount = 30 } = {}) 
 }
 
 const record = (call, payerId) =>
-  pricing.recordCall({ call, earnerId: 'her', payerId });
+  pricing.recordCall({ call, holderId: 'her', payerId, audience: 'female' });
 
 const stat = (type) => db.stats.get(key('her', type));
 const HOUR = 3600;
@@ -155,8 +157,10 @@ const HOUR = 3600;
 console.log('\nCall levels\n');
 
 test('the launch ladder: six levels each, Starter needs nothing', () => {
-  for (const type of ['voice', 'video']) {
-    const ladder = pricing.ladderFor(type);
+  for (const [audience, type] of [
+    ['female', 'voice'], ['female', 'video'], ['male', 'voice'], ['male', 'video'],
+  ]) {
+    const ladder = pricing.ladderFor(audience, type);
     assert.strictEqual(ladder.length, 6);
     assert.deepStrictEqual(ladder.map((l) => l.name), [
       'Starter', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Elite',
@@ -164,18 +168,20 @@ test('the launch ladder: six levels each, Starter needs nothing', () => {
     assert.strictEqual(ladder[0].minSeconds, 0);
     assert.strictEqual(ladder[0].minUniqueCallers, 0);
   }
-  assert.deepStrictEqual(pricing.ladderFor('voice').map((l) => l.ratePerMinute), [3, 4, 5, 6, 7, 8]);
-  assert.deepStrictEqual(pricing.ladderFor('video').map((l) => l.ratePerMinute), [7, 9, 12, 15, 18, 20]);
+  for (const audience of ['female', 'male']) {
+    assert.deepStrictEqual(pricing.ladderFor(audience, 'voice').map((l) => l.ratePerMinute), [3, 4, 5, 6, 7, 8]);
+    assert.deepStrictEqual(pricing.ladderFor(audience, 'video').map((l) => l.ratePerMinute), [7, 9, 12, 15, 18, 20]);
+  }
 });
 
 test('both requirements are needed — hours alone or callers alone are not enough', () => {
   // Silver voice: 3 hours and 5 callers.
-  assert.strictEqual(pricing.qualifiedLevel('voice', { seconds: 50 * HOUR, uniqueCallers: 4 }), 1);
-  assert.strictEqual(pricing.qualifiedLevel('voice', { seconds: 2 * HOUR, uniqueCallers: 500 }), 1);
-  assert.strictEqual(pricing.qualifiedLevel('voice', { seconds: 3 * HOUR, uniqueCallers: 5 }), 2);
-  assert.strictEqual(pricing.qualifiedLevel('voice', { seconds: 100 * HOUR, uniqueCallers: 100 }), 6);
+  assert.strictEqual(pricing.qualifiedLevel('female', 'voice', { seconds: 50 * HOUR, uniqueCallers: 4 }), 1);
+  assert.strictEqual(pricing.qualifiedLevel('female', 'voice', { seconds: 2 * HOUR, uniqueCallers: 500 }), 1);
+  assert.strictEqual(pricing.qualifiedLevel('female', 'voice', { seconds: 3 * HOUR, uniqueCallers: 5 }), 2);
+  assert.strictEqual(pricing.qualifiedLevel('female', 'voice', { seconds: 100 * HOUR, uniqueCallers: 100 }), 6);
   // Video Gold: 6 hours and 10 callers.
-  assert.strictEqual(pricing.qualifiedLevel('video', { seconds: 6 * HOUR, uniqueCallers: 10 }), 3);
+  assert.strictEqual(pricing.qualifiedLevel('female', 'video', { seconds: 6 * HOUR, uniqueCallers: 10 }), 3);
 });
 
 // ── Prices ──────────────────────────────────────────────────────────────────
@@ -198,12 +204,46 @@ test('a new woman is Starter: ₹3 voice, ₹7 video', () => {
   assert.strictEqual(callPricing.listRate('video', p), 7);
 });
 
-test('men with men keep the flat price; women with women stay free', () => {
-  const men = { callerProfile: man, calleeProfile: man };
+test("a man calling a man pays the answering man's level price", () => {
+  const goldVoiceMan = { gender: 'male', voiceLevel: 3, videoLevel: 1 };
+  const men = { callerProfile: man, calleeProfile: goldVoiceMan };
   assert.strictEqual(callPricing.listRate('voice', men), 5);
-  assert.strictEqual(callPricing.listRate('video', men), 20);
+  assert.strictEqual(callPricing.listRate('video', men), 7);
+  // The caller's own level does not matter — the one answering prices it.
+  const reverse = { callerProfile: goldVoiceMan, calleeProfile: man };
+  assert.strictEqual(callPricing.listRate('voice', reverse), 3);
+  assert.strictEqual(callPricing.payerSide({ callerGender: 'male', calleeGender: 'male' }), 'caller');
+  assert.deepStrictEqual(
+    callPricing.pricedBy({ callerGender: 'male', calleeGender: 'male' }),
+    { audience: 'male', holder: 'callee' }
+  );
+});
+
+test('women with women stay free, and are priced by nobody', () => {
   const women = { callerProfile: silverVoiceGoldVideo, calleeProfile: silverVoiceGoldVideo };
   assert.strictEqual(callPricing.ratePerMinute('voice', women), 0);
+  assert.strictEqual(callPricing.pricedBy({ callerGender: 'female', calleeGender: 'female' }), null);
+});
+
+test('a man and a woman are always priced by her, whoever dialled', () => {
+  assert.deepStrictEqual(
+    callPricing.pricedBy({ callerGender: 'female', calleeGender: 'male' }),
+    { audience: 'female', holder: 'caller' }
+  );
+  assert.deepStrictEqual(
+    callPricing.pricedBy({ callerGender: 'male', calleeGender: 'female' }),
+    { audience: 'female', holder: 'callee' }
+  );
+});
+
+test("a man is quoted another man's level price; a woman is quoted nothing", () => {
+  const diamondMan = { gender: 'male', voiceLevel: 5, videoLevel: 5 };
+  assert.strictEqual(callPricing.quotedRate('voice', { viewerProfile: man, peerProfile: diamondMan }), 7);
+  assert.strictEqual(callPricing.quotedRate('video', { viewerProfile: man, peerProfile: diamondMan }), 18);
+  assert.strictEqual(
+    callPricing.quotedRate('voice', { viewerProfile: silverVoiceGoldVideo, peerProfile: diamondMan }),
+    0
+  );
 });
 
 test('VIP discount comes off her price', () => {
@@ -311,6 +351,61 @@ test('a level is never lowered by counting', async () => {
   await record(paidCall('m1', { minutes: 1 }), 'm1');
   assert.strictEqual(db.profiles.get('her').voiceLevel, 4);
   assert.strictEqual(db.changes.length, 0);
+});
+
+test("men's levels rise from men's calls, on the men's ladder", async () => {
+  db.profiles.set('him', { userId: 'him', gender: 'male', voiceLevel: 1, videoLevel: 1 });
+  for (let i = 0; i < 5; i += 1) {
+    await pricing.recordCall({
+      call: paidCall(`m${i}`, { minutes: 40 }),
+      holderId: 'him',
+      payerId: `m${i}`,
+      audience: 'male',
+    });
+  }
+  assert.strictEqual(db.profiles.get('him').voiceLevel, 2);
+  assert.strictEqual(db.profiles.get('her').voiceLevel, 1, "her level is untouched");
+  assert.strictEqual(db.changes.at(-1).userId, 'him');
+});
+
+test("nobody's own calls count towards their own level", async () => {
+  await pricing.recordCall({
+    call: paidCall('her', { minutes: 60 }),
+    holderId: 'her',
+    payerId: 'her',
+    audience: 'female',
+  });
+  assert.strictEqual(stat('voice'), undefined);
+});
+
+test("a changed men's ladder changes men's prices, never women's", async () => {
+  // The table as `updateLadder` would leave it after a men's voice edit.
+  const launch = pricing.DEFAULT_LADDER;
+  db.levelRows = [];
+  for (const audience of ['female', 'male']) {
+    for (const type of ['voice', 'video']) {
+      for (const step of launch[audience][type]) {
+        const bump = audience === 'male' && type === 'voice' ? 10 : 0;
+        db.levelRows.push({ audience, type, ...step, ratePerMinute: step.ratePerMinute + bump });
+      }
+    }
+  }
+  await pricing.load();
+  try {
+    assert.deepStrictEqual(pricing.ladderFor('male', 'voice').map((l) => l.ratePerMinute), [13, 14, 15, 16, 17, 18]);
+    assert.deepStrictEqual(pricing.ladderFor('female', 'voice').map((l) => l.ratePerMinute), [3, 4, 5, 6, 7, 8]);
+    assert.strictEqual(
+      callPricing.listRate('voice', { callerProfile: man, calleeProfile: { gender: 'female' } }),
+      3
+    );
+    assert.strictEqual(
+      callPricing.listRate('voice', { callerProfile: man, calleeProfile: { gender: 'male' } }),
+      13
+    );
+  } finally {
+    db.levelRows = [];
+    await pricing.load();
+  }
 });
 
 // ── Run ─────────────────────────────────────────────────────────────────────

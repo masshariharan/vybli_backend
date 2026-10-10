@@ -3,7 +3,8 @@
 const env = require('../config/env');
 const avatarCatalog = require('../config/avatarCatalog');
 const { canPair } = require('./pairing');
-const { listRate, quotedRate } = require('./callPricing');
+const { quotedRate } = require('./callPricing');
+const pricing = require('../services/pricing.service');
 
 /**
  * The wire format.
@@ -124,8 +125,8 @@ function publicUser(
 
     rating: profile.rating ?? 0,
     total_calls: profile.totalCalls ?? 0,
-    // Your own price on your own profile — a woman's level price, nothing
-    // for a man; otherwise what *you* would pay to call this person — see `callPricing.quotedRate`. A VIP
+    // Your own price on your own profile — your level's; otherwise what
+    // *you* would pay to call this person — see `callPricing.quotedRate`. A VIP
     // viewer's discount is applied by the client, from its own wallet.
     voice_rate_per_minute: isSelf
       ? money(ownRate('voice', profile))
@@ -257,18 +258,16 @@ function userSummary(user, { viewer = null } = {}) {
  * With no viewer to ask about (a few admin-side lists), the old answer: an
  * earner's list price, nothing for anyone else.
  */
-/** A woman's own price for [type] — her level's; a man has none. */
+/** Their own price for [type] — what a caller pays them, by their level. */
 function ownRate(type, profile) {
-  return profile.gender === 'female'
-    ? listRate(type, { callerProfile: { gender: 'male' }, calleeProfile: profile })
-    : 0;
+  return profile?.gender ? pricing.rateFor(profile, type) : 0;
 }
 
 function rateQuote(type, viewerProfile, user) {
   const peerProfile = user.profile ?? user;
   const quoted = quotedRate(type, { viewerProfile, peerProfile });
   if (quoted !== null) return quoted;
-  // No viewer: a woman's own level price, nothing for anyone else.
+  // No viewer: their own level price.
   return ownRate(type, peerProfile);
 }
 

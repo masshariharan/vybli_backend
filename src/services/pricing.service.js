@@ -10,40 +10,43 @@ const {
 } = require('../sockets/bus');
 
 /**
- * Level-based call pricing for women.
+ * Level-based call pricing.
  *
- * Every woman has two levels, voice and video, each from 1 (Starter) to 6
- * (Elite), earned separately from that call type's completed, billed call
- * time and the number of distinct men who have paid for one. Her price per
- * minute is her level's rate on the ladder. Both requirements must be met to
- * reach a level, and levels only rise — an admin can set one by hand, and
- * the next qualifying call can still raise it.
+ * Everyone who can be paid to be called has two levels, voice and video,
+ * each from 1 (Starter) to 6 (Elite), earned separately from that call
+ * type's completed, billed call time and the number of distinct men who have
+ * paid for one. Their price per minute is their level's rate on the ladder.
+ * Both requirements must be met to reach a level, and levels only rise — an
+ * admin can set one by hand, and the next qualifying call can still raise it.
  *
- * **The ladder is admin-editable** (`CallLevel` rows) and cached here, so a
- * feed of twenty cards can quote twenty prices without twenty queries. The
- * cache is reloaded after every admin change and every minute besides, which
- * is what keeps a second instance in step.
+ * **Two audiences, two ladders.** Women are priced by the women's ladder on
+ * every call a man pays for with them, and earn a share of it. Men are
+ * priced by the men's ladder on calls from other men — the caller pays the
+ * answering man's level price — and Vybli keeps all of it: no man earns. Each
+ * ladder is admin-editable on its own (`CallLevel` rows, keyed by audience).
+ * Two women call free; a man and a woman are always priced by her.
+ *
+ * **The ladders are cached here**, so a feed of twenty cards can quote twenty
+ * prices without twenty queries. The cache is reloaded after every admin
+ * change and every minute besides, which keeps a second instance in step.
  *
  * **Counting is idempotent.** A call is counted inside one transaction that
  * first claims it (`Call.statsCountedAt`, compare-and-set) — a retried or
- * duplicated end event finds the claim taken and counts nothing — and a man
- * counts towards her unique callers through an insert into `EarnerCaller`,
- * whose primary key skips him the second time.
- *
- * Men pay men's calls at the flat `BASE_RATE`, and women's calls with each
- * other are free — see `utils/callPricing`, which asks this service only for
- * a woman's rate.
+ * duplicated end event finds the claim taken and counts nothing — and a
+ * paying man counts towards someone's unique callers through an insert into
+ * `EarnerCaller`, whose primary key skips him the second time.
  */
 
 /** A 400 with a machine-readable code the admin panel can switch on. */
 const invalid = (message, code) => new AppError(message, { status: 400, code });
 
+const AUDIENCES = ['female', 'male'];
 const TYPES = ['voice', 'video'];
 const LEVELS = 6;
 const HOUR = 3600;
 
-/** The launch ladder — also the fallback should the table ever be empty. */
-const DEFAULT_LADDER = {
+/** The launch ladder for both audiences — also the fallback for an empty table. */
+const LAUNCH_LADDER = {
   voice: [
     { level: 1, name: 'Starter', minSeconds: 0, minUniqueCallers: 0, ratePerMinute: 3 },
     { level: 2, name: 'Silver', minSeconds: 3 * HOUR, minUniqueCallers: 5, ratePerMinute: 4 },
@@ -61,6 +64,7 @@ const DEFAULT_LADDER = {
     { level: 6, name: 'Elite', minSeconds: 60 * HOUR, minUniqueCallers: 75, ratePerMinute: 20 },
   ],
 };
+const DEFAULT_LADDER = { female: LAUNCH_LADDER, male: LAUNCH_LADDER };
 const DEFAULT_SHARE = 0.3;
 
 const cache = {
@@ -69,26 +73,32 @@ const cache = {
   loadedAt: null,
 };
 
-// ── The ladder ──────────────────────────────────────────────────────────────
+// ── The ladders ─────────────────────────────────────────────────────────────
 
-/** Reads the ladder and settings into the cache. Safe to call any time. */
+/** Reads the ladders and settings into the cache. Safe to call any time. */
 async function load() {
   const [rows, settings] = await Promise.all([
-    prisma.callLevel.findMany({ orderBy: [{ type: 'asc' }, { level: 'asc' }] }),
+    prisma.callLevel.findMany({
+      orderBy: [{ audience: 'asc' }, { type: 'asc' }, { level: 'asc' }],
+    }),
     prisma.pricingSettings.findUnique({ where: { id: 1 } }),
   ]);
   const ladder = {};
-  for (const type of TYPES) {
-    const ofType = rows
-      .filter((r) => r.type === type)
-      .map((r) => ({
-        level: r.level,
-        name: r.name,
-        minSeconds: r.minSeconds,
-        minUniqueCallers: r.minUniqueCallers,
-        ratePerMinute: Number(r.ratePerMinute),
-      }));
-    ladder[type] = ofType.length === LEVELS ? ofType : DEFAULT_LADDER[type];
+  for (const audience of AUDIENCES) {
+    ladder[audience] = {};
+    for (const type of TYPES) {
+      const steps = rows
+        .filter((r) => r.audience === audience && r.type === type)
+        .map((r) => ({
+          level: r.level,
+          name: r.name,
+          minSeconds: r.minSeconds,
+          minUniqueCallers: r.minUniqueCallers,
+          ratePerMinute: Number(r.ratePerMinute),
+        }));
+      ladder[audience][type] =
+        steps.length === LEVELS ? steps : DEFAULT_LADDER[audience][type];
+    }
   }
   cache.ladder = ladder;
   cache.earnerShare = settings ? Number(settings.earnerShare) : DEFAULT_SHARE;
@@ -109,8 +119,17 @@ async function start() {
   }
 }
 
-function ladderFor(type) {
-  return cache.ladder[type] ?? DEFAULT_LADDER[type];
+/** Which ladder prices this person: `female` or `male`, by their gender. */
+function audienceOf(profile) {
+  return profile?.gender === 'male' ? 'male' : 'female';
+}
+
+function checkAudience(audience) {
+  if (!AUDIENCES.includes(audience)) throw invalid('Unknown audience.', 'BAD_AUDIENCE');
+}
+
+function ladderFor(audience, type) {
+  return cache.ladder[audience]?.[type] ?? DEFAULT_LADDER.female[type];
 }
 
 function clampLevel(level) {
@@ -119,30 +138,35 @@ function clampLevel(level) {
   return Math.min(LEVELS, Math.max(1, n));
 }
 
-function levelInfo(type, level) {
-  return ladderFor(type)[clampLevel(level) - 1];
+function levelInfo(audience, type, level) {
+  return ladderFor(audience, type)[clampLevel(level) - 1];
 }
 
-/** A woman's price per minute for [type] at [level]. */
-function rateForLevel(type, level) {
-  return levelInfo(type, level).ratePerMinute;
+/** The price per minute for [type] at [level] on [audience]'s ladder. */
+function rateForLevel(audience, type, level) {
+  return levelInfo(audience, type, level).ratePerMinute;
 }
 
-/** Her level for [type], from her profile row. */
+/** This person's own price for [type] — their level, on their ladder. */
+function rateFor(profile, type) {
+  return rateForLevel(audienceOf(profile), type, levelOf(profile, type));
+}
+
+/** Their level for [type], from their profile row. */
 function levelOf(profile, type) {
   return clampLevel(type === 'voice' ? profile?.voiceLevel : profile?.videoLevel);
 }
 
 /** The highest level whose every requirement the totals meet. */
-function qualifiedLevel(type, { seconds, uniqueCallers }) {
+function qualifiedLevel(audience, type, { seconds, uniqueCallers }) {
   let best = 1;
-  for (const step of ladderFor(type)) {
+  for (const step of ladderFor(audience, type)) {
     if (seconds >= step.minSeconds && uniqueCallers >= step.minUniqueCallers) best = step.level;
   }
   return best;
 }
 
-/** The earner's share of a call, as a fraction — 0.3 is 30%. */
+/** The earner's share of a call, as a fraction — 0.3 is 30%. Women only. */
 function earnerShare() {
   return cache.earnerShare;
 }
@@ -150,19 +174,21 @@ function earnerShare() {
 // ── Counting a call ─────────────────────────────────────────────────────────
 
 /**
- * Adds a finished call to the earner's statistics and raises her level if it
- * now qualifies. Idempotent: counts each call once, however often it is
- * called for it.
+ * Adds a finished call to the statistics of the person it was priced by —
+ * [holderId]: the woman on a call between a man and a woman, the man who
+ * answered on a call between two men — and raises their level if it now
+ * qualifies. Idempotent: counts each call once, however often it is called.
  *
- * Only a call that was actually paid for counts — ended, money charged, an
- * earner and a payer. Failed, unanswered, cancelled and free calls never
- * reach the charge, so they never reach here.
+ * Only a call that was actually paid for counts — ended, money charged, and
+ * a payer who is not the holder. Failed, unanswered, cancelled and free
+ * calls never reach the charge, so they never reach here.
  *
  * Returns the level change, or null.
  */
-async function recordCall({ call, earnerId, payerId }) {
-  if (!earnerId || !payerId || call.status !== 'ended') return null;
+async function recordCall({ call, holderId, payerId, audience }) {
+  if (!holderId || !payerId || holderId === payerId || call.status !== 'ended') return null;
   if (!(Number(call.amountSpent) > 0)) return null;
+  checkAudience(audience);
   const type = call.type;
   const seconds = Math.max(0, Number(call.durationSeconds) || 0);
 
@@ -174,16 +200,16 @@ async function recordCall({ call, earnerId, payerId }) {
     });
     if (claimed.count === 0) return null;
 
-    // He counts once, ever, per call type — the primary key decides.
+    // A paying man counts once, ever, per call type — the primary key decides.
     const added = await tx.earnerCaller.createMany({
-      data: [{ earnerId, callerId: payerId, type, firstCallId: call.id }],
+      data: [{ earnerId: holderId, callerId: payerId, type, firstCallId: call.id }],
       skipDuplicates: true,
     });
 
     const stats = await tx.earnerCallStats.upsert({
-      where: { userId_type: { userId: earnerId, type } },
+      where: { userId_type: { userId: holderId, type } },
       create: {
-        userId: earnerId,
+        userId: holderId,
         type,
         billableSeconds: seconds,
         uniqueCallers: added.count,
@@ -196,12 +222,13 @@ async function recordCall({ call, earnerId, payerId }) {
       },
     });
 
-    const target = qualifiedLevel(type, {
+    const target = qualifiedLevel(audience, type, {
       seconds: stats.billableSeconds,
       uniqueCallers: stats.uniqueCallers,
     });
     return raiseLevel(tx, {
-      userId: earnerId,
+      userId: holderId,
+      audience,
       type,
       target,
       source: 'auto',
@@ -209,15 +236,15 @@ async function recordCall({ call, earnerId, payerId }) {
     });
   });
 
-  if (change) announce(change);
+  if (change) announce(change, audience);
   return change;
 }
 
 /**
- * Moves her [type] level to [target] if that is higher — a compare-and-set,
+ * Moves their [type] level to [target] if that is higher — a compare-and-set,
  * so two calls ending together cannot both record the same upgrade.
  */
-async function raiseLevel(tx, { userId, type, target, source, reason, actor, callId }) {
+async function raiseLevel(tx, { userId, audience, type, target, source, reason, actor, callId }) {
   const field = type === 'voice' ? 'voiceLevel' : 'videoLevel';
   const profile = await tx.userProfile.findUnique({
     where: { userId },
@@ -234,40 +261,46 @@ async function raiseLevel(tx, { userId, type, target, source, reason, actor, cal
   if (count === 0) return null;
 
   return tx.earnerLevelChange.create({
-    data: {
-      userId,
-      type,
-      fromLevel: from,
-      toLevel: target,
-      fromName: levelInfo(type, from).name,
-      toName: levelInfo(type, target).name,
-      fromRate: rateForLevel(type, from),
-      toRate: rateForLevel(type, target),
-      source,
-      reason: reason ?? null,
-      actor: actor ?? null,
-      callId: callId ?? null,
-    },
+    data: changeData({ userId, audience, type, from, to: target, source, reason, actor, callId }),
   });
 }
 
+function changeData({ userId, audience, type, from, to, source, reason, actor, callId }) {
+  return {
+    userId,
+    audience,
+    type,
+    fromLevel: from,
+    toLevel: to,
+    fromName: levelInfo(audience, type, from).name,
+    toName: levelInfo(audience, type, to).name,
+    fromRate: rateForLevel(audience, type, from),
+    toRate: rateForLevel(audience, type, to),
+    source,
+    reason: reason ?? null,
+    actor: actor ?? null,
+    callId: callId ?? null,
+  };
+}
+
 /**
- * Tells her, and everyone who can see her right now, that her price moved —
- * the same audience as a presence change. Her own app refreshes its level
- * screen; theirs re-price her card without a reload.
+ * Tells them, and everyone who can see them right now, that their price
+ * moved — the same audience as a presence change. Their own app refreshes
+ * its level screen; everyone else's re-prices their card without a reload.
  */
-function announce(change) {
+function announce(change, audience) {
   const payload = {
     user_id: change.userId,
     type: change.type,
     level: change.toLevel,
-    level_name: levelInfo(change.type, change.toLevel).name,
+    level_name: change.toName,
     rate_per_minute: Number(change.toRate),
   };
   emitToUser(change.userId, 'levels:updated', payload);
   // The admin panel's Pricing & Levels refreshes on this.
   emitToAdmin('admin:level_changed', {
     ...payload,
+    audience,
     from_level: change.fromLevel,
     source: change.source,
   });
@@ -284,7 +317,7 @@ function announce(change) {
     require('./notification.service')
       .notify({
         userId: change.userId,
-        kind: 'earning',
+        kind: audience === 'female' ? 'earning' : 'system',
         title: `You reached ${payload.level_name}!`,
         body: `Your ${change.type} calls are now ₹${payload.rate_per_minute}/min.`,
         data: { type: change.type, level: change.toLevel },
@@ -296,25 +329,27 @@ function announce(change) {
 // ── Reading ─────────────────────────────────────────────────────────────────
 
 /**
- * Her two levels, with everything the progress screen shows: where she is,
- * what it pays, her totals, and what the next level needs.
+ * Their two levels, with everything the progress screen shows: where they
+ * are, what it costs callers, their totals, and what the next level needs.
  */
 async function earnerLevels(userId) {
   const [profile, stats] = await Promise.all([
     prisma.userProfile.findUnique({
       where: { userId },
-      select: { voiceLevel: true, videoLevel: true },
+      select: { gender: true, voiceLevel: true, videoLevel: true },
     }),
     prisma.earnerCallStats.findMany({ where: { userId } }),
   ]);
-  const out = {};
+  if (!profile?.gender) return null;
+  const audience = audienceOf(profile);
+  const out = { audience };
   for (const type of TYPES) {
     const row = stats.find((s) => s.type === type);
     const seconds = row?.billableSeconds ?? 0;
     const uniqueCallers = row?.uniqueCallers ?? 0;
     const level = levelOf(profile, type);
-    const current = levelInfo(type, level);
-    const next = level < LEVELS ? levelInfo(type, level + 1) : null;
+    const current = levelInfo(audience, type, level);
+    const next = level < LEVELS ? levelInfo(audience, type, level + 1) : null;
     out[type] = {
       level,
       name: current.name,
@@ -331,7 +366,7 @@ async function earnerLevels(userId) {
         remaining_seconds: Math.max(0, next.minSeconds - seconds),
         remaining_unique_callers: Math.max(0, next.minUniqueCallers - uniqueCallers),
       },
-      ladder: ladderFor(type).map(serializeStep),
+      ladder: ladderFor(audience, type).map(serializeStep),
     };
   }
   return out;
@@ -350,32 +385,36 @@ function serializeStep(step) {
 // ── Admin ───────────────────────────────────────────────────────────────────
 
 function settingsView() {
-  return {
-    earner_share: cache.earnerShare,
-    ladder: { voice: ladderFor('voice').map(serializeStep), video: ladderFor('video').map(serializeStep) },
-  };
+  const ladder = {};
+  for (const audience of AUDIENCES) {
+    ladder[audience] = {};
+    for (const type of TYPES) {
+      ladder[audience][type] = ladderFor(audience, type).map(serializeStep);
+    }
+  }
+  return { earner_share: cache.earnerShare, ladder };
 }
 
 /**
- * Replaces one call type's ladder. Six levels; Starter needs nothing;
- * requirements and prices never go down from one level to the next.
+ * Replaces one audience's ladder for one call type. Six levels; Starter
+ * needs nothing; requirements and prices never go down level to level.
  *
- * Lowered requirements can mean women who already qualify for more — they
+ * Lowered requirements can mean people who already qualify for more — they
  * are raised straight away, recorded as automatic upgrades.
  */
-async function updateLadder(type, steps) {
+async function updateLadder(audience, type, steps) {
+  checkAudience(audience);
   if (!TYPES.includes(type)) throw invalid('Unknown call type.', 'BAD_CALL_TYPE');
   if (!Array.isArray(steps) || steps.length !== LEVELS) {
     throw invalid(`A ladder has exactly ${LEVELS} levels.`, 'BAD_LADDER');
   }
-  const clean = steps
-    .map((s, i) => ({
-      level: i + 1,
-      name: String(s.name ?? '').trim(),
-      minSeconds: Math.round(Number(s.min_seconds)),
-      minUniqueCallers: Math.round(Number(s.min_unique_callers)),
-      ratePerMinute: Math.round(Number(s.rate_per_minute) * 100) / 100,
-    }));
+  const clean = steps.map((s, i) => ({
+    level: i + 1,
+    name: String(s.name ?? '').trim(),
+    minSeconds: Math.round(Number(s.min_seconds)),
+    minUniqueCallers: Math.round(Number(s.min_unique_callers)),
+    ratePerMinute: Math.round(Number(s.rate_per_minute) * 100) / 100,
+  }));
   for (const [i, s] of clean.entries()) {
     const label = `Level ${s.level}`;
     if (!s.name || s.name.length > 30) throw invalid(`${label} needs a name.`, 'BAD_LADDER');
@@ -387,7 +426,7 @@ async function updateLadder(type, steps) {
     }
     const prev = clean[i - 1];
     if (!prev && (s.minSeconds !== 0 || s.minUniqueCallers !== 0)) {
-      throw invalid('Starter must need nothing — every woman begins there.', 'BAD_LADDER');
+      throw invalid('Starter must need nothing — everyone begins there.', 'BAD_LADDER');
     }
     if (
       prev &&
@@ -405,29 +444,37 @@ async function updateLadder(type, steps) {
   await prisma.$transaction(
     clean.map((s) =>
       prisma.callLevel.upsert({
-        where: { type_level: { type, level: s.level } },
-        create: { type, ...s },
-        update: { name: s.name, minSeconds: s.minSeconds, minUniqueCallers: s.minUniqueCallers, ratePerMinute: s.ratePerMinute },
+        where: { audience_type_level: { audience, type, level: s.level } },
+        create: { audience, type, ...s },
+        update: {
+          name: s.name,
+          minSeconds: s.minSeconds,
+          minUniqueCallers: s.minUniqueCallers,
+          ratePerMinute: s.ratePerMinute,
+        },
       })
     )
   );
   await load();
-  const raised = await recomputeAll(type);
+  const raised = await recomputeAll(audience, type);
   return { ...settingsView(), raised };
 }
 
-/** Raises every woman whose totals now qualify for more — after a ladder edit. */
-async function recomputeAll(type) {
-  const rows = await prisma.earnerCallStats.findMany({ where: { type } });
+/** Raises everyone on [audience]'s ladder whose totals now qualify for more. */
+async function recomputeAll(audience, type) {
+  const rows = await prisma.earnerCallStats.findMany({
+    where: { type, user: { profile: { gender: audience } } },
+  });
   let raised = 0;
   for (const row of rows) {
-    const target = qualifiedLevel(type, {
+    const target = qualifiedLevel(audience, type, {
       seconds: row.billableSeconds,
       uniqueCallers: row.uniqueCallers,
     });
     const change = await prisma.$transaction((tx) =>
       raiseLevel(tx, {
         userId: row.userId,
+        audience,
         type,
         target,
         source: 'auto',
@@ -436,7 +483,7 @@ async function recomputeAll(type) {
     );
     if (change) {
       raised += 1;
-      announce(change);
+      announce(change, audience);
     }
   }
   return raised;
@@ -459,8 +506,9 @@ async function updateEarnerShare(share) {
 }
 
 /**
- * An admin sets her level by hand — up or down. Recorded in her history and
- * the audit log (by the route). The next qualifying call can still raise it.
+ * An admin sets someone's level by hand — up or down. Recorded in their
+ * history and the audit log (by the route). The next qualifying call can
+ * still raise it.
  */
 async function setLevel(userId, { type, level, reason, actor }) {
   if (!TYPES.includes(type)) throw invalid('Unknown call type.', 'BAD_CALL_TYPE');
@@ -477,31 +525,27 @@ async function setLevel(userId, { type, level, reason, actor }) {
     select: { gender: true, [field]: true },
   });
   if (!profile) throw errors.notFound('User');
-  if (profile.gender !== 'female') {
-    throw invalid('Only women have call levels.', 'NOT_AN_EARNER');
-  }
+  if (!profile.gender) throw invalid('This account has no gender yet, so no ladder.', 'NO_LADDER');
+  const audience = audienceOf(profile);
   const from = clampLevel(profile[field]);
   if (from === target) return { change: null, levels: await earnerLevels(userId) };
 
   const change = await prisma.$transaction(async (tx) => {
     await tx.userProfile.update({ where: { userId }, data: { [field]: target } });
     return tx.earnerLevelChange.create({
-      data: {
+      data: changeData({
         userId,
+        audience,
         type,
-        fromLevel: from,
-        toLevel: target,
-        fromName: levelInfo(type, from).name,
-        toName: levelInfo(type, target).name,
-        fromRate: rateForLevel(type, from),
-        toRate: rateForLevel(type, target),
+        from,
+        to: target,
         source: 'admin',
         reason: String(reason).trim().slice(0, 500),
-        actor: actor ?? null,
-      },
+        actor,
+      }),
     });
   });
-  announce(change);
+  announce(change, audience);
   return { change: serializeChange(change), levels: await earnerLevels(userId) };
 }
 
@@ -509,6 +553,7 @@ function serializeChange(c) {
   return {
     id: c.id,
     user_id: c.userId,
+    audience: c.audience,
     type: c.type,
     from_level: c.fromLevel,
     to_level: c.toLevel,
@@ -525,15 +570,18 @@ function serializeChange(c) {
 }
 
 module.exports = {
+  AUDIENCES,
   TYPES,
   LEVELS,
   DEFAULT_LADDER,
   start,
   load,
+  audienceOf,
   ladderFor,
   levelInfo,
   levelOf,
   rateForLevel,
+  rateFor,
   qualifiedLevel,
   earnerShare,
   recordCall,

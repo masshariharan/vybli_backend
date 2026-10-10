@@ -409,18 +409,11 @@ async function overview(userId) {
     user: { ...summarise(user), live_location: liveLocation(user.profile) },
     profile: {
       bio: user.profile?.bio ?? null,
-      // Her level prices — what a man is charged per minute — for a woman.
-      // The profile's own rate columns are no longer what anyone pays, and
-      // showed their ₹12/₹20 defaults here. Null for a man: his calls with
-      // women are priced by her, and with men by the flat rate.
-      voice_rate_per_minute:
-        user.profile?.gender === 'female'
-          ? pricing.rateForLevel('voice', user.profile.voiceLevel)
-          : null,
-      video_rate_per_minute:
-        user.profile?.gender === 'female'
-          ? pricing.rateForLevel('video', user.profile.videoLevel)
-          : null,
+      // Their level prices — what a caller is charged per minute. The
+      // profile's own rate columns are no longer what anyone pays, and
+      // showed their ₹12/₹20 defaults here.
+      voice_rate_per_minute: user.profile?.gender ? pricing.rateFor(user.profile, 'voice') : null,
+      video_rate_per_minute: user.profile?.gender ? pricing.rateFor(user.profile, 'video') : null,
       rating: user.profile?.rating ?? null,
       total_calls: user.profile?.totalCalls ?? 0,
       voice_enabled: user.profile?.voiceEnabled ?? null,

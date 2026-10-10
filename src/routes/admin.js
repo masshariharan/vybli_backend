@@ -417,15 +417,16 @@ router.get(
 );
 
 router.put(
-  '/pricing/ladder/:type',
+  '/pricing/ladder/:audience/:type',
   h(async (req, res) => {
-    const type = req.params.type;
-    const before = pricing.settingsView().ladder[type] ?? null;
-    const result = await pricing.updateLadder(type, req.body?.levels);
+    const { audience, type } = req.params;
+    const before = pricing.settingsView().ladder[audience]?.[type] ?? null;
+    const result = await pricing.updateLadder(audience, type, req.body?.levels);
     audit.changedLadder(req, {
+      audience,
       type,
       before,
-      after: result.ladder[type],
+      after: result.ladder[audience][type],
       raised: result.raised,
     });
     return ok(res, result, 'Ladder saved');
@@ -448,6 +449,7 @@ router.get(
     const p = page(req);
     const result = await pricingAdmin.earners({
       ...p,
+      audience: str(req.query.audience) === 'male' ? 'male' : 'female',
       type: str(req.query.type) === 'video' ? 'video' : 'voice',
       level: str(req.query.level),
       search: str(req.query.search),
@@ -464,6 +466,7 @@ router.get(
     const result = await pricingAdmin.history({
       ...p,
       userId: str(req.query.user_id),
+      audience: ['female', 'male'].includes(req.query.audience) ? req.query.audience : undefined,
       type: ['voice', 'video'].includes(req.query.type) ? req.query.type : undefined,
       source: ['auto', 'admin'].includes(req.query.source) ? req.query.source : undefined,
     });
@@ -489,6 +492,7 @@ router.post(
     if (result.change) {
       audit.setCallLevel(req, {
         userId: req.params.id,
+        audience: result.change.audience,
         type,
         from: result.change.from_level,
         to: result.change.to_level,

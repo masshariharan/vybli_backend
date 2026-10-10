@@ -270,15 +270,22 @@ async function startUnlocked(user, { calleeId, type, isRandom }) {
     calleeProfile: callee.profile,
     discountPct: side === 'callee' ? calleeDiscountPct : callerDiscountPct,
   });
-  const woman =
-    user.profile?.gender === 'female' && callee.profile?.gender === 'male'
-      ? callerProfile
-      : user.profile?.gender === 'male' && callee.profile?.gender === 'female'
-        ? callee.profile
-        : null;
+  // Whose ladder priced it — her, or the man who answers another man — and
+  // that person's level, snapshotted so the call keeps both. The earner's
+  // share only for a woman: no man earns from a call.
+  const priced = callPricing.pricedBy({
+    callerGender: user.profile?.gender,
+    calleeGender: callee.profile?.gender,
+  });
+  const holderProfile =
+    priced && (priced.holder === 'caller' ? callerProfile : callee.profile);
   const earnerSnapshot =
-    woman && ratePerMinute > 0
-      ? { earnerShare: pricing.earnerShare(), earnerLevel: pricing.levelOf(woman, type) }
+    priced && ratePerMinute > 0
+      ? {
+          levelAudience: priced.audience,
+          earnerLevel: pricing.levelOf(holderProfile, type),
+          ...(priced.audience === 'female' ? { earnerShare: pricing.earnerShare() } : {}),
+        }
       : {};
   const payerId =
     ratePerMinute > 0 && side ? (side === 'caller' ? user.id : calleeId) : null;
@@ -902,7 +909,7 @@ async function finaliseBookkeeping(call, updated, { status, reason, durationSeco
       })
     );
 
-    const { earnerId, payerId } = payerAndEarner(updated);
+    const { earnerId } = payerAndEarner(updated);
     if (earnerId) {
       writes.push(
         walletService
@@ -922,9 +929,27 @@ async function finaliseBookkeeping(call, updated, { status, reason, durationSeco
           })
           .then(() => emitToUser(earnerId, 'wallet:updated', {}))
       );
-      // Towards her level for this call type. Idempotent — see
-      // `pricing.recordCall` — so a duplicated end event counts nothing.
-      writes.push(pricing.recordCall({ call: updated, earnerId, payerId }));
+    }
+  }
+
+  // Towards the level of whoever the call was priced by — her, or the man
+  // who answered — for this call type. Idempotent (see `pricing.recordCall`),
+  // so a duplicated end event counts nothing; calls from before levels carry
+  // no `levelAudience` and are never counted.
+  if (status === 'ended' && Number(updated.amountSpent) > 0 && updated.levelAudience) {
+    const priced = callPricing.pricedBy({
+      callerGender: updated.caller?.profile?.gender,
+      calleeGender: updated.callee?.profile?.gender,
+    });
+    if (priced) {
+      writes.push(
+        pricing.recordCall({
+          call: updated,
+          holderId: priced.holder === 'caller' ? call.callerId : call.calleeId,
+          payerId: payerAndEarner(updated).payerId,
+          audience: updated.levelAudience,
+        })
+      );
     }
   }
 

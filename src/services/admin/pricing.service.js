@@ -13,26 +13,32 @@ const pricing = require('../pricing.service');
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** The ladder, the share, how many women sit at each level, and 30 days of money. */
+/**
+ * Both ladders, the share, how many people sit at each level, and N days of
+ * money — split by audience (`female`, `male`) and call type. For men the
+ * payout is always 0: Vybli keeps all of a man-to-man call.
+ */
 async function overview({ days = 30 } = {}) {
   const since = new Date(Date.now() - days * DAY);
+  const alive = { user: { deletedAt: null } };
 
   const [voiceCounts, videoCounts, money] = await Promise.all([
     prisma.userProfile.groupBy({
-      by: ['voiceLevel'],
-      where: { gender: 'female', user: { deletedAt: null } },
+      by: ['gender', 'voiceLevel'],
+      where: alive,
       _count: { _all: true },
     }),
     prisma.userProfile.groupBy({
-      by: ['videoLevel'],
-      where: { gender: 'female', user: { deletedAt: null } },
+      by: ['gender', 'videoLevel'],
+      where: alive,
       _count: { _all: true },
     }),
-    // Per call type and the level the call was priced at. The payout is the
-    // earnings actually credited, joined rather than recomputed, so it is the
-    // figure the earners' wallets show.
+    // By whose ladder priced the call, call type and that person's level.
+    // The payout is the earnings actually credited, joined rather than
+    // recomputed, so it is the figure the earners' wallets show.
     prisma.$queryRaw`
-      SELECT c."type"::text AS type,
+      SELECT c."levelAudience" AS audience,
+             c."type"::text AS type,
              c."earnerLevel" AS level,
              COUNT(*)::int AS calls,
              COALESCE(SUM(c."durationSeconds"), 0)::bigint AS seconds,
@@ -40,45 +46,60 @@ async function overview({ days = 30 } = {}) {
              COALESCE(SUM(e."amount"), 0)::numeric AS payout
         FROM "calls" c
         LEFT JOIN "earnings" e ON e."callId" = c."id"
-       WHERE c."earnerLevel" IS NOT NULL
+       WHERE c."levelAudience" IS NOT NULL
+         AND c."earnerLevel" IS NOT NULL
          AND c."status" = 'ended'
          AND c."amountSpent" > 0
          AND c."endedAt" >= ${since}
-       GROUP BY 1, 2`,
+       GROUP BY 1, 2, 3`,
   ]);
 
   const levels = {};
-  for (const type of pricing.TYPES) {
-    const counts = type === 'voice' ? voiceCounts : videoCounts;
-    const key = type === 'voice' ? 'voiceLevel' : 'videoLevel';
-    levels[type] = pricing.ladderFor(type).map((step) => {
-      const row = money.find((m) => m.type === type && Number(m.level) === step.level);
-      const revenue = Number(row?.revenue ?? 0);
-      const payout = Number(row?.payout ?? 0);
-      return {
-        level: step.level,
-        name: step.name,
-        rate_per_minute: step.ratePerMinute,
-        min_seconds: step.minSeconds,
-        min_unique_callers: step.minUniqueCallers,
-        women: counts.find((c) => c[key] === step.level)?._count._all ?? 0,
-        calls: row?.calls ?? 0,
-        seconds: Number(row?.seconds ?? 0),
-        revenue,
-        payout,
-        platform: Math.round((revenue - payout) * 100) / 100,
-      };
-    });
+  for (const audience of pricing.AUDIENCES) {
+    levels[audience] = {};
+    for (const type of pricing.TYPES) {
+      const counts = type === 'voice' ? voiceCounts : videoCounts;
+      const key = type === 'voice' ? 'voiceLevel' : 'videoLevel';
+      levels[audience][type] = pricing.ladderFor(audience, type).map((step) => {
+        const row = money.find(
+          (m) => m.audience === audience && m.type === type && Number(m.level) === step.level
+        );
+        const revenue = Number(row?.revenue ?? 0);
+        const payout = Number(row?.payout ?? 0);
+        return {
+          level: step.level,
+          name: step.name,
+          rate_per_minute: step.ratePerMinute,
+          min_seconds: step.minSeconds,
+          min_unique_callers: step.minUniqueCallers,
+          people:
+            counts.find((c) => c.gender === audience && c[key] === step.level)?._count._all ?? 0,
+          calls: row?.calls ?? 0,
+          seconds: Number(row?.seconds ?? 0),
+          revenue,
+          payout,
+          platform: Math.round((revenue - payout) * 100) / 100,
+        };
+      });
+    }
   }
 
   return { ...pricing.settingsView(), levels, days };
 }
 
-/** Women with their two levels and the totals behind them. */
-async function earners({ type = 'voice', level, search, sort = 'level', skip = 0, take = 25 }) {
+/** Women — or men — with their two levels and the totals behind them. */
+async function earners({
+  audience = 'female',
+  type = 'voice',
+  level,
+  search,
+  sort = 'level',
+  skip = 0,
+  take = 25,
+}) {
   const levelKey = type === 'video' ? 'videoLevel' : 'voiceLevel';
   const where = {
-    gender: 'female',
+    gender: audience === 'male' ? 'male' : 'female',
     user: { deletedAt: null },
     ...(level ? { [levelKey]: Number(level) } : {}),
     ...(search
@@ -115,15 +136,20 @@ async function earners({ type = 'voice', level, search, sort = 'level', skip = 0
       phone: p.user.phone ? `${p.user.dialCode ?? ''} ${p.user.phone}`.trim() : null,
       avatar_url: avatarCatalog.urlFor(p.avatarId),
       is_verified: p.isVerified,
-      voice: levelSummary('voice', p.voiceLevel, p.user.callStats),
-      video: levelSummary('video', p.videoLevel, p.user.callStats),
+      gender: p.gender,
+      voice: levelSummary(p, 'voice', p.user.callStats),
+      video: levelSummary(p, 'video', p.user.callStats),
     })),
   };
 }
 
-function levelSummary(type, level, stats) {
+function levelSummary(profile, type, stats) {
   const row = stats.find((s) => s.type === type);
-  const info = pricing.levelInfo(type, level);
+  const info = pricing.levelInfo(
+    pricing.audienceOf(profile),
+    type,
+    pricing.levelOf(profile, type)
+  );
   return {
     level: info.level,
     name: info.name,
@@ -134,10 +160,11 @@ function levelSummary(type, level, stats) {
   };
 }
 
-/** Level changes, newest first — everyone's, or one woman's. */
-async function history({ userId, type, source, skip = 0, take = 25 }) {
+/** Level changes, newest first — everyone's, one audience's, or one person's. */
+async function history({ userId, audience, type, source, skip = 0, take = 25 }) {
   const where = {
     ...(userId ? { userId } : {}),
+    ...(audience ? { audience } : {}),
     ...(type ? { type } : {}),
     ...(source ? { source } : {}),
   };
@@ -147,7 +174,9 @@ async function history({ userId, type, source, skip = 0, take = 25 }) {
       orderBy: { createdAt: 'desc' },
       skip,
       take,
-      include: { user: { select: { profile: { select: { name: true, avatarId: true } } } } },
+      include: {
+        user: { select: { profile: { select: { name: true, avatarId: true, gender: true } } } },
+      },
     }),
     prisma.earnerLevelChange.count({ where }),
   ]);
@@ -156,12 +185,13 @@ async function history({ userId, type, source, skip = 0, take = 25 }) {
     items: rows.map((c) => ({
       ...pricing.serializeChange(c),
       user_name: c.user?.profile?.name ?? null,
+      gender: c.user?.profile?.gender ?? null,
       avatar_url: avatarCatalog.urlFor(c.user?.profile?.avatarId),
     })),
   };
 }
 
-/** One woman's levels and her most recent changes, for her user page. */
+/** One person's levels and most recent changes, for their user page. */
 async function forUser(userId) {
   const [levels, recent] = await Promise.all([
     pricing.earnerLevels(userId),

@@ -819,6 +819,10 @@ model Call {
   /// earner.
   earnerShare Decimal? @db.Decimal(5, 4)
   earnerLevel Int?
+  /// Whose ladder priced the call — `female` or `male` — and so whose
+  /// statistics it counts towards. `earnerLevel` is that person's level.
+  /// Null on calls from before levels, and on free calls.
+  levelAudience String?
 
   /// When this call was added to the earner's level statistics. The
   /// compare-and-set on it is what makes counting idempotent: a retried or
@@ -843,16 +847,20 @@ model Call {
   @@index([calleeId, createdAt])
   @@index([status])
   // Earnings by level, for the admin's pricing summary.
-  @@index([type, earnerLevel, endedAt])
+  @@index([levelAudience, type, earnerLevel, endedAt])
   @@map("calls")
 }
 
 // ── Call levels ─────────────────────────────────────────────────────────────
 
-/// The pricing ladder: six levels per call type, each with what it takes to
-/// reach and what it costs per minute. Admin-editable; seeded with the
-/// launch values by the migration. See `services/pricing.service.js`.
+/// The pricing ladders: six levels per audience and call type, each with what
+/// it takes to reach and what it costs per minute. Admin-editable; seeded
+/// with the launch values by the migration. See `services/pricing.service.js`.
 model CallLevel {
+  /// Whose ladder: `female` (priced on calls a man pays for with her, and
+  /// she earns a share) or `male` (priced on calls from other men; Vybli
+  /// keeps all of it).
+  audience         String
   type             CallType
   /// 1 (Starter) to 6 (Elite).
   level            Int
@@ -864,7 +872,7 @@ model CallLevel {
   ratePerMinute    Decimal  @db.Decimal(10, 2)
   updatedAt        DateTime @updatedAt
 
-  @@id([type, level])
+  @@id([audience, type, level])
   @@map("call_levels")
 }
 
@@ -915,6 +923,9 @@ model EarnerLevelChange {
   id        String   @id @default(cuid())
   userId    String
   type      CallType
+  /// Whose ladder the change was on — `female` or `male` — kept with the
+  /// row so history stays right even if the account's gender later changes.
+  audience  String   @default("female")
   fromLevel Int
   toLevel   Int
   /// The level names and prices as they were — renaming a level later

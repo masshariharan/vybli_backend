@@ -10,9 +10,8 @@
  */
 
 /**
- * What men pay to call men, in rupees per minute — a flat price, since no
- * one earns from those calls. A call with a woman is priced by her level
- * instead: see [listRate].
+ * The flat price, in rupees per minute — now only a fallback for a call whose
+ * genders are unknown. Every real call is priced by a level: see [listRate].
  */
 const BASE_RATE = { voice: 5, video: 20 };
 
@@ -24,8 +23,8 @@ const pricing = () => require('../services/pricing.service');
  * any discount:
  *
  *   two women        free
- *   a man, a woman   her level's price for this call type
- *   two men          `BASE_RATE`
+ *   a man, a woman   her level's price on the women's ladder
+ *   two men          the answering man's level price on the men's ladder
  *
  * One function for the quote on a card, the random-match quote and the
  * rate a call is billed at, so the three cannot disagree.
@@ -36,9 +35,31 @@ function listRate(type, { callerProfile, calleeProfile } = {}) {
   if (callerGender === 'female' && calleeGender === 'female') return 0;
   if (callerGender && calleeGender && callerGender !== calleeGender) {
     const woman = callerGender === 'female' ? callerProfile : calleeProfile;
-    return pricing().rateForLevel(type, pricing().levelOf(woman, type));
+    return pricing().rateFor(woman, type);
+  }
+  if (callerGender === 'male' && calleeGender === 'male') {
+    return pricing().rateFor(calleeProfile, type);
   }
   return BASE_RATE[type] ?? BASE_RATE.video;
+}
+
+/**
+ * Whose ladder prices a call between these two — and whose statistics it
+ * counts towards: `{ audience, holder }`, where `holder` is `'caller'` or
+ * `'callee'`. Null for a free call between two women.
+ */
+function pricedBy({ callerGender, calleeGender } = {}) {
+  if (callerGender === 'female' && calleeGender === 'female') return null;
+  if (callerGender === 'female' && calleeGender === 'male') {
+    return { audience: 'female', holder: 'caller' };
+  }
+  if (callerGender === 'male' && calleeGender === 'female') {
+    return { audience: 'female', holder: 'callee' };
+  }
+  if (callerGender === 'male' && calleeGender === 'male') {
+    return { audience: 'male', holder: 'callee' };
+  }
+  return null;
 }
 
 /**
@@ -88,7 +109,7 @@ function payerSide({ callerGender, calleeGender } = {}) {
  *
  * Decided by [payerSide] and [listRate] with the viewer as caller, so the
  * price on a card is the one `call.service` will actually charge — her level
- * price, for a man looking at a woman.
+ * price for a man looking at a woman, his for a man looking at a man.
  *
  * `null` when either gender is unknown, so the caller can fall back.
  */
@@ -102,4 +123,4 @@ function quotedRate(type, { viewerProfile, peerProfile } = {}) {
     : 0;
 }
 
-module.exports = { BASE_RATE, listRate, ratePerMinute, payerSide, quotedRate };
+module.exports = { BASE_RATE, listRate, pricedBy, ratePerMinute, payerSide, quotedRate };

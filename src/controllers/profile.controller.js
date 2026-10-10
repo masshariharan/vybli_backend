@@ -174,12 +174,15 @@ async function setLocation(req, res) {
   return ok(res, { place }, 'Location recorded');
 }
 
-/** Her call levels and progress. Only women have them. */
+/**
+ * Your call levels and progress — a woman's on the women's ladder, a man's
+ * on the men's (which prices calls to him from other men).
+ */
 async function getLevels(req, res) {
-  if (req.user.profile?.gender !== 'female') {
-    throw errors.forbidden('Only women have call levels.', 'NOT_AN_EARNER');
-  }
-  return ok(res, { levels: await pricing.earnerLevels(req.userId) }, 'Your levels');
+  const levels = await pricing.earnerLevels(req.userId);
+  // No gender yet means no ladder — sign-up is not finished.
+  if (!levels) throw errors.notFound('Call levels', 'NO_LADDER');
+  return ok(res, { levels }, 'Your levels');
 }
 
 module.exports = {
