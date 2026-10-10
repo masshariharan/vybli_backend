@@ -275,6 +275,13 @@ me.put(
   validate({ body: S.profile.presence }),
   h(profileController.setPresence)
 );
+// The phone's last live fix, for the admin panel. Readable by nobody else —
+// see `UserProfile.locationLat`.
+me.put(
+  '/location',
+  validate({ body: S.profile.location }),
+  h(profileController.setLocation)
+);
 // The avatar. Just an id from the predefined catalog — the only way an
 // avatar is ever set, so a client can never point a profile at an image
 // this server does not itself serve.

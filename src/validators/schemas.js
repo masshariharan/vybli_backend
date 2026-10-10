@@ -106,6 +106,16 @@ const profile = {
       message: 'Nothing to update',
     }),
 
+  /// A live fix from the phone — see `UserProfile.locationLat`.
+  location: z.object({
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+    accuracy_m: z.number().min(0).max(1_000_000).nullish(),
+    area: z.string().trim().max(120).nullish(),
+    district: z.string().trim().max(120).nullish(),
+    state: z.string().trim().max(120).nullish(),
+  }),
+
   presence: z.object({
     status: z.enum(['online', 'offline', 'busy']),
   }),

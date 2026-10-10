@@ -34,6 +34,20 @@ const PROFILE_INCLUDE = {
 };
 
 /** Trimmed to what a table row renders, so a page of 50 is not a page of 50 profiles. */
+/** The last live fix the app reported, or null if it never has. */
+function liveLocation(p) {
+  if (p?.locationLat == null || p?.locationLng == null) return null;
+  return {
+    lat: p.locationLat,
+    lng: p.locationLng,
+    accuracy_m: p.locationAccuracy ?? null,
+    area: p.locationArea ?? null,
+    district: p.locationDistrict ?? null,
+    state: p.locationState ?? null,
+    located_at: p.locatedAt?.toISOString() ?? null,
+  };
+}
+
 function summarise(user) {
   const p = user.profile;
   return {
@@ -388,7 +402,10 @@ async function overview(userId) {
   ]);
 
   return {
-    user: summarise(user),
+    // Here and not in [summarise], which also describes the other party on
+    // every call, block and report row — none of which is about where anyone
+    // is.
+    user: { ...summarise(user), live_location: liveLocation(user.profile) },
     profile: {
       bio: user.profile?.bio ?? null,
       voice_rate_per_minute: user.profile?.voiceRatePerMinute != null

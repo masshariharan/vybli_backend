@@ -358,6 +358,21 @@ model UserProfile {
   presence PresenceStatus @default(offline)
   lastSeen DateTime?
 
+  /// The last live location the app reported — `PUT /me/location`, sent on
+  /// app open or resume when the phone has a fresh fix. For the admin panel
+  /// only: no serializer that another user can reach includes any of these.
+  /// The city a user is shown under is still [cityId]; this is the exact
+  /// point behind it.
+  locationLat      Float?
+  locationLng      Float?
+  /// Metres, as the phone reported it. A coarse fix is kilometres wide.
+  locationAccuracy Float?
+  /// The area within the city — `Lawspet` — from the phone's geocoder.
+  locationArea     String?
+  locationDistrict String?
+  locationState    String?
+  locatedAt        DateTime?
+
   onboardingStatus OnboardingStatus @default(PHONE_VERIFIED)
 
   createdAt DateTime @default(now())

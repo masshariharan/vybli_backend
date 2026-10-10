@@ -5,6 +5,8 @@ const settingsService = require('../services/settings.service');
 const referenceService = require('../services/reference.service');
 const favoriteService = require('../services/favorite.service');
 const serialize = require('../utils/serialize');
+const prisma = require('../config/prisma');
+const { districtAt } = require('../services/geo/district.service');
 const { ok } = require('../utils/respond');
 
 async function getMe(req, res) {
@@ -135,8 +137,44 @@ async function setAvatar(req, res) {
   return ok(res, { user: serialize.myProfile(user) }, 'Avatar updated');
 }
 
+/**
+ * Records the phone's last live fix, and answers with where it is: the
+ * district and state by the official boundaries (see `geo/district.service`),
+ * and the area as the phone named it.
+ *
+ * The boundaries decide the district and state. The phone's own geocoder is
+ * the fallback for a point they do not cover (offshore, abroad), since it
+ * often names the taluk rather than the district, or nothing at all.
+ *
+ * Nothing about the account changes — not the city, which the app sets on
+ * its own through `PATCH /me` — and other users never see any of this.
+ */
+async function setLocation(req, res) {
+  const b = req.body;
+  const official = districtAt(b.lat, b.lng);
+  const place = {
+    area: b.area || null,
+    district: official?.district ?? b.district ?? null,
+    state: official?.state ?? b.state ?? null,
+  };
+  await prisma.userProfile.update({
+    where: { userId: req.userId },
+    data: {
+      locationLat: b.lat,
+      locationLng: b.lng,
+      locationAccuracy: b.accuracy_m ?? null,
+      locationArea: place.area,
+      locationDistrict: place.district,
+      locationState: place.state,
+      locatedAt: new Date(),
+    },
+  });
+  return ok(res, { place }, 'Location recorded');
+}
+
 module.exports = {
   getMe,
+  setLocation,
   setAvatar,
   updateMe,
   getPublic,
