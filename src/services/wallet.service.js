@@ -707,6 +707,52 @@ async function recordMessageEarning({
   });
 }
 
+/**
+ * Records one paid chat message in the sender's history.
+ *
+ * The balance already moved when the message was charged; this is the line
+ * that says where it went. One row per conversation per day (India time),
+ * grown with each message — "Chat messages · Asha • 24 messages · −₹24" —
+ * the mirror of her `recordMessageEarning`, so a busy chat is a line in his
+ * history rather than a flood of −₹1 rows. Add-or-grow is one
+ * `INSERT … ON CONFLICT` on the day's reference, so racing sends both count.
+ */
+async function recordMessageSpend({ userId, peerName, conversationId, price }) {
+  if (!(price > 0)) return null;
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  if (!wallet) return null;
+
+  const reference = `msg:${conversationId}:${indiaDay(new Date())}`;
+  const id = `c${Date.now().toString(36)}${crypto.randomBytes(12).toString('base64url')}`;
+  const label = (count) =>
+    `${peerName ? `${peerName} • ` : ''}${count} message${count === 1 ? '' : 's'}`;
+
+  const [row] = await prisma.$queryRaw`
+    INSERT INTO "wallet_transactions" (
+      "id", "walletId", "kind", "status", "title", "subtitle",
+      "rupeeDelta", "referenceId", "createdAt"
+    ) VALUES (
+      ${id}, ${wallet.id}, 'message'::"TransactionKind",
+      'completed'::"TransactionStatus", 'Chat messages', ${label(1)},
+      ${-price}, ${reference}, NOW()
+    )
+    ON CONFLICT ("walletId", "referenceId") WHERE "referenceId" LIKE 'msg:%'
+    DO UPDATE SET "rupeeDelta" = "wallet_transactions"."rupeeDelta" + EXCLUDED."rupeeDelta"
+    RETURNING "id", "rupeeDelta", (xmax = 0) AS "inserted"`;
+
+  if (!row.inserted) {
+    const count = Math.max(1, Math.round(-Number(row.rupeeDelta) / price));
+    await prisma.walletTransaction.update({
+      where: { id: row.id },
+      data: { subtitle: label(count) },
+    });
+  }
+  return row;
+}
+
 /** Today's date in India, as `YYYY-MM-DD` — the day a chat earning belongs to. */
 function indiaDay(at) {
   return new Date(at.getTime() + 330 * 60_000).toISOString().slice(0, 10);
@@ -934,6 +980,7 @@ module.exports = {
   purchaseVip,
   recordEarning,
   recordMessageEarning,
+  recordMessageSpend,
   releaseMaturedEarnings,
   withdraw,
   listTransactions,

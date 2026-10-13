@@ -136,6 +136,8 @@ enum TransactionKind {
   earning
   withdrawal
   bonus
+  /// Paid chat messages — one row per conversation per day.
+  message
 }
 
 enum TransactionStatus {

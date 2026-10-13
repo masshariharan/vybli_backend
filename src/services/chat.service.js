@@ -433,8 +433,9 @@ function isUniqueViolation(error) {
  * racing each other cannot both spend the last rupee.
  *
  * No ledger row per message — a busy chat would bury every recharge and call
- * in the wallet history. The balance itself is the record, pushed to the
- * sender's phone as `wallet:balance` after each charge.
+ * in the wallet history. Once the message is stored it is added to one row
+ * per chat per day instead (`wallet.recordMessageSpend`), and the balance is
+ * pushed to the sender's phone as `wallet:balance` after each charge.
  *
  * Returns the amount charged (0 when free), for [refundMessage] if the send
  * then fails.
@@ -615,7 +616,20 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
   // Paid, and stored: her share, if she earns. Never holds up the send, and
   // a failure here is logged rather than taken back from the sender — the
   // message did go.
-  if (charged > 0) creditMessageEarning(user, side, conversationId, charged);
+  if (charged > 0) {
+    creditMessageEarning(user, side, conversationId, charged);
+    // And the line in his own history that says where the rupee went.
+    require('./wallet.service')
+      .recordMessageSpend({
+        userId: user.id,
+        peerName: side.peer?.profile?.name ?? null,
+        conversationId,
+        price: charged,
+      })
+      .catch((err) =>
+        console.error(`[chat] could not record a message spend for ${user.id}`, err)
+      );
+  }
   const updatedConversation = { mutedByA: _mutedByA, mutedByB: _mutedByB };
 
   const payload = {

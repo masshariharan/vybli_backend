@@ -351,7 +351,7 @@ const wallet = {
   }),
   transactions: pagination.extend({
     kind: z
-      .enum(['purchase', 'call', 'earning', 'withdrawal', 'bonus'])
+      .enum(['purchase', 'call', 'earning', 'withdrawal', 'bonus', 'message'])
       .optional(),
   }),
   withdraw: z.object({
