@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const prisma = require('../config/prisma');
 const fieldCrypto = require('../utils/fieldCrypto');
 const env = require('../config/env');
@@ -624,6 +625,99 @@ async function recordEarning({ userId, callId, amountSpent, minutes, share, tx =
 }
 
 /**
+ * Credits an earner her share of one paid chat message.
+ *
+ * The same share as calls (admin-set in Pricing & Levels), so one setting
+ * decides what she keeps of everything paid to talk to her. Kept as **one
+ * earning per conversation per day** (India time), grown with each message,
+ * with one ledger row to match — "Chat earnings · Rahul · 24 messages" — so a
+ * busy chat reads as a line in her history, not a flood of ₹0.30 rows.
+ *
+ * The add-or-grow is a single `INSERT … ON CONFLICT` on that unique day key,
+ * so two messages landing together both count, once each. Matures 48h after
+ * the end of its day, like a call's, and from there moves exactly as call
+ * earnings do (`releaseMaturedEarnings`, `withdraw`).
+ */
+async function recordMessageEarning({
+  earnerId,
+  senderId,
+  senderName,
+  conversationId,
+  amountSpent,
+}) {
+  const share = require('./pricing.service').earnerShare();
+  const amount = Number((amountSpent * share).toFixed(2));
+  if (!(amount > 0)) return null;
+
+  const day = indiaDay(new Date());
+  const clearsAt = new Date(
+    endOfIndiaDay(day).getTime() + env.economy.earningClearHours * 3600_000
+  );
+  const id = `c${Date.now().toString(36)}${crypto.randomBytes(12).toString('base64url')}`;
+
+  return prisma.$transaction(async (tx) => {
+    const [row] = await tx.$queryRaw`
+      INSERT INTO "earnings" (
+        "id", "userId", "conversationId", "senderId", "day",
+        "amount", "ratePerMinute", "minutes", "messages", "status",
+        "clearsAt", "createdAt"
+      ) VALUES (
+        ${id}, ${earnerId}, ${conversationId}, ${senderId}, ${day}::date,
+        ${amount}, 0, 0, 1, 'pending'::"EarningStatus",
+        ${clearsAt}, NOW()
+      )
+      ON CONFLICT ("userId", "conversationId", "day") DO UPDATE
+        SET "amount" = "earnings"."amount" + EXCLUDED."amount",
+            "messages" = "earnings"."messages" + 1
+      RETURNING "id", "amount", "messages", (xmax = 0) AS "inserted"`;
+
+    const wallet = await tx.wallet.upsert({
+      where: { userId: earnerId },
+      create: { userId: earnerId, totalEarnings: amount, pendingBalance: amount },
+      update: {
+        totalEarnings: { increment: amount },
+        pendingBalance: { increment: amount },
+      },
+    });
+
+    const total = Number(row.amount);
+    const count = Number(row.messages);
+    const subtitle =
+      `${senderName ? `${senderName} • ` : ''}` +
+      `${count} message${count === 1 ? '' : 's'} • clears in ${env.economy.earningClearHours} hrs`;
+    if (row.inserted) {
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          kind: 'earning',
+          status: 'pending',
+          title: 'Chat earnings',
+          subtitle,
+          rupeeDelta: total,
+          referenceId: row.id,
+        },
+      });
+    } else {
+      await tx.walletTransaction.updateMany({
+        where: { walletId: wallet.id, kind: 'earning', referenceId: row.id },
+        data: { rupeeDelta: total, subtitle },
+      });
+    }
+    return row;
+  });
+}
+
+/** Today's date in India, as `YYYY-MM-DD` — the day a chat earning belongs to. */
+function indiaDay(at) {
+  return new Date(at.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+}
+
+/** Midnight at the end of an India day, as an instant. */
+function endOfIndiaDay(day) {
+  return new Date(new Date(`${day}T00:00:00+05:30`).getTime() + 24 * 3600_000);
+}
+
+/**
  * Moves matured earnings from pending to available.
  *
  * Called on read rather than by a cron, so a deployment without a scheduler
@@ -638,9 +732,9 @@ async function releaseMaturedEarnings(userId) {
 
   const total = matured.reduce((sum, e) => sum + Number(e.amount), 0);
   const ids = matured.map((e) => e.id);
-  // Ledger rows reference the call, not the earning, so they are settled by
-  // call id.
-  const callIds = matured.map((e) => e.callId);
+  // A call's ledger row references the call; a chat earning's references
+  // the earning itself.
+  const references = matured.map((e) => e.callId ?? e.id);
 
   await prisma.$transaction([
     prisma.earning.updateMany({
@@ -659,7 +753,7 @@ async function releaseMaturedEarnings(userId) {
         wallet: { userId },
         kind: 'earning',
         status: 'pending',
-        referenceId: { in: callIds },
+        referenceId: { in: references },
       },
       data: { status: 'completed' },
     }),
@@ -839,6 +933,7 @@ module.exports = {
   listVipPlans,
   purchaseVip,
   recordEarning,
+  recordMessageEarning,
   releaseMaturedEarnings,
   withdraw,
   listTransactions,

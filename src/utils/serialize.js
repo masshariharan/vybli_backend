@@ -485,6 +485,9 @@ function earning(row) {
   return {
     id: row.id,
     call_id: row.callId,
+    source: row.callId ? 'call' : 'chat',
+    conversation_id: row.conversationId ?? null,
+    messages: row.messages ?? 0,
     amount: money(row.amount),
     minutes: row.minutes,
     rate_per_minute: money(row.ratePerMinute),

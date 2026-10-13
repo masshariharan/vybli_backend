@@ -710,6 +710,8 @@ async function earningFeed({ status, userId, from, to, skip = 0, take = 25 }) {
       id: e.id,
       user: summarise(e.user),
       call_id: e.callId,
+      source: e.callId ? 'call' : 'chat',
+      messages: e.messages,
       minutes: e.minutes,
       amount: Number(e.amount),
       rate_per_minute: Number(e.ratePerMinute),

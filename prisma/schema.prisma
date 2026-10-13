@@ -1030,23 +1030,34 @@ model WalletTransaction {
 /// One per call, enforced by the unique `callId` — the constraint *is* the
 /// duplicate-earning guard, rather than a check that could be raced.
 model Earning {
-  id     String @id @default(cuid())
+  id     String  @id @default(cuid())
   userId String
-  callId String @unique
+  /// The call it came from. Null for chat earnings.
+  callId String? @unique
 
   amount        Decimal       @db.Decimal(12, 2)
   ratePerMinute Decimal       @db.Decimal(12, 2)
   minutes       Int
   status        EarningStatus @default(pending)
 
-  /// When `pending` becomes `available` — 48h after the call ends.
+  /// Chat earnings: one row per conversation per day (India time), grown
+  /// with every paid message — `messages` counts them. Null on call rows.
+  conversationId String?
+  /// Who sent the paid messages.
+  senderId       String?
+  day            DateTime? @db.Date
+  messages       Int       @default(0)
+
+  /// When `pending` becomes `available` — 48h after the call ends, or after
+  /// the end of a chat earning's day.
   clearsAt DateTime
 
   createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  call Call? @relation(fields: [callId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, conversationId, day])
   @@index([userId, status])
   @@index([status, clearsAt])
   @@map("earnings")

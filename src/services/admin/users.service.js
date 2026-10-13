@@ -743,14 +743,26 @@ async function earnings(userId, { status, skip = 0, take = 25 } = {}) {
       })
     : [];
   const callsById = new Map(callRows.map((c) => [c.id, c]));
+  // Chat earnings: the man whose paid messages they were.
+  const senderIds = [...new Set(rows.filter((r) => !r.callId && r.senderId).map((r) => r.senderId))];
+  const senders = senderIds.length
+    ? await prisma.user.findMany({ where: { id: { in: senderIds } }, include: PROFILE_INCLUDE })
+    : [];
+  const sendersById = new Map(senders.map((u) => [u.id, u]));
 
   return {
     items: rows.map((e) => {
       const call = callsById.get(e.callId);
-      const other = call ? (call.calleeId === userId ? call.caller : call.callee) : null;
+      const other = call
+        ? call.calleeId === userId
+          ? call.caller
+          : call.callee
+        : sendersById.get(e.senderId) ?? null;
       return {
         id: e.id,
         call_id: e.callId,
+        source: e.callId ? 'call' : 'chat',
+        messages: e.messages,
         counterpart: other ? summarise(other) : null,
         duration_seconds: call?.durationSeconds ?? null,
         minutes: e.minutes,

@@ -298,6 +298,16 @@ const chat = {
       // Decorative themes
       'sweetheart', 'rose_garden', 'cherry_blossom', 'valentine', 'starry_night',
       'moonlight', 'candlelight', 'lavender_dreams', 'dreamy',
+      // The premium collection
+      'rose_gold', 'champagne', 'butterfly_kiss', 'forever', 'serenade',
+      'first_date', 'velvet_night', 'enchanted',
+      // Moods
+      'mood_moonlight', 'mood_love', 'mood_feelings', 'mood_dream', 'mood_starlight',
+      'mood_rose', 'mood_sunset', 'mood_ocean_love', 'mood_heart_glow',
+      'mood_midnight_romance', 'mood_pastel_love', 'mood_golden_love',
+      'mood_sunshine', 'mood_serenity', 'mood_cozy', 'mood_spring',
+      // Exclusive
+      'two_hearts',
     ]),
   }),
 };
