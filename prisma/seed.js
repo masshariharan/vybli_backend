@@ -45,9 +45,10 @@ const RECHARGE_PACKAGES = [
   { id: 'pkg_50', priceInr: 50, bonusInr: 5, isPopular: false, isBestValue: false, tagline: '11 min of voice', sortOrder: 2 },
   { id: 'pkg_100', priceInr: 100, bonusInr: 15, isPopular: true, isBestValue: false, tagline: '23 min of voice', sortOrder: 3 },
   { id: 'pkg_200', priceInr: 200, bonusInr: 35, isPopular: false, isBestValue: false, tagline: '47 min of voice', sortOrder: 4 },
-  { id: 'pkg_500', priceInr: 500, bonusInr: 100, isPopular: false, isBestValue: true, tagline: '30 min of video', sortOrder: 5 },
-  { id: 'pkg_1000', priceInr: 1000, bonusInr: 250, isPopular: false, isBestValue: false, tagline: '62 min of video', sortOrder: 6 },
-  { id: 'pkg_2000', priceInr: 2000, bonusInr: 600, isPopular: false, isBestValue: false, tagline: '130 min of video', sortOrder: 7 },
+  { id: 'pkg_300', priceInr: 300, bonusInr: 55, isPopular: false, isBestValue: false, tagline: '71 min of voice', sortOrder: 5 },
+  { id: 'pkg_500', priceInr: 500, bonusInr: 100, isPopular: false, isBestValue: true, tagline: '30 min of video', sortOrder: 6 },
+  { id: 'pkg_1000', priceInr: 1000, bonusInr: 250, isPopular: false, isBestValue: false, tagline: '62 min of video', sortOrder: 7 },
+  { id: 'pkg_2000', priceInr: 2000, bonusInr: 600, isPopular: false, isBestValue: false, tagline: '130 min of video', sortOrder: 8 },
 ];
 
 /** VIP plans. 1 / 2 / 3 months, priced in days so a month never has to mean
