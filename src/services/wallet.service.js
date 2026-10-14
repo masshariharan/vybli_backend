@@ -445,6 +445,80 @@ async function purchaseVip(user, { planId, purchaseToken }) {
  * `play_billing.service.consumeProductPurchase`) never leaves money credited
  * with no ledger row to explain it.
  */
+/**
+ * A purchase made from another account cannot be redeemed on this one: the
+ * app tags every purchase with its buyer, and the tag must match. (Purchases
+ * from app versions before the tag carry none, and are accepted.)
+ */
+function assertBuyer(verified, userId) {
+  if (
+    verified.obfuscatedAccountId &&
+    verified.obfuscatedAccountId !== playBillingService.accountTag(userId)
+  ) {
+    console.error(`[play-billing] purchase tagged for another account, redeemed by ${userId}`);
+    throw errors.purchaseNotVerified();
+  }
+}
+
+/**
+ * Takes back what Google has refunded or charged back.
+ *
+ * Reads Google's voided purchases and, for each one this server credited,
+ * debits the same amount from that wallet (it may go below zero: the next
+ * recharge settles it) with a ledger row saying why — once per purchase,
+ * however often this runs. Run periodically.
+ */
+async function reverseVoidedPurchases({ sinceMs = Date.now() - 30 * 86_400_000 } = {}) {
+  if (env.payments.provider !== 'google_play') return 0;
+  const voided = await playBillingService.listVoidedPurchases({ startTimeMs: sinceMs });
+  let reversed = 0;
+  for (const v of voided) {
+    if (!v.purchaseToken) continue;
+    const credited = await prisma.walletTransaction.findUnique({
+      where: { purchaseToken: v.purchaseToken },
+      include: { wallet: true },
+    });
+    if (!credited || Number(credited.rupeeDelta ?? 0) <= 0) continue;
+    const marker = `void:${credited.id}`;
+    const already = await prisma.walletTransaction.findFirst({ where: { referenceId: marker } });
+    if (already) continue;
+
+    const amount = Number(credited.rupeeDelta);
+    await prisma.$transaction([
+      prisma.wallet.update({
+        where: { id: credited.walletId },
+        data: {
+          balance: { decrement: amount },
+          // A refunded VIP purchase ends the membership it paid for.
+          ...(credited.title?.startsWith('VIP') ? { vipExpiresAt: new Date() } : {}),
+        },
+      }),
+      prisma.walletTransaction.create({
+        data: {
+          walletId: credited.walletId,
+          kind: 'purchase',
+          status: 'completed',
+          title: 'Purchase refunded',
+          subtitle: `${credited.title} • reversed by Google Play`,
+          rupeeDelta: -amount,
+          referenceId: marker,
+        },
+      }),
+    ]);
+    activity.record({
+      userId: credited.wallet.userId,
+      type: 'transaction',
+      relatedEntityId: credited.id,
+      description: `Reversed ₹${amount}: purchase refunded or charged back on Google Play`,
+      metadata: { kind: 'purchase_voided', order_id: v.orderId ?? null, amount },
+      status: 'completed',
+    });
+    emitToUser(credited.wallet.userId, 'wallet:updated', {});
+    reversed++;
+  }
+  return reversed;
+}
+
 async function verifyOrReplayGooglePlayPurchase({
   userId,
   productId,
@@ -463,6 +537,7 @@ async function verifyOrReplayGooglePlayPurchase({
 
   const verified = await playBillingService.verifyProductPurchase({ productId, purchaseToken });
   if (!verified) throw errors.purchaseNotVerified();
+  assertBuyer(verified, userId);
 
   await getOrCreateWallet(userId);
 
@@ -502,6 +577,7 @@ async function verifyOrReplayGooglePlayVip({ userId, productId, purchaseToken, p
 
   const verified = await playBillingService.verifyProductPurchase({ productId, purchaseToken });
   if (!verified) throw errors.purchaseNotVerified();
+  assertBuyer(verified, userId);
 
   const before = await getOrCreateWallet(userId);
   const now = new Date();
@@ -858,69 +934,10 @@ async function setUpiAccount(userId, { upiId }) {
  * so two withdrawal taps cannot both succeed.
  */
 async function withdraw(user, { amount } = {}) {
-  if (!user.profile?.isEarner) throw errors.notAnEarnerAccount();
-  if (!user.profile?.isVerified) throw errors.withdrawalRequiresVerification();
-
-  await releaseMaturedEarnings(user.id);
-  const wallet = await getOrCreateWallet(user.id);
-  if (!hasLinkedUpiAccount(wallet)) throw errors.withdrawalRequiresUpiAccount();
-
-  const available = Number(wallet.availableBalance);
-  const requested = amount ?? available;
-
-  if (requested < env.economy.minWithdrawalInr) {
-    throw errors.withdrawalBelowMinimum(env.economy.minWithdrawalInr);
-  }
-  if (requested > available) {
-    throw errors.badRequest('That is more than your available balance.', {
-      available,
-      requested,
-    });
-  }
-
-  const { count } = await prisma.wallet.updateMany({
-    where: { userId: user.id, availableBalance: { gte: requested } },
-    data: { availableBalance: { decrement: requested } },
-  });
-  if (count === 0) throw errors.badRequest('That is more than your available balance.');
-
-  const transaction = await prisma.walletTransaction.create({
-    data: {
-      walletId: wallet.id,
-      kind: 'withdrawal',
-      // Pending until a real payout provider confirms it.
-      status: 'pending',
-      title: 'Withdrawal requested',
-      // Masked: the ledger and the notification below are copies that
-      // outlive the wallet row and are far less guarded than it.
-      subtitle: `To ${fieldCrypto.maskUpi(fieldCrypto.open(wallet.payoutUpiId))} • 1–2 business days`,
-      rupeeDelta: -requested,
-    },
-  });
-
-  await prisma.earning.updateMany({
-    where: { userId: user.id, status: 'available' },
-    data: { status: 'withdrawn' },
-  });
-
-  await notificationService.notify({
-    userId: user.id,
-    kind: 'transaction',
-    title: 'Withdrawal requested',
-    body: `₹${requested} is on its way to ${fieldCrypto.maskUpi(fieldCrypto.open(wallet.payoutUpiId))}.`,
-    data: { transaction_id: transaction.id, amount: requested },
-  });
-
-  activity.record({
-    userId: user.id,
-    type: 'wallet_activity',
-    relatedEntityId: transaction.id,
-    description: `Requested a withdrawal of ₹${requested}`,
-    metadata: { kind: 'withdrawal', amount_inr: requested },
-    status: 'pending',
-  });
-
-  return { transaction, amount: requested };
+  // The whole lifecycle — holding the amount, paying it out through
+  // RazorpayX, and what a payout's result does to her balance — lives in
+  // `payout.service`.
+  return require('./payout.service').requestWithdrawal(user, { amount });
 }
 
 // ── Ledger ──────────────────────────────────────────────────────────────────
@@ -981,6 +998,7 @@ module.exports = {
   recordEarning,
   recordMessageEarning,
   recordMessageSpend,
+  reverseVoidedPurchases,
   releaseMaturedEarnings,
   withdraw,
   listTransactions,

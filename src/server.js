@@ -90,6 +90,28 @@ async function start() {
   // on a request and cannot slow or fail a sign-in.
   smsUsage.scheduleSync();
 
+  // Withdrawals still on their way, checked against RazorpayX — catches a
+  // webhook that never arrived, and resends one that never got out.
+  const payouts = require('./services/payout.service');
+  const reconcilePayouts = () =>
+    payouts
+      .reconcile()
+      .catch((err) => console.error('[payouts] reconcile failed', err));
+  setInterval(reconcilePayouts, 10 * 60_000).unref();
+
+  // Refunds and chargebacks on Google Play, taken back from the wallets they
+  // credited. Every six hours, over Google's 30-day window; idempotent.
+  if (env.payments.provider === 'google_play') {
+    const walletService = require('./services/wallet.service');
+    const reverseVoided = () =>
+      walletService
+        .reverseVoidedPurchases()
+        .then((n) => n > 0 && console.info(`[play-billing] reversed ${n} voided purchases`))
+        .catch((err) => console.error('[play-billing] voided purchases check failed', err));
+    reverseVoided();
+    setInterval(reverseVoided, 6 * 3600_000).unref();
+  }
+
   // No host argument, so this binds every interface — loopback and the LAN
   // alike. That is what lets a phone on the same Wi-Fi reach it.
   server.listen(env.port, () => {

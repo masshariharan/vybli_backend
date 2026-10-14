@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { JWT } = require('google-auth-library');
 
 const env = require('../config/env');
@@ -106,7 +107,46 @@ async function verifyProductPurchase({ productId, purchaseToken }) {
     orderId: result.data.orderId ?? null,
     purchaseTimeMillis: result.data.purchaseTimeMillis ?? null,
     acknowledgementState: result.data.acknowledgementState ?? 0,
+    /// What the app set as the buyer when it started the purchase — see
+    /// [accountTag].
+    obfuscatedAccountId: result.data.obfuscatedExternalAccountId ?? null,
   };
+}
+
+/**
+ * The tag the app attaches to every purchase as its buyer
+ * (`obfuscatedAccountId`), derived from the user id: Google records it with
+ * the purchase, and the server checks it on verification, so a purchase
+ * token copied from one account cannot be redeemed on another. A hash, not
+ * the id itself — Google asks that it not be personal data.
+ */
+function accountTag(userId) {
+  return crypto.createHash('sha256').update(`vybli:${userId}`).digest('hex').slice(0, 64);
+}
+
+/**
+ * Purchases Google has voided since [startTimeMs] — refunded, charged back
+ * or cancelled — one-time products only. Google keeps the last 30 days.
+ */
+async function listVoidedPurchases({ startTimeMs }) {
+  const voided = [];
+  let token;
+  do {
+    const params = new URLSearchParams({
+      startTime: String(startTimeMs),
+      type: '0',
+      maxResults: '1000',
+      ...(token ? { token } : {}),
+    });
+    const result = await authedFetch(`/purchases/voidedpurchases?${params}`);
+    if (!result.ok) {
+      console.error('[play-billing] voidedpurchases.list failed', result.status, result.body);
+      throw errors.paymentProviderError();
+    }
+    voided.push(...(result.data.voidedPurchases ?? []));
+    token = result.data.tokenPagination?.nextPageToken;
+  } while (token);
+  return voided;
 }
 
 /**
@@ -139,6 +179,8 @@ async function consumeProductPurchase({ productId, purchaseToken }) {
 module.exports = {
   verifyProductPurchase,
   consumeProductPurchase,
+  accountTag,
+  listVoidedPurchases,
   get configured() {
     return env.payments.googlePlay.configured;
   },

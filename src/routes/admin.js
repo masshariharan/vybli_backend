@@ -904,6 +904,95 @@ router.put(
   })
 );
 
+// ── Withdrawals ─────────────────────────────────────────────────────────────
+
+const payouts = require('../services/payout.service');
+
+function withdrawalRow(w) {
+  return {
+    id: w.id,
+    user: w.user
+      ? { id: w.user.id, name: w.user.profile?.name ?? null, phone: w.user.phone ?? null }
+      : null,
+    amount: Number(w.amount),
+    status: w.status,
+    upi: w.upiMasked,
+    provider: w.provider,
+    payout_id: w.providerPayoutId,
+    utr: w.utr,
+    failure_reason: w.failureReason,
+    processed_at: w.processedAt?.toISOString() ?? null,
+    created_at: w.createdAt.toISOString(),
+  };
+}
+
+router.get(
+  '/withdrawals',
+  h(async (req, res) => {
+    const p = page(req, 50);
+    const { rows, total } = await payouts.list({
+      status: str(req.query.status),
+      skip: p.skip,
+      take: p.take,
+    });
+    return listed(res, { items: rows.map(withdrawalRow), total }, p, 'Withdrawals');
+  })
+);
+
+/** Sends a withdrawal that could not be sent to RazorpayX, again. */
+router.post(
+  '/withdrawals/:id/retry',
+  h(async (req, res) => {
+    const w = await payouts.retry(req.params.id);
+    audit.write({
+      req,
+      action: 'withdrawal.retried',
+      targetType: 'withdrawal',
+      targetId: req.params.id,
+      description: `Retried withdrawal ${req.params.id}`,
+    });
+    return ok(res, w ? { id: w.id, status: w.status } : null, 'Retried');
+  })
+);
+
+/** For manual payouts: the money was sent by hand — record it. */
+router.post(
+  '/withdrawals/:id/mark-paid',
+  h(async (req, res) => {
+    const utr = str(req.body?.utr);
+    const done = await payouts.markPaid(req.params.id, { utr });
+    if (!done) return res.status(409).json({ success: false, message: 'It is no longer open.' });
+    audit.write({
+      req,
+      action: 'withdrawal.marked_paid',
+      targetType: 'withdrawal',
+      targetId: req.params.id,
+      description: `Marked withdrawal ${req.params.id} paid${utr ? ` (UTR ${utr})` : ''}`,
+      metadata: { utr },
+    });
+    return ok(res, { id: req.params.id, status: 'paid' }, 'Marked paid');
+  })
+);
+
+/** Refuses it — the money goes back to her available balance. */
+router.post(
+  '/withdrawals/:id/reject',
+  h(async (req, res) => {
+    const reason = str(req.body?.reason) || 'Rejected by Vybli';
+    const done = await payouts.fail(req.params.id, { status: 'failed', reason });
+    if (!done) return res.status(409).json({ success: false, message: 'It is no longer open.' });
+    audit.write({
+      req,
+      action: 'withdrawal.rejected',
+      targetType: 'withdrawal',
+      targetId: req.params.id,
+      description: `Rejected withdrawal ${req.params.id}: ${reason}`,
+      metadata: { reason },
+    });
+    return ok(res, { id: req.params.id, status: 'failed' }, 'Rejected');
+  })
+);
+
 // ── Audit ───────────────────────────────────────────────────────────────────
 
 /**

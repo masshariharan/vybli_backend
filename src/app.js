@@ -39,6 +39,12 @@ function createApp() {
   app.use(
     express.json({
       limit: '1mb',
+      // A webhook's signature is over the exact bytes sent, so those are
+      // kept for the webhook routes — re-serialising the parsed body would
+      // not reproduce them.
+      verify: (req, _res, buf) => {
+        if (req.originalUrl?.startsWith('/api/v1/webhooks/')) req.rawBody = buf;
+      },
       type: (req) =>
         Boolean(req.headers['content-type']) && /json/i.test(req.headers['content-type']),
     })

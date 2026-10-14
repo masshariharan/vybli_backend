@@ -497,6 +497,20 @@ function earning(row) {
   };
 }
 
+/** A withdrawal, as its earner sees it. */
+function withdrawal(row) {
+  return {
+    id: row.id,
+    amount: money(row.amount),
+    status: row.status,
+    upi: row.upiMasked,
+    utr: row.utr ?? null,
+    failure_reason: row.failureReason ?? null,
+    processed_at: iso(row.processedAt),
+    created_at: iso(row.createdAt),
+  };
+}
+
 // ── Everything else ─────────────────────────────────────────────────────────
 
 function notification(row) {
@@ -569,6 +583,7 @@ module.exports = {
   walletTransaction,
   upiAccount,
   rechargePackage,
+  withdrawal,
   vipPlan,
   earning,
   notification,

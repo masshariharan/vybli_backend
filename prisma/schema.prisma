@@ -146,6 +146,18 @@ enum TransactionStatus {
   failed
 }
 
+/// Where a withdrawal stands. `requested` is held in Vybli (waiting for the
+/// payout to be created, or for an admin when payouts are manual);
+/// `processing` is with RazorpayX; `paid` reached her UPI; `failed` and
+/// `reversed` put the money back in her available balance.
+enum WithdrawalStatus {
+  requested
+  processing
+  paid
+  failed
+  reversed
+}
+
 enum EarningStatus {
   pending
   available
@@ -260,6 +272,7 @@ model User {
   callsMade     Call[]    @relation("CallCaller")
   callsReceived Call[]    @relation("CallCallee")
   earnings      Earning[]
+  withdrawals   Withdrawal[]
 
   callStats    EarnerCallStats[]
   levelChanges EarnerLevelChange[]
@@ -983,6 +996,13 @@ model Wallet {
   /// The UPI ID a withdrawal pays out to. Null until the earner links one.
   payoutUpiId String?
 
+  /// RazorpayX's contact and UPI fund account for this earner, created on the
+  /// first payout and reused after. `payoutFundAccountFor` is a hash of the
+  /// UPI ID they were made for, so linking a new UPI ID makes a new one.
+  payoutContactId       String?
+  payoutFundAccountId   String?
+  payoutFundAccountFor  String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1432,4 +1452,38 @@ model SmsMonitorState {
   updatedAt DateTime @updatedAt
 
   @@map("sms_monitor_state")
+}
+
+/// A request to pay an earner's available balance out to her UPI ID, and
+/// everything that happened to it. The amount left her available balance the
+/// moment it was requested; a failure or reversal puts it back.
+model Withdrawal {
+  id     String           @id @default(cuid())
+  userId String
+  amount Decimal          @db.Decimal(12, 2)
+  status WithdrawalStatus @default(requested)
+
+  /// The UPI ID it went to, masked — the full one stays encrypted on the
+  /// wallet.
+  upiMasked String
+
+  /// `razorpayx`, or `manual` when an admin pays it by hand.
+  provider         String
+  providerPayoutId String? @unique
+  /// The bank's reference once paid — what the earner quotes to her bank.
+  utr              String?
+  failureReason    String?
+
+  /// The ledger row this withdrawal shows up as.
+  transactionId String? @unique
+
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("withdrawals")
 }

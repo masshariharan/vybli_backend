@@ -603,6 +603,25 @@ wallet.put(
 
 router.use('/wallet', wallet);
 
+// ── Webhooks ────────────────────────────────────────────────────────────────
+//
+// Called by payment providers, not the app: no user session — the request is
+// trusted only if its signature, over the exact bytes received, checks out.
+// Always answers 200 once verified (even for events it ignores), so the
+// provider does not keep retrying; a processing error answers 500 so it does.
+router.post(
+  '/webhooks/razorpayx',
+  h(async (req, res) => {
+    const razorpayx = require('../services/payouts/razorpayx.client');
+    const payouts = require('../services/payout.service');
+    if (!razorpayx.verifyWebhookSignature(req.rawBody, req.headers['x-razorpay-signature'])) {
+      return res.status(400).json({ success: false, message: 'Invalid signature' });
+    }
+    await payouts.handleRazorpayxEvent(req.body);
+    return res.json({ success: true });
+  })
+);
+
 // ── Notifications ───────────────────────────────────────────────────────────
 
 const notifs = express.Router();

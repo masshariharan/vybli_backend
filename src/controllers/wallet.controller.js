@@ -14,12 +14,15 @@ const { toSkipTake } = require('../validators/common');
  * directly and has no Play Billing product to buy, so the client should
  * never open the Play Store purchase sheet against one.
  */
-function paymentsStatus(_req, res) {
+function paymentsStatus(req, res) {
   return ok(
     res,
     {
       provider: env.payments.provider,
       requires_payment: env.payments.configured,
+      // Attached to the Play purchase as its buyer — see
+      // `playBillingService.accountTag`.
+      account_tag: require('../services/play_billing.service').accountTag(req.userId),
     },
     'Payments status'
   );
@@ -137,6 +140,7 @@ async function withdraw(req, res) {
     res,
     {
       transaction: serialize.walletTransaction(result.transaction),
+      withdrawal: serialize.withdrawal(result.withdrawal),
       amount: result.amount,
       wallet: serialize.walletSummary(wallet, { isEarner: true }),
     },

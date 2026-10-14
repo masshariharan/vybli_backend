@@ -198,9 +198,12 @@ const env = {
     get configured() {
       return this.provider !== 'none' && this.provider !== '';
     },
-    /// True whenever no provider is configured — see the doc comment above.
+    /// True when no provider is configured — and never in production. A
+    /// production server without a provider refuses recharges outright
+    /// (`paymentsUnavailable`) rather than crediting money nobody paid; the
+    /// rest of the app keeps running.
     get creditsWithoutPayment() {
-      return !this.configured;
+      return !this.configured && process.env.NODE_ENV !== 'production';
     },
     /**
      * Google Play Billing: collection for recharge/VIP purchases on Android.
@@ -220,6 +223,31 @@ const env = {
       get configured() {
         return Boolean(
           this.packageName && this.serviceAccountEmail && this.serviceAccountPrivateKey
+        );
+      },
+    },
+  },
+
+  /**
+   * Who pays earners out.
+   *
+   * `razorpayx` sends each withdrawal to the earner's UPI ID through the
+   * RazorpayX Payouts API and learns the result from its webhook. `manual`
+   * (the default) holds every withdrawal as `requested` for an admin to pay
+   * by hand and mark paid in the admin panel.
+   */
+  payouts: {
+    provider: (process.env.PAYOUT_PROVIDER || 'manual').trim().toLowerCase(),
+    razorpayx: {
+      keyId: (process.env.RAZORPAYX_KEY_ID || '').trim(),
+      keySecret: (process.env.RAZORPAYX_KEY_SECRET || '').trim(),
+      /// The RazorpayX account number payouts are drawn from.
+      accountNumber: (process.env.RAZORPAYX_ACCOUNT_NUMBER || '').trim(),
+      /// Signs every webhook — what proves one really came from Razorpay.
+      webhookSecret: (process.env.RAZORPAYX_WEBHOOK_SECRET || '').trim(),
+      get configured() {
+        return Boolean(
+          this.keyId && this.keySecret && this.accountNumber && this.webhookSecret
         );
       },
     },
@@ -475,13 +503,24 @@ if (env.firebase.configured && !env.firebase.hasServiceAccount) {
   );
 }
 if (!env.payments.configured) {
-  // Not a boot-time throw: `wallet.service.purchase` already refuses the
-  // request at runtime once a provider is configured (`creditsWithoutPayment`
-  // is false the moment `payments.configured` is true), so this is purely
-  // informational.
+  // Not a boot-time throw — calls and chat must keep working — but a loud
+  // warning: in production recharges are refused until a provider is set,
+  // and anywhere else they credit with no payment taken.
   console.warn(
-    '[boot] PAYMENT_PROVIDER is not set. Recharge currently credits the ' +
-      'wallet with no payment taken — see the doc comment on `payments` above.'
+    process.env.NODE_ENV === 'production'
+      ? '[boot] PAYMENT_PROVIDER is not set. Recharges are REFUSED until it is ' +
+          '(set PAYMENT_PROVIDER=google_play and the PLAY_BILLING_* variables).'
+      : '[boot] PAYMENT_PROVIDER is not set. Recharge credits the wallet with ' +
+          'no payment taken (non-production only).'
+  );
+}
+if (!['manual', 'razorpayx'].includes(env.payouts.provider)) {
+  throw new Error(`PAYOUT_PROVIDER must be "manual" or "razorpayx", not "${env.payouts.provider}".`);
+}
+if (env.payouts.provider === 'razorpayx' && !env.payouts.razorpayx.configured) {
+  throw new Error(
+    'PAYOUT_PROVIDER=razorpayx but RAZORPAYX_KEY_ID, RAZORPAYX_KEY_SECRET, ' +
+      'RAZORPAYX_ACCOUNT_NUMBER and RAZORPAYX_WEBHOOK_SECRET are not all set.'
   );
 }
 if (env.payments.provider === 'google_play' && !env.payments.googlePlay.configured) {
