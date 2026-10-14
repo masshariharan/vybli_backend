@@ -22,6 +22,7 @@ const {
   pairableWhere,
 } = require('../src/utils/pairing');
 const serialize = require('../src/utils/serialize');
+const pricing = require('../src/services/pricing.service');
 
 let passed = 0;
 let failed = 0;
@@ -37,15 +38,22 @@ function check(label, fn) {
   }
 }
 
+// Prices are level-based: a card quotes the price on the ladder of whoever
+// the call is priced by (see `callPricing.listRate`). Level 3 so the expected
+// price is not just the Starter default.
+const LEVEL = 3;
+const rate = (audience, type) => pricing.rateForLevel(audience, type, LEVEL);
+
 function person(id, { earner, showAll = false } = {}) {
   return {
     id,
     createdAt: new Date(),
     profile: {
       name: id,
+      gender: earner ? 'female' : 'male',
       isEarner: earner,
-      voiceRatePerMinute: 12,
-      videoRatePerMinute: 20,
+      voiceLevel: LEVEL,
+      videoLevel: LEVEL,
     },
     privacySettings: { showAllUsers: showAll },
     languages: [],
@@ -152,15 +160,20 @@ check('the other person\'s own switch is never sent', () => {
   assert.equal('show_all_users' in body, false);
 });
 
-check('opposite-side rates are unchanged', () => {
+check('opposite-side cards quote her level price', () => {
   const body = card(woman('w'), man('m'));
-  assert.equal(body.voice_rate_per_minute, 12);
-  assert.equal(body.video_rate_per_minute, 20);
+  assert.equal(body.voice_rate_per_minute, rate('female', 'voice'));
+  assert.equal(body.video_rate_per_minute, rate('female', 'video'));
+  assert.ok(body.voice_rate_per_minute > 0);
 });
 
-check('same-side cards quote no price', () => {
-  assert.equal(card(man('b', true), man('a', true)).voice_rate_per_minute, 0);
+check('a woman is never quoted a price', () => {
+  assert.equal(card(man('m'), woman('w')).voice_rate_per_minute, 0);
+});
+
+check("same-side cards: two women free, two men at his level on the men's ladder", () => {
   assert.equal(card(woman('b', true), woman('a', true)).voice_rate_per_minute, 0);
+  assert.equal(card(man('b', true), man('a', true)).voice_rate_per_minute, rate('male', 'voice'));
 });
 
 check('chat and call peers quote no price between two earners', () => {
@@ -171,14 +184,14 @@ check('chat and call peers quote no price between two earners', () => {
 
 check('chat and call peers keep the earner rate for the other side', () => {
   const summary = serialize.userSummary(woman('w'), { viewer: man('m') });
-  assert.equal(summary.voice_rate_per_minute, 12);
+  assert.equal(summary.voice_rate_per_minute, rate('female', 'voice'));
   assert.equal(summary.can_interact, true);
 });
 
-check('no viewer means no answer, and the old rate rule', () => {
+check('no viewer means no answer, and their own level price', () => {
   const summary = serialize.userSummary(woman('w'));
   assert.equal(summary.can_interact, null);
-  assert.equal(summary.voice_rate_per_minute, 12);
+  assert.equal(summary.voice_rate_per_minute, rate('female', 'voice'));
 });
 
 check('privacy settings carry the switch, off by default', () => {

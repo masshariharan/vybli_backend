@@ -454,7 +454,7 @@ async function chargeForMessage(user) {
 
   const rows = await prisma.$queryRaw`
     UPDATE "wallets"
-    SET "balance" = "balance" - ${price}, "updatedAt" = NOW()
+    SET "balance" = "balance" - ${price}, "updatedAt" = ${new Date()}
     WHERE "userId" = ${user.id} AND "balance" >= ${price}
     RETURNING "balance"`;
   if (rows.length === 0) {
@@ -491,7 +491,7 @@ async function refundMessage(user, amount) {
   if (!(amount > 0)) return;
   const rows = await prisma.$queryRaw`
     UPDATE "wallets"
-    SET "balance" = "balance" + ${amount}, "updatedAt" = NOW()
+    SET "balance" = "balance" + ${amount}, "updatedAt" = ${new Date()}
     WHERE "userId" = ${user.id}
     RETURNING "balance"`;
   if (rows.length > 0) {

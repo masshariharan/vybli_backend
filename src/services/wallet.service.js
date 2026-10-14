@@ -740,7 +740,7 @@ async function recordMessageEarning({
       ) VALUES (
         ${id}, ${earnerId}, ${conversationId}, ${senderId}, ${day}::date,
         ${amount}, 0, 0, 1, 'pending'::"EarningStatus",
-        ${clearsAt}, NOW()
+        ${clearsAt}, ${new Date()}
       )
       ON CONFLICT ("userId", "conversationId", "day") DO UPDATE
         SET "amount" = "earnings"."amount" + EXCLUDED."amount",
@@ -813,7 +813,7 @@ async function recordMessageSpend({ userId, peerName, conversationId, price }) {
     ) VALUES (
       ${id}, ${wallet.id}, 'message'::"TransactionKind",
       'completed'::"TransactionStatus", 'Chat messages', ${label(1)},
-      ${-price}, ${reference}, NOW()
+      ${-price}, ${reference}, ${new Date()}
     )
     ON CONFLICT ("walletId", "referenceId") WHERE "referenceId" LIKE 'msg:%'
     DO UPDATE SET "rupeeDelta" = "wallet_transactions"."rupeeDelta" + EXCLUDED."rupeeDelta"
@@ -844,33 +844,37 @@ function endOfIndiaDay(day) {
  *
  * Called on read rather than by a cron, so a deployment without a scheduler
  * still behaves correctly. Idempotent — only rows still marked `pending` move.
+ *
+ * Reads run this concurrently (the app loads the wallet and its history
+ * together), so the rows are claimed and credited in one statement: each
+ * caller credits exactly the rows *it* moved from pending, and a row two
+ * callers both saw is counted by one of them, never both.
  */
 async function releaseMaturedEarnings(userId) {
-  const matured = await prisma.earning.findMany({
-    where: { userId, status: 'pending', clearsAt: { lte: new Date() } },
-    select: { id: true, amount: true, callId: true },
-  });
-  if (matured.length === 0) return 0;
+  return prisma.$transaction(async (tx) => {
+    const released = await tx.$queryRaw`
+      UPDATE "earnings" SET "status" = 'available'::"EarningStatus"
+      WHERE "userId" = ${userId}
+        AND "status" = 'pending'::"EarningStatus"
+        AND "clearsAt" <= ${new Date()}
+      RETURNING "id", "amount", "callId"`;
+    if (released.length === 0) return 0;
 
-  const total = matured.reduce((sum, e) => sum + Number(e.amount), 0);
-  const ids = matured.map((e) => e.id);
-  // A call's ledger row references the call; a chat earning's references
-  // the earning itself.
-  const references = matured.map((e) => e.callId ?? e.id);
+    const total = Number(
+      released.reduce((sum, e) => sum + Number(e.amount), 0).toFixed(2)
+    );
+    // A call's ledger row references the call; a chat earning's references
+    // the earning itself.
+    const references = released.map((e) => e.callId ?? e.id);
 
-  await prisma.$transaction([
-    prisma.earning.updateMany({
-      where: { id: { in: ids } },
-      data: { status: 'available' },
-    }),
-    prisma.wallet.update({
+    await tx.wallet.update({
       where: { userId },
       data: {
         pendingBalance: { decrement: total },
         availableBalance: { increment: total },
       },
-    }),
-    prisma.walletTransaction.updateMany({
+    });
+    await tx.walletTransaction.updateMany({
       where: {
         wallet: { userId },
         kind: 'earning',
@@ -878,10 +882,9 @@ async function releaseMaturedEarnings(userId) {
         referenceId: { in: references },
       },
       data: { status: 'completed' },
-    }),
-  ]);
-
-  return total;
+    });
+    return total;
+  });
 }
 
 /** Whether a wallet has a payable account. */
@@ -999,6 +1002,7 @@ module.exports = {
   recordMessageEarning,
   recordMessageSpend,
   reverseVoidedPurchases,
+  assertBuyer,
   releaseMaturedEarnings,
   withdraw,
   listTransactions,

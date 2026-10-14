@@ -37,6 +37,15 @@ async function run() {
   const opened = await post(`/users/${earner.id}/conversation`, payer.token);
   const conversationId = opened.data?.thread?.id;
 
+  // Messages from the paying side cost money; fund the payer so sends land.
+  await withPrisma((prisma) =>
+    prisma.wallet.upsert({
+      where: { userId: payer.id },
+      create: { userId: payer.id, balance: 100 },
+      update: { balance: 100 },
+    })
+  );
+
   const send = async (text) =>
     (await post(`/conversations/${conversationId}/messages`, payer.token, { text })).data
       ?.message?.id;

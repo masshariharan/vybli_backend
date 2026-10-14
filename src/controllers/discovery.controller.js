@@ -5,7 +5,6 @@ const referenceService = require('../services/reference.service');
 const avatarCatalog = require('../config/avatarCatalog');
 const geoip = require('../services/geoip.service');
 const favoriteService = require('../services/favorite.service');
-const relationship = require('../services/relationship.service');
 const walletService = require('../services/wallet.service');
 const serialize = require('../utils/serialize');
 const callPricing = require('../utils/callPricing');

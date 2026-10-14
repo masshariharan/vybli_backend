@@ -12,9 +12,16 @@
  * suspension without a reason is refused.
  */
 
+// The same `.env` the server reads (see `src/config/env.js`), so the username
+// matches. Variables already set in the shell win, as they do for the server.
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
+
 const BASE = process.env.API_BASE || 'http://localhost:4000/api/v1';
-const USERNAME = process.env.ADMIN_USERNAME || 'admin';
-const PASSWORD = process.env.ADMIN_TEST_PASSWORD || 'Vybli!Admin2026';
+const USERNAME = (process.env.ADMIN_USERNAME || '').trim();
+// A server configured with ADMIN_PASSWORD_HASH cannot hand the password back,
+// so the plaintext has to come from ADMIN_TEST_PASSWORD; a server configured
+// with a plaintext ADMIN_PASSWORD is signed in to with that.
+const PASSWORD = process.env.ADMIN_TEST_PASSWORD || process.env.ADMIN_PASSWORD || '';
 
 let passed = 0;
 let failed = 0;
@@ -56,6 +63,15 @@ const post = (path, token, body) => api('POST', path, { token, body });
 
   // ── Authentication ────────────────────────────────────────────────────────
   section('Authentication');
+
+  if (!USERNAME || !PASSWORD) {
+    // Bail before the wrong-password checks below spend lockout attempts.
+    console.log(
+      '\nNo admin credential to sign in with. The server uses ADMIN_PASSWORD_HASH;\n' +
+        'run with ADMIN_TEST_PASSWORD set to the matching password.\n'
+    );
+    process.exit(1);
+  }
 
   const noCreds = await api('POST', '/admin/auth/login', {
     body: { username: USERNAME, password: 'definitely-not-the-password' },

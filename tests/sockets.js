@@ -104,6 +104,26 @@ async function removeCreatedAccounts() {
   }
 }
 
+/**
+ * Puts rupees straight into a test account's wallet. Messages from the paying
+ * side cost money now (`env.economy.messagePriceInr`), so a sender needs a
+ * balance before a send can land — the paywall itself is not what this suite
+ * is about.
+ */
+async function fundWallet(userId, balance = 100) {
+  const { createPrismaClient } = require('../src/config/prismaClient');
+  const prisma = createPrismaClient();
+  try {
+    await prisma.wallet.upsert({
+      where: { userId },
+      create: { userId, balance },
+      update: { balance },
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
 const uniquePhone = (() => {
   let n = 0;
   const base = (Date.now() + 5000) % 1_000_000;
@@ -260,6 +280,9 @@ async function run() {
 
   // ── Messaging ─────────────────────────────────────────────────────────────
   section('Messaging');
+
+  // The caller pays per message; fund him so the sends below land.
+  await fundWallet(caller.id);
 
   const messageArrived = waitFor(earnerSocket, 'message:new');
   const echoArrived = waitFor(callerSocket, 'message:sent', 4000);

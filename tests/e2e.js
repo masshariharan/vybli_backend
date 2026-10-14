@@ -96,6 +96,44 @@ const put = (p, t, b) => api('PUT', p, { token: t, body: b });
 const del = (p, t, b) => api('DELETE', p, { token: t, body: b });
 
 /**
+ * Call prices, from where the server takes them — the `CallLevel` ladders in
+ * the database, read through `pricing.service` and priced by `callPricing` —
+ * so a ladder edited in the admin panel does not break this walk-through.
+ */
+async function callPrices() {
+  const pricing = require('../src/services/pricing.service');
+  await pricing.load();
+  return { pricing, callPricing: require('../src/utils/callPricing') };
+}
+
+/** What `callPricing` needs to know about someone: gender and levels. */
+async function pricingProfile(userId) {
+  return require('../src/config/prisma').userProfile.findUnique({
+    where: { userId },
+    select: { gender: true, voiceLevel: true, videoLevel: true },
+  });
+}
+
+/**
+ * Puts money in a wallet directly, the way an administrator's credit would —
+ * for an account that has to pay for chat messages without this walk-through
+ * pretending to make a purchase it later asserts on.
+ */
+async function fundWallet(userId, amount) {
+  const { createPrismaClient } = require('../src/config/prismaClient');
+  const direct = createPrismaClient();
+  try {
+    await direct.wallet.upsert({
+      where: { userId },
+      create: { userId, balance: amount },
+      update: { balance: { increment: amount } },
+    });
+  } finally {
+    await direct.$disconnect();
+  }
+}
+
+/**
  * Every number this run created, so it can remove them again.
  *
  * The suite used to leave its accounts behind — a dozen or so per run, each a
@@ -412,16 +450,19 @@ async function run() {
   // else, so a fresh earner is discoverable but not yet badged.
   check('onboarding did not self-approve', earner.user.is_verified === false);
 
-  // Distinct from the default every fixture account otherwise shares, so a
-  // later assertion that a card quotes "the earner's own rate" is actually
-  // discriminating rather than passing by coincidence.
-  const MEERA_RATE = 25;
+  // Distinct from the Starter level every fixture account otherwise shares, so
+  // a later assertion that a card quotes "the earner's own rate" is actually
+  // discriminating rather than passing by coincidence. A price is a level on
+  // the ladder now, not a per-profile number, so it is her level that is set.
+  const { pricing, callPricing } = await callPrices();
+  const MEERA_VOICE_LEVEL = 4;
+  const MEERA_RATE = pricing.rateForLevel('female', 'voice', MEERA_VOICE_LEVEL);
   {
     const { createPrismaClient } = require('../src/config/prismaClient');
     const direct = createPrismaClient();
     await direct.userProfile.update({
       where: { userId: earner.id },
-      data: { voiceRatePerMinute: MEERA_RATE },
+      data: { voiceLevel: MEERA_VOICE_LEVEL },
     });
     await direct.$disconnect();
   }
@@ -679,6 +720,22 @@ async function run() {
     thread.data?.thread?.messages?.length === 0,
     { count: thread.data?.thread?.messages?.length }
   );
+
+  // A message from the paying side costs money (`MESSAGE_PRICE_INR`), and
+  // `caller` has not bought anything yet — so the first attempt is refused,
+  // and he is given a small allowance to chat on. The Wallet section below
+  // measures from whatever of it is left.
+  const unfunded = await post(`/conversations/${conversationId}/messages`, caller.token, {
+    text: 'Hey! How are you?',
+    client_id: 'local_0',
+  });
+  check(
+    'a paying sender with an empty wallet is refused',
+    unfunded.status === 402 && unfunded.error === 'INSUFFICIENT_BALANCE',
+    { status: unfunded.status, error: unfunded.error }
+  );
+  const MESSAGE_ALLOWANCE = 50;
+  await fundWallet(caller.id, MESSAGE_ALLOWANCE);
 
   const sent = await post(`/conversations/${conversationId}/messages`, caller.token, {
     text: 'Hey! How are you?',
@@ -970,12 +1027,34 @@ async function run() {
   section('Wallet');
 
   const packages = await get('/wallet/packages', caller.token);
-  check('recharge packages come from the database', packages.data?.packages?.length === 7);
+  {
+    const { createPrismaClient } = require('../src/config/prismaClient');
+    const direct = createPrismaClient();
+    const activePackages = await direct.rechargePackage.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { priceInr: 'asc' }],
+      select: { id: true },
+    });
+    await direct.$disconnect();
+    check(
+      'recharge packages come from the database',
+      activePackages.length > 0 &&
+        JSON.stringify(packages.data?.packages?.map((p) => p.id)) ===
+          JSON.stringify(activePackages.map((p) => p.id)),
+      { got: packages.data?.packages?.map((p) => p.id), expected: activePackages.map((p) => p.id) }
+    );
+  }
 
+  // Nothing bought yet: all the wallet holds is what chatting left of the
+  // allowance it was given in Messaging — every exact figure from here on is
+  // measured from this.
   const wallet0 = await get('/wallet', caller.token);
-  check('a new wallet starts empty', wallet0.data?.wallet?.balance === 0, {
-    got: wallet0.data?.wallet?.balance,
-  });
+  const walletBase = wallet0.data?.wallet?.balance;
+  check(
+    'before any purchase, the wallet holds only what chatting left of its allowance',
+    walletBase >= 0 && walletBase < MESSAGE_ALLOWANCE,
+    { got: walletBase, allowance: MESSAGE_ALLOWANCE }
+  );
 
   const bought = await post('/wallet/purchase', caller.token, {
     package_id: 'pkg_1000',
@@ -990,8 +1069,9 @@ async function run() {
   });
 
   const wallet1 = await get('/wallet', caller.token);
-  check('the balance reflects the purchase', wallet1.data?.wallet?.balance === 1250, {
+  check('the balance reflects the purchase', wallet1.data?.wallet?.balance === walletBase + 1250, {
     got: wallet1.data?.wallet?.balance,
+    expected: walletBase + 1250,
   });
 
   const ledger = await get('/wallet/transactions', caller.token);
@@ -1391,8 +1471,8 @@ async function run() {
   const walletDuring = await get('/wallet', caller.token);
   check(
     'the first minute is charged the moment it connects',
-    walletDuring.data?.wallet?.balance === 1250 - rate,
-    { expected: 1250 - rate, got: walletDuring.data?.wallet?.balance }
+    walletDuring.data?.wallet?.balance === walletBase + 1250 - rate,
+    { expected: walletBase + 1250 - rate, got: walletDuring.data?.wallet?.balance }
   );
 
   const active = await get('/calls/active', caller.token);
@@ -1480,7 +1560,8 @@ async function run() {
   // A woman calling a man. Women are earners only and never pay, whoever
   // dialled: the man pays, and she — the earner — earns. (This used to bill
   // her as the caller.)
-  const reversedRate = 5; // Hardcoded voice rate
+  // He pays her level's price — the same one he is quoted for calling her.
+  const reversedRate = rate;
   const earnerWalletBefore = (await get('/wallet', earner.token)).data?.wallet?.balance;
   const callerWalletBefore = (await get('/wallet', caller.token)).data?.wallet?.balance;
   const reversedCall = await post('/calls', earner.token, {
@@ -1538,10 +1619,11 @@ async function run() {
     femaleRandom.success && femaleRandom.data?.user?.is_earner === false,
     { error: femaleRandom.error, got: femaleRandom.data?.user }
   );
+  // A woman never pays, so the quote she is shown is nothing at all.
   check(
-    'her random match quotes the hardcoded voice rate',
-    femaleRandom.data?.rate_per_minute === 5,
-    { got: femaleRandom.data?.rate_per_minute, expected: 5 }
+    'her random match quotes no price — she never pays',
+    femaleRandom.data?.rate_per_minute === 0,
+    { got: femaleRandom.data?.rate_per_minute, expected: 0 }
   );
 
   const sameRoleCall = await post('/calls', caller.token, {
@@ -1599,6 +1681,13 @@ async function run() {
 
   await patch('/me/settings/privacy', outsider.token, { show_all_users: true });
 
+  // Two men: the caller pays the answering man's level price on the men's
+  // ladder — so that is what the card quotes and what the call is billed at.
+  const sameSideRate = callPricing.listRate('voice', {
+    callerProfile: await pricingProfile(caller.id),
+    calleeProfile: await pricingProfile(outsider.id),
+  });
+
   const bothFeed = await get('/users/discover?scope=allCities&limit=100', caller.token);
   const sameSideCard = bothFeed.data?.items?.find((u) => u.id === outsider.id);
   check(
@@ -1607,9 +1696,11 @@ async function run() {
     { error: bothFeed.error }
   );
   check(
-    'marked as someone they can chat with and call, at no price',
-    sameSideCard?.can_interact === true && sameSideCard?.voice_rate_per_minute === 0,
-    { got: sameSideCard }
+    "marked as someone they can chat with and call, at his men's-ladder price",
+    sameSideCard?.can_interact === true &&
+      sameSideRate > 0 &&
+      sameSideCard?.voice_rate_per_minute === sameSideRate,
+    { got: sameSideCard?.voice_rate_per_minute, expected: sameSideRate }
   );
   check(
     'and the opposite side is still there',
@@ -1628,9 +1719,9 @@ async function run() {
     type: 'voice',
   });
   check(
-    'with both on, a same-side call can be placed — costs ₹5 voice (gender-based pricing)',
-    freeCall.success && freeCall.data?.call?.rate_per_minute === 5,
-    { error: freeCall.error, got: freeCall.data?.call?.rate_per_minute }
+    "with both on, a same-side call can be placed — at the answering man's level price",
+    freeCall.success && freeCall.data?.call?.rate_per_minute === sameSideRate,
+    { error: freeCall.error, got: freeCall.data?.call?.rate_per_minute, expected: sameSideRate }
   );
   if (freeCall.data?.call?.id) {
     await post(`/calls/${freeCall.data.call.id}/cancel`, caller.token);
@@ -1969,13 +2060,18 @@ async function run() {
   // hung up while still ringing, so no minute is billed and nothing is earned.
   section('VIP call discount');
 
+  const vipRate = callPricing.ratePerMinute('voice', {
+    callerProfile: await pricingProfile(vipUser.id),
+    calleeProfile: await pricingProfile(earner.id),
+    discountPct: 15,
+  });
   const vipSocket = await goOnline(vipUser);
   const vipCall = await post('/calls', vipUser.token, { user_id: earner.id, type: 'voice' });
   check('a VIP can place a call', vipCall.success, { error: vipCall.error });
   check(
-    'the call is snapshotted at the VIP rate — ₹5 less 15%',
-    vipCall.data?.call?.rate_per_minute === 4.25,
-    { got: vipCall.data?.call?.rate_per_minute }
+    "the call is snapshotted at the VIP rate — her level's price less 15%",
+    vipRate > 0 && vipRate < MEERA_RATE && vipCall.data?.call?.rate_per_minute === vipRate,
+    { got: vipCall.data?.call?.rate_per_minute, expected: vipRate }
   );
   if (vipCall.data?.call?.id) {
     await post(`/calls/${vipCall.data.call.id}/end`, vipUser.token, { reason: 'hungUp' });

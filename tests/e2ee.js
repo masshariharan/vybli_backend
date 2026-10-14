@@ -57,11 +57,20 @@ async function run() {
   const a1 = ref.newDevice();
   const b1 = ref.newDevice();
 
+  // Messages from the paying side cost money; fund the payer so sends land.
+  await withPrisma((prisma) =>
+    prisma.wallet.upsert({
+      where: { userId: payer.id },
+      create: { userId: payer.id, balance: 100 },
+      update: { balance: 100 },
+    })
+  );
+
   // ── The key directory ────────────────────────────────────────────────────
   section('Device keys');
 
   const regA = await register(payer, a1);
-  check('a device registers its public key', regA.success && regA.data.device.active, regA);
+  check('a device registers its public key', regA.success && regA.data?.device?.active, regA);
   const regB = await register(earner, b1);
   check('so does the other person’s', regB.success, regB);
   const again = await register(payer, a1);
@@ -154,13 +163,17 @@ async function run() {
     live?.message?.text
   );
 
-  const selfText = ref.decrypt({
-    envelope: sent.data.message.envelope,
-    conversationId,
-    senderUserId: payer.id,
-    senderPublicKey: a1.publicKey,
-    reader: { userId: payer.id, device: a1 },
-  }).text;
+  // A failed send has no envelope to read back; the checks above already
+  // said why, so this one just fails rather than crashing the run.
+  const selfText = sent.data?.message?.envelope
+    ? ref.decrypt({
+        envelope: sent.data.message.envelope,
+        conversationId,
+        senderUserId: payer.id,
+        senderPublicKey: a1.publicKey,
+        reader: { userId: payer.id, device: a1 },
+      }).text
+    : null;
   check('the sender’s own device can re-read it later', selfText === secret);
 
   const thread = await get(`/conversations/${conversationId}`, earner.token);
@@ -170,11 +183,12 @@ async function run() {
     e && JSON.stringify([e.v, e.sender_device, e.epk, e.iv, e.ct, e.keys.map((k) => [k.user, k.device, k.iv, k.wk])]);
   check('history returns the envelope as sent', canonical(stored?.envelope) === canonical(envelope), stored);
 
-  const row = await withPrisma((prisma) => prisma.message.findUnique({ where: { id: messageId } }));
+  const row = await withPrisma((prisma) => prisma.message.findUnique({ where: { id: messageId ?? '' } }));
   check('the stored row has no readable text', row?.text === '', row?.text);
   check(
     'and nothing in it contains the message',
-    !JSON.stringify(row).includes(secret) && !JSON.stringify(row).includes('must never be stored')
+    row != null &&
+      !JSON.stringify(row).includes(secret) && !JSON.stringify(row).includes('must never be stored')
   );
 
   const notifications = await withPrisma((prisma) =>
@@ -190,7 +204,7 @@ async function run() {
     envelope,
     client_id: 'e2ee_1',
   });
-  check('a retry with the same client id returns the same message', retried.data?.message?.id === messageId);
+  check('a retry with the same client id returns the same message', Boolean(messageId) && retried.data?.message?.id === messageId);
 
   // ── What the server refuses ──────────────────────────────────────────────
   section('Refusals');
@@ -226,13 +240,15 @@ async function run() {
   });
   const resent = await post(`/conversations/${conversationId}/messages`, payer.token, { envelope: fixed });
   check('re-encrypted for the current list, it goes', resent.status === 201, resent);
-  const onA2 = ref.decrypt({
-    envelope: resent.data.message.envelope,
-    conversationId,
-    senderUserId: payer.id,
-    senderPublicKey: a1.publicKey,
-    reader: { userId: payer.id, device: a2 },
-  }).text;
+  const onA2 = resent.data?.message?.envelope
+    ? ref.decrypt({
+        envelope: resent.data.message.envelope,
+        conversationId,
+        senderUserId: payer.id,
+        senderPublicKey: a1.publicKey,
+        reader: { userId: payer.id, device: a2 },
+      }).text
+    : null;
   check('and the sender’s other phone can read it', onA2 === 'now for all three');
 
   const ghost = ref.newDevice();
@@ -400,7 +416,7 @@ async function run() {
       conversationId,
       senderUserId: payer.id,
       sender: a1,
-      recipients: afterRevoke.data.devices.map((d) => ({
+      recipients: (afterRevoke.data?.devices ?? []).map((d) => ({
         userId: d.user_id,
         deviceId: d.device_id,
         publicKey: ref.unb64(d.public_key),
@@ -420,11 +436,16 @@ async function run() {
   // ── Deleting and reporting ───────────────────────────────────────────────
   section('Deleting and reporting');
 
-  const deleted = await del(`/conversations/messages/${resent.data.message.id}`, payer.token);
+  const resentId = resent.data?.message?.id ?? '';
+  const deleted = await del(`/conversations/messages/${resentId}`, payer.token);
   const deletedRow = await withPrisma((prisma) =>
-    prisma.message.findUnique({ where: { id: resent.data.message.id } })
+    prisma.message.findUnique({ where: { id: resentId } })
   );
-  check('deleting a message removes its ciphertext too', deleted.success && deletedRow.envelope === null, deletedRow);
+  check(
+    'deleting a message removes its ciphertext too',
+    deleted.success && deletedRow != null && deletedRow.envelope === null,
+    deletedRow
+  );
 
   const reported = await post('/moderation/report', earner.token, {
     user_id: payer.id,
