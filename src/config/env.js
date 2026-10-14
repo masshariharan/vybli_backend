@@ -219,7 +219,12 @@ const env = {
       packageName: (process.env.PLAY_BILLING_PACKAGE_NAME || '').trim(),
       serviceAccountEmail: (process.env.PLAY_BILLING_SERVICE_ACCOUNT_EMAIL || '').trim(),
       // Kept untrimmed: the PEM's own newlines matter, same as Firebase's key below.
-      serviceAccountPrivateKey: process.env.PLAY_BILLING_SERVICE_ACCOUNT_PRIVATE_KEY || '',
+      // Either form works: real newlines (a .env file with the value in
+      // double quotes) or the literal backslash-n pairs a hosting dashboard
+      // such as Railway keeps when the one-line JSON value is pasted in.
+      serviceAccountPrivateKey: (
+        process.env.PLAY_BILLING_SERVICE_ACCOUNT_PRIVATE_KEY || ''
+      ).replace(/\\n/g, '\n'),
       get configured() {
         return Boolean(
           this.packageName && this.serviceAccountEmail && this.serviceAccountPrivateKey
