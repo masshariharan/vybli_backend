@@ -302,17 +302,27 @@ async function hasConversation(userId, otherId) {
  * Deleted accounts that once held [user]'s phone number — the accounts a
  * fresh sign-up on that number succeeds.
  */
-function predecessorsOf(user) {
-  return prisma.user.findMany({
+async function predecessorsOf(user) {
+  // Matched on digits, like [successorOf]: the same number can be stored in
+  // more than one shape across older accounts.
+  const subscriber = String(user.phone ?? '').replace(/\D/g, '').slice(-10);
+  if (subscriber.length < 6) return [];
+  const candidates = await prisma.user.findMany({
     where: {
-      status: 'deleted',
-      dialCode: user.dialCode,
-      // `deleteAccount` tombstones the phone as `deleted_<oldId>_<phone>` —
-      // the original number survives as the suffix.
-      phone: { endsWith: `_${user.phone}` },
       id: { not: user.id },
+      OR: [{ status: 'deleted' }, { deletedAt: { not: null } }],
+      phone: { endsWith: subscriber.slice(-6) },
     },
-    select: { id: true },
+    select: { id: true, dialCode: true, phone: true },
+  });
+  return candidates.filter((old) => {
+    const original = old.phone.replace(/^deleted_[^_]*_/, '');
+    const sameNumber = original.replace(/\D/g, '').slice(-10) === subscriber;
+    const sameCountry =
+      !old.dialCode ||
+      !user.dialCode ||
+      old.dialCode.replace(/\D/g, '') === user.dialCode.replace(/\D/g, '');
+    return sameNumber && sameCountry;
   });
 }
 
@@ -472,12 +482,14 @@ async function relinkBetween(userId, otherId) {
  */
 async function relinkDeletedPeersOf(userId, { conversationId } = {}) {
   const peer = { select: { id: true, dialCode: true, phone: true } };
+  // Deleted by status or by date: older deletions did not always set both.
+  const gone = { OR: [{ status: 'deleted' }, { deletedAt: { not: null } }] };
   const threads = await prisma.conversation.findMany({
     where: {
       ...(conversationId ? { id: conversationId } : {}),
       OR: [
-        { userAId: userId, userB: { status: 'deleted' } },
-        { userBId: userId, userA: { status: 'deleted' } },
+        { userAId: userId, userB: gone },
+        { userBId: userId, userA: gone },
       ],
     },
     include: { userA: peer, userB: peer },
@@ -488,24 +500,80 @@ async function relinkDeletedPeersOf(userId, { conversationId } = {}) {
   let moved = 0;
   for (const conversation of threads) {
     const old = conversation.userAId === userId ? conversation.userB : conversation.userA;
-    // `deleteAccount` tombstones the number as `deleted_<id>_<number>`.
-    const prefix = `deleted_${old.id}_`;
-    if (!old.phone.startsWith(prefix)) continue;
-    const successor = await prisma.user.findFirst({
-      where: {
-        dialCode: old.dialCode,
-        phone: old.phone.slice(prefix.length),
-        status: { not: 'deleted' },
-        deletedAt: null,
-        profile: { onboardingStatus: 'ONBOARDING_COMPLETED' },
-      },
-      select: { id: true, dialCode: true, phone: true },
-    });
-    if (!successor) continue;
-    const outcome = await relinkOne(conversation, old.id, successor, now);
-    if (outcome === 'relinked' || outcome === 'replaced-empty-duplicate') moved++;
+    const successor = await successorOf(old);
+    if (!successor.user) {
+      console.warn(`[relink] chat ${conversation.id}: not carried over — ${successor.reason}`);
+      continue;
+    }
+    const outcome = await relinkOne(conversation, old.id, successor.user, now);
+    if (outcome === 'relinked' || outcome === 'replaced-empty-duplicate') {
+      moved++;
+    } else {
+      console.warn(
+        `[relink] chat ${conversation.id}: not carried over to ${successor.user.id} — ${outcome}` +
+          (outcome === 'kept-both'
+            ? ' (a separate chat with the new account already holds messages; merging would lose one side)'
+            : '')
+      );
+    }
   }
   return moved;
+}
+
+/** The digits of a phone number — no `+`, spaces, dashes or brackets. */
+const digits = (value) => String(value ?? '').replace(/\D/g, '');
+
+/**
+ * The live account that re-registered [old]'s phone number, if any, and why
+ * not when there is none.
+ *
+ * Matched on the number's digits, not its stored text: accounts from before
+ * every sign-in path normalised numbers the same way can hold the same number
+ * as `09876543210`, `9876543210` or with the country code inside it, and an
+ * exact match missed them — the chat then stayed on the deleted account for
+ * good. The last ten digits are the subscriber number in every format; the
+ * country code is compared separately.
+ */
+async function successorOf(old) {
+  // `deleteAccount` tombstones the number as `deleted_<id>_<number>`.
+  const prefix = `deleted_${old.id}_`;
+  const original = old.phone.startsWith(prefix)
+    ? old.phone.slice(prefix.length)
+    : old.phone.replace(/^deleted_[^_]*_/, '');
+  const subscriber = digits(original).slice(-10);
+  if (subscriber.length < 6) {
+    return { user: null, reason: 'the deleted account has no usable phone number on record' };
+  }
+
+  const candidates = await prisma.user.findMany({
+    where: {
+      id: { not: old.id },
+      status: { not: 'deleted' },
+      deletedAt: null,
+      phone: { endsWith: subscriber.slice(-6) },
+    },
+    select: {
+      id: true,
+      dialCode: true,
+      phone: true,
+      createdAt: true,
+      profile: { select: { onboardingStatus: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  const sameNumber = candidates.filter(
+    (u) =>
+      digits(u.phone).slice(-10) === subscriber &&
+      (!old.dialCode || !u.dialCode || digits(u.dialCode) === digits(old.dialCode))
+  );
+  if (sameNumber.length === 0) {
+    return { user: null, reason: 'no live account has registered this number again' };
+  }
+  const finished = sameNumber.find((u) => u.profile?.onboardingStatus === 'ONBOARDING_COMPLETED');
+  if (!finished) {
+    return { user: null, reason: 'the account on this number has not finished signing up yet' };
+  }
+  return { user: { id: finished.id, dialCode: finished.dialCode, phone: finished.phone } };
 }
 
 module.exports = {
