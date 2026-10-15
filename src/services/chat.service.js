@@ -956,9 +956,18 @@ async function openOrCreate(user, otherId) {
   await relationship.assertCanStartConversation(user, otherId);
 
   const [userAId, userBId] = relationship.orderPair(user.id, otherId);
-  const existing = await prisma.conversation.findUnique({
+  let existing = await prisma.conversation.findUnique({
     where: { userAId_userBId: { userAId, userBId } },
   });
+  // One of the two re-registered after deleting an account that already
+  // talked to the other: that chat is carried over and reused, rather than a
+  // second chat being started for the same number.
+  if (!existing) {
+    await relationship.relinkBetween(user.id, otherId);
+    existing = await prisma.conversation.findUnique({
+      where: { userAId_userBId: { userAId, userBId } },
+    });
+  }
 
   const conversation = await prisma.conversation.upsert({
     where: { userAId_userBId: { userAId, userBId } },
