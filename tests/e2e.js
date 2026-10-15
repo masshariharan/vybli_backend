@@ -2308,10 +2308,10 @@ async function run() {
 
   // ── Re-registering the same phone number ─────────────────────────────────
   // `caller` ("Arjun") deleted their account above, and somebody now signs up
-  // fresh on that exact number. Deleting ends that account's side of every
-  // chat for good: the new account starts with nothing, and `earner` keeps
-  // their own history with the deleted account exactly as it was — nothing
-  // is moved from one to the other.
+  // fresh on that exact number. For `earner`, the chat continues with the new
+  // account and its fresh profile, history intact. For the new account,
+  // deleting ended the old side for good: it starts with nothing, and sees
+  // the chat again only once `earner` writes something new.
   section("Re-registering a deleted account's phone number");
 
   // The OTP `caller` used to sign up in the first place is still inside its
@@ -2336,28 +2336,67 @@ async function run() {
 
   const rebornThreads = await get('/conversations?limit=100', reborn.token);
   check(
-    "the new account inherits none of the deleted account's conversations",
+    "the new account's own list starts empty — none of the old chats",
     rebornThreads.success && (rebornThreads.data?.items ?? []).length === 0,
     { got: (rebornThreads.data?.items ?? []).map((t) => t.user?.name) }
   );
 
-  const keptThread = await get(`/conversations/${conversationId}`, earner.token);
+  const carriedThread = await get(`/conversations/${conversationId}`, earner.token);
   check(
-    "the other side's conversation still belongs to the deleted account",
-    keptThread.data?.thread?.user?.id === caller.id,
-    { got_id: keptThread.data?.thread?.user?.id }
+    "the other side's chat continues with the new account's fresh profile",
+    carriedThread.data?.thread?.user?.id === reborn.id &&
+      carriedThread.data?.thread?.user?.name === 'Arjun Reborn',
+    {
+      got_id: carriedThread.data?.thread?.user?.id,
+      got_name: carriedThread.data?.thread?.user?.name,
+    }
   );
   check(
-    "the other side's history in that conversation is untouched",
-    (keptThread.data?.thread?.messages ?? []).some((m) => m.text === 'Good, you?'),
-    { messages: keptThread.data?.thread?.messages?.map((m) => m.text) }
+    "the other side's history in that chat is untouched",
+    (carriedThread.data?.thread?.messages ?? []).some((m) => m.text === 'Good, you?'),
+    { messages: carriedThread.data?.thread?.messages?.map((m) => m.text) }
   );
 
   const earnerThreads = await get('/conversations?limit=100', earner.token);
+  const withReborn = (earnerThreads.data?.items ?? []).filter((t) => t.user?.id === reborn.id);
+  check('exactly one chat with the new account on the other side, not two', withReborn.length === 1, {
+    count: withReborn.length,
+  });
+
+  // The deleted account's keys are still handed out for this chat — its old
+  // messages name them, and without them every one read "can't be decrypted".
+  const carriedKeys = await get(`/conversations/${conversationId}/keys`, earner.token);
   check(
-    'nothing points the other side at the new account',
-    !(earnerThreads.data?.items ?? []).some((t) => t.user?.id === reborn.id),
-    { count: (earnerThreads.data?.items ?? []).length }
+    "the chat's key list still includes the deleted account's devices, inactive",
+    carriedKeys.success &&
+      (carriedKeys.data?.devices ?? [])
+        .filter((d) => d.user_id === caller.id)
+        .every((d) => d.active === false),
+    { devices: (carriedKeys.data?.devices ?? []).map((d) => `${d.user_id}:${d.active}`) }
+  );
+
+  // The new account cannot read the old messages through the thread itself.
+  const rebornView = await get(`/conversations/${conversationId}`, reborn.token);
+  check(
+    'the new account sees none of the old messages in that chat',
+    rebornView.success && (rebornView.data?.thread?.messages ?? []).length === 0,
+    { messages: rebornView.data?.thread?.messages?.map((m) => m.text) }
+  );
+
+  // When the other side writes again, the chat appears for the new account —
+  // holding only what is new.
+  const welcome = await post(`/conversations/${conversationId}/messages`, earner.token, {
+    text: 'Welcome back!',
+  });
+  check('the other side can message the new account', welcome.success, {
+    error: welcome.error,
+  });
+  const rebornAfter = await get(`/conversations/${conversationId}`, reborn.token);
+  const afterTexts = (rebornAfter.data?.thread?.messages ?? []).map((m) => m.text);
+  check(
+    'the new account then sees only the new message',
+    afterTexts.length === 1 && afterTexts[0] === 'Welcome back!',
+    { messages: afterTexts }
   );
 
   // ── Result ────────────────────────────────────────────────────────────────

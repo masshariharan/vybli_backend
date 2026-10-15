@@ -2,6 +2,7 @@
 
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
+const { emitToUser } = require('../sockets/bus');
 const connections = require('../sockets/connections');
 const {
   isSameSide,
@@ -297,7 +298,102 @@ async function hasConversation(userId, otherId) {
   return Boolean(conversation);
 }
 
+/**
+ * Carries a deleted account's conversations over to a fresh account
+ * registered on the same phone number — for the *other* person only.
+ *
+ * `deleteAccount` never lets a new registration reuse the old `User.id`, so
+ * the new sign-up is a different account from day one. Two things are true of
+ * what it should inherit:
+ *
+ *  * **The other person keeps talking to the number.** Their thread with the
+ *    deleted account is re-pointed at the new one, so its header, profile
+ *    and calls show the new account's live name and photo, and a message
+ *    they send reaches it. Their history in that thread is untouched.
+ *  * **The new account inherits none of it.** Deleting an account ends that
+ *    account's side of every chat for good. So the new account's side of
+ *    each re-pointed thread is marked deleted-for-me as of now: the thread
+ *    stays out of its list, and none of the old messages are ever shown to
+ *    it — they were encrypted for the deleted account's keys and are not its
+ *    to read. If the other person writes again, the thread appears holding
+ *    only what is new, exactly as after deleting a chat.
+ *
+ * Called once, at `/onboarding/complete` — a bare OTP verification has no
+ * name or photo yet. Safe to call unconditionally: a number nobody deleted
+ * before, or a second completion, both find nothing to do.
+ */
+async function relinkConversationsForPhone(user) {
+  const previousOwners = await prisma.user.findMany({
+    where: {
+      status: 'deleted',
+      dialCode: user.dialCode,
+      // `deleteAccount` tombstones the phone as `deleted_<oldId>_<phone>` —
+      // the original number survives as the suffix.
+      phone: { endsWith: `_${user.phone}` },
+      id: { not: user.id },
+    },
+    select: { id: true },
+  });
+  if (previousOwners.length === 0) return;
+
+  const now = new Date();
+  for (const old of previousOwners) {
+    const conversations = await prisma.conversation.findMany({
+      where: { OR: [{ userAId: old.id }, { userBId: old.id }] },
+    });
+
+    for (const conversation of conversations) {
+      const peerWasA = conversation.userAId !== old.id;
+      const peerId = peerWasA ? conversation.userAId : conversation.userBId;
+      if (peerId === user.id) continue;
+
+      const [userAId, userBId] = orderPair(peerId, user.id);
+      const newAccountIsA = userAId === user.id;
+
+      // A thread for this exact pair may already exist (the new account
+      // reached this peer before finishing sign-up, or two deleted accounts
+      // on the number both talked to them). Two rows can never share a pair,
+      // so the older thread stays where it is, as history.
+      const existing = await prisma.conversation.findUnique({
+        where: { userAId_userBId: { userAId, userBId } },
+      });
+      if (existing) continue;
+
+      // The peer's own unread, mute, pin and delete-for-me carry over — they
+      // are the peer's. The new account's side starts deleted as of now.
+      const peerUnread = peerWasA ? conversation.unreadForA : conversation.unreadForB;
+      const peerMuted = peerWasA ? conversation.mutedByA : conversation.mutedByB;
+      const peerPinned = peerWasA ? conversation.pinnedByA : conversation.pinnedByB;
+      const peerDeletedAt = peerWasA ? conversation.deletedAtByA : conversation.deletedAtByB;
+
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          userAId,
+          userBId,
+          unreadForA: newAccountIsA ? 0 : peerUnread,
+          unreadForB: newAccountIsA ? peerUnread : 0,
+          mutedByA: newAccountIsA ? false : peerMuted,
+          mutedByB: newAccountIsA ? peerMuted : false,
+          pinnedByA: newAccountIsA ? false : peerPinned,
+          pinnedByB: newAccountIsA ? peerPinned : false,
+          deletedAtByA: newAccountIsA ? now : peerDeletedAt,
+          deletedAtByB: newAccountIsA ? peerDeletedAt : now,
+        },
+      });
+
+      // The peer's app reloads the thread: its name, photo and reachability
+      // all changed at once.
+      emitToUser(peerId, 'conversation:relinked', {
+        conversation_id: conversation.id,
+        user_id: user.id,
+      });
+    }
+  }
+}
+
 module.exports = {
+  relinkConversationsForPhone,
   isSameSide,
   showsAllUsers,
   canSee,

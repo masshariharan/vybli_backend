@@ -1,5 +1,6 @@
 'use strict';
 
+const relationship = require('./relationship.service');
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const activity = require('./activity.service');
@@ -276,13 +277,16 @@ async function complete(user) {
     });
   }
 
-  // No conversations are carried over from a deleted account that once held
-  // this phone number. Deleting an account ends that account's side of every
-  // chat for good: a new sign-up on the same number starts with an empty
-  // list, and the other person keeps their own history with the deleted
-  // account untouched. (This used to re-point the old threads at the new
-  // account — it showed up holding someone else's past conversations, its
-  // messages unreadable to a key that had never received them.)
+  // A deleted account that once held this phone number: its conversations
+  // continue with this account for the *other* person, while this account
+  // starts with none of them — see the function's own note. Not allowed to
+  // fail the completion it rides on: a finished sign-up matters more, and a
+  // fault here leaves the old threads exactly as they were.
+  try {
+    await relationship.relinkConversationsForPhone(user);
+  } catch (error) {
+    console.error(`[onboarding] relinking previous conversations failed for ${user.id}`, error);
+  }
 
   const fresh = await reload(user.id);
   return { user: fresh, status: 'ONBOARDING_COMPLETED', next_step: null };

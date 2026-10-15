@@ -109,8 +109,21 @@ async function activeDevicesOf(userIds) {
  * The caller has already established membership (`getConversationOr404`).
  */
 async function devicesForConversation(conversation) {
+  // Everyone who ever *wrote* here, not only the two members now. A thread
+  // carried over from a deleted account (see `relinkConversationsForPhone`)
+  // holds that account's messages, and the reader needs its keys to check
+  // who sent them and open them — dropping them made every one of those
+  // messages "can't be decrypted". Those devices are revoked, so they come
+  // back `active: false` and nothing new is ever encrypted to them.
+  const senders = await prisma.message.findMany({
+    where: { conversationId: conversation.id },
+    distinct: ['senderId'],
+    select: { senderId: true },
+  });
+  const userIds = new Set([conversation.userAId, conversation.userBId]);
+  for (const { senderId } of senders) userIds.add(senderId);
   const rows = await prisma.e2eeDevice.findMany({
-    where: { userId: { in: [conversation.userAId, conversation.userBId] } },
+    where: { userId: { in: [...userIds] } },
     orderBy: [{ userId: 'asc' }, { createdAt: 'asc' }],
   });
   return rows.map(serializeDevice);
@@ -139,6 +152,21 @@ async function devicesOfContacts(user, userIds) {
     : [];
   const allowed = new Set([user.id]);
   for (const c of shared) allowed.add(c.userAId === user.id ? c.userBId : c.userAId);
+  // And anyone who wrote in one of the caller's conversations without being
+  // in it now — a deleted account whose thread was carried over to a new
+  // one. The caller already holds those messages; the keys open them.
+  const stillWanted = wanted.filter((id) => !allowed.has(id));
+  if (stillWanted.length > 0) {
+    const pastSenders = await prisma.message.findMany({
+      where: {
+        senderId: { in: stillWanted },
+        conversation: { OR: [{ userAId: user.id }, { userBId: user.id }] },
+      },
+      distinct: ['senderId'],
+      select: { senderId: true },
+    });
+    for (const { senderId } of pastSenders) allowed.add(senderId);
+  }
   const rows = await prisma.e2eeDevice.findMany({
     where: { userId: { in: [...allowed] } },
     orderBy: [{ userId: 'asc' }, { createdAt: 'asc' }],
