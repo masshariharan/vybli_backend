@@ -130,6 +130,23 @@ async function run() {
     event?.conversation_id === conversationId && event?.message_ttl_hours === 24,
     event
   );
+  check(
+    'with a note for the conversation, written from their side',
+    event?.message?.event === 'timer_changed' &&
+      event?.message?.event_data?.hours === 24 &&
+      event?.message?.author === 'them',
+    event?.message
+  );
+  const withNote = await get(`/conversations/${conversationId}`, payer.token);
+  const note = (withNote.data?.thread?.messages ?? []).find((m) => m.event === 'timer_changed');
+  check('the note stays in the conversation, where the change happened', Boolean(note), {
+    events: (withNote.data?.thread?.messages ?? []).map((m) => m.event),
+  });
+  check(
+    'and it is nobody’s unread message',
+    withNote.data?.thread?.unread_count === 0 && note?.status === 'read',
+    { unread: withNote.data?.thread?.unread_count, status: note?.status }
+  );
 
   section('The chat theme');
 

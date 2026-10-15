@@ -826,18 +826,43 @@ async function setMessageTimer(user, conversationId, hours) {
   const side = sideOf(conversation, user.id);
   if (conversation.messageTtlHours === hours) return conversation;
 
-  const updated = await prisma.conversation.update({
-    where: { id: conversationId },
-    data: { messageTtlHours: hours },
-    include: CONVERSATION_INCLUDE,
-  });
-  const payload = {
+  const now = new Date();
+  const [updated, note] = await prisma.$transaction([
+    prisma.conversation.update({
+      where: { id: conversationId },
+      data: { messageTtlHours: hours },
+      include: CONVERSATION_INCLUDE,
+    }),
+    // A line in the conversation, where the change happened, so both people
+    // see it in context rather than only in the notice at the very top.
+    // Already read and delivered — a note is nobody's unread message — and
+    // `lastMessageAt` is left alone, so it neither lifts the chat to the top
+    // of the list nor brings back a chat someone deleted. It ages out on the
+    // new timer like any message.
+    prisma.message.create({
+      data: {
+        conversationId,
+        senderId: user.id,
+        text: `Messages now disappear after ${hours === 24 ? '24 hours' : '7 days'}`,
+        status: 'read',
+        event: 'timer_changed',
+        eventData: { hours },
+        deliveredAt: now,
+        readAt: now,
+        expiresAt: new Date(now.getTime() + hours * 60 * 60 * 1000),
+      },
+    }),
+  ]);
+  const payload = (viewerId) => ({
     conversation_id: conversationId,
     message_ttl_hours: hours,
     changed_by: user.id,
-  };
-  emitToUser(side.peerId, 'conversation:timer', payload);
-  emitToUser(user.id, 'conversation:timer', payload);
+    // Relative to each reader, like any message: "You set…" on one side,
+    // "<name> set…" on the other.
+    message: serialize.message(note, viewerId),
+  });
+  emitToUser(side.peerId, 'conversation:timer', payload(side.peerId));
+  emitToUser(user.id, 'conversation:timer', payload(user.id));
   return updated;
 }
 

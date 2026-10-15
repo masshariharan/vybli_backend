@@ -769,6 +769,15 @@ model Message {
   /// forward; nothing backfills the messages already sent.
   clientId String?
 
+  /// Set on a note the *server* writes into the conversation rather than a
+  /// message either person sent — `timer_changed`, when the disappearing-
+  /// messages timer is changed. Drawn as a centred line in the thread, never
+  /// as a bubble. Not encrypted: it says only what the server already knows
+  /// (the conversation's own timer). `eventData` carries its details, e.g.
+  /// `{ hours: 24 }`.
+  event     String?
+  eventData Json?
+
   deliveredAt DateTime?
   readAt      DateTime?
   deletedAt   DateTime?

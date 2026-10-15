@@ -320,6 +320,9 @@ function message(row, viewerId) {
     envelope,
     // When it disappears for both people — the app drops it on the dot.
     expires_at: iso(row.expiresAt),
+    // A server-written note, not a message — see `Message.event`.
+    event: row.event ?? null,
+    event_data: row.eventData ?? null,
     attachment: row.attachmentKind
       ? {
           kind: row.attachmentKind,
