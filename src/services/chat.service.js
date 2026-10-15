@@ -101,6 +101,13 @@ async function listThreads(user, { skip, take }) {
     return { rows: [], total: 0, unreadTotal: 0, messagingDisabled: true };
   }
 
+  // A chat still on a deleted account whose number has been registered
+  // again is carried over to the new account first, so it shows their live
+  // profile — see `relinkDeletedPeersOf`. Never allowed to fail the read.
+  await relationship.relinkDeletedPeersOf(user.id).catch((error) => {
+    console.error('[chat] could not carry over a re-registered chat', error);
+  });
+
   // Hidden only from the person who was blocked. Someone who blocked a peer
   // keeps the chat in their list, where it says so and offers Unblock.
   const blocked = [...(await relationship.blockerIdsOf(user.id))];
@@ -195,6 +202,12 @@ async function unreadTotalFor(userId, notBlocked) {
  * forgotten.
  */
 async function getThread(user, conversationId, { limit = 50, before } = {}) {
+  // A chat still on a deleted account whose number has been registered
+  // again is carried over to the new account first, so it shows their live
+  // profile — see `relinkDeletedPeersOf`. Never allowed to fail the read.
+  await relationship.relinkDeletedPeersOf(user.id, { conversationId }).catch((error) => {
+    console.error('[chat] could not carry over a re-registered chat', error);
+  });
   const conversation = await getConversationOr404(conversationId, user.id);
   const side = sideOf(conversation, user.id);
 

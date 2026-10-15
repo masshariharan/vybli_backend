@@ -451,9 +451,67 @@ async function relinkBetween(userId, otherId) {
   }
 }
 
+/**
+ * Carries over, for [userId], any chat still on a deleted account whose phone
+ * number has since been registered again — the self-healing path.
+ *
+ * The carry-over normally happens when the new account finishes sign-up
+ * ([relinkConversationsForPhone]). A sign-up that happened while that was not
+ * running, or failed part-way, left the other person's chat on the deleted
+ * account for good: "has turned off messages and calls", "This profile is no
+ * longer available", with the same number alive again on a new account. This
+ * runs whenever that person loads their chats or opens one, so the chat
+ * finds the new account by itself — no script for anyone to remember.
+ *
+ * Cheap when there is nothing to do: one query for this person's chats with
+ * a deleted account, which is almost always none. Only a *finished* sign-up
+ * counts — a half-done one has no name or photo to show yet.
+ *
+ * [conversationId] narrows it to the one chat being opened. Returns how many
+ * chats were carried over.
+ */
+async function relinkDeletedPeersOf(userId, { conversationId } = {}) {
+  const peer = { select: { id: true, dialCode: true, phone: true } };
+  const threads = await prisma.conversation.findMany({
+    where: {
+      ...(conversationId ? { id: conversationId } : {}),
+      OR: [
+        { userAId: userId, userB: { status: 'deleted' } },
+        { userBId: userId, userA: { status: 'deleted' } },
+      ],
+    },
+    include: { userA: peer, userB: peer },
+  });
+  if (threads.length === 0) return 0;
+
+  const now = new Date();
+  let moved = 0;
+  for (const conversation of threads) {
+    const old = conversation.userAId === userId ? conversation.userB : conversation.userA;
+    // `deleteAccount` tombstones the number as `deleted_<id>_<number>`.
+    const prefix = `deleted_${old.id}_`;
+    if (!old.phone.startsWith(prefix)) continue;
+    const successor = await prisma.user.findFirst({
+      where: {
+        dialCode: old.dialCode,
+        phone: old.phone.slice(prefix.length),
+        status: { not: 'deleted' },
+        deletedAt: null,
+        profile: { onboardingStatus: 'ONBOARDING_COMPLETED' },
+      },
+      select: { id: true, dialCode: true, phone: true },
+    });
+    if (!successor) continue;
+    const outcome = await relinkOne(conversation, old.id, successor, now);
+    if (outcome === 'relinked' || outcome === 'replaced-empty-duplicate') moved++;
+  }
+  return moved;
+}
+
 module.exports = {
   relinkConversationsForPhone,
   relinkBetween,
+  relinkDeletedPeersOf,
   isSameSide,
   showsAllUsers,
   canSee,
