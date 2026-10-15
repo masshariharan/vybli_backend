@@ -3,6 +3,7 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const { emitToUser } = require('../sockets/bus');
+const { numberKeyOf } = require('../utils/phoneKey');
 const connections = require('../sockets/connections');
 const {
   isSameSide,
@@ -300,29 +301,24 @@ async function hasConversation(userId, otherId) {
 
 /**
  * Deleted accounts that once held [user]'s phone number — the accounts a
- * fresh sign-up on that number succeeds.
+ * fresh sign-up on that number succeeds — from `AccountLineage`.
  */
 async function predecessorsOf(user) {
-  // Matched on digits, like [successorOf]: the same number can be stored in
-  // more than one shape across older accounts.
-  const subscriber = String(user.phone ?? '').replace(/\D/g, '').slice(-10);
-  if (subscriber.length < 6) return [];
-  const candidates = await prisma.user.findMany({
-    where: {
-      id: { not: user.id },
-      OR: [{ status: 'deleted' }, { deletedAt: { not: null } }],
-      phone: { endsWith: subscriber.slice(-6) },
-    },
-    select: { id: true, dialCode: true, phone: true },
+  const key = numberKeyOf(user.dialCode, user.phone);
+  if (key.length < 8) return [];
+  const rows = await prisma.accountLineage.findMany({
+    where: { numberKey: key, previousUserId: { not: user.id } },
+    select: { previousUserId: true },
   });
-  return candidates.filter((old) => {
-    const original = old.phone.replace(/^deleted_[^_]*_/, '');
-    const sameNumber = original.replace(/\D/g, '').slice(-10) === subscriber;
-    const sameCountry =
-      !old.dialCode ||
-      !user.dialCode ||
-      old.dialCode.replace(/\D/g, '') === user.dialCode.replace(/\D/g, '');
-    return sameNumber && sameCountry;
+  return rows.map((r) => ({ id: r.previousUserId }));
+}
+
+/** Records that [successorId] took over [previousIds]' number. */
+function recordSuccession(previousIds, successorId, now) {
+  if (previousIds.length === 0) return Promise.resolve();
+  return prisma.accountLineage.updateMany({
+    where: { previousUserId: { in: previousIds } },
+    data: { successorUserId: successorId, linkedAt: now },
   });
 }
 
@@ -424,7 +420,13 @@ async function relinkOne(conversation, oldId, newUser, now) {
  */
 async function relinkConversationsForPhone(user, { now = new Date() } = {}) {
   const outcomes = [];
-  for (const old of await predecessorsOf(user)) {
+  const olds = await predecessorsOf(user);
+  await recordSuccession(
+    olds.map((o) => o.id),
+    user.id,
+    now
+  );
+  for (const old of olds) {
     const conversations = await prisma.conversation.findMany({
       where: { OR: [{ userAId: old.id }, { userBId: old.id }] },
     });
@@ -451,7 +453,13 @@ async function relinkBetween(userId, otherId) {
   const now = new Date();
   for (const user of users) {
     const peerId = user.id === userId ? otherId : userId;
-    for (const old of await predecessorsOf(user)) {
+    const olds = await predecessorsOf(user);
+    await recordSuccession(
+      olds.map((o) => o.id),
+      user.id,
+      now
+    );
+    for (const old of olds) {
       const [userAId, userBId] = orderPair(old.id, peerId);
       const conversation = await prisma.conversation.findUnique({
         where: { userAId_userBId: { userAId, userBId } },
@@ -480,7 +488,7 @@ async function relinkBetween(userId, otherId) {
  * [conversationId] narrows it to the one chat being opened. Returns how many
  * chats were carried over.
  */
-async function relinkDeletedPeersOf(userId, { conversationId } = {}) {
+async function relinkDeletedPeersOf(userId, { conversationId, report } = {}) {
   const peer = { select: { id: true, dialCode: true, phone: true } };
   // Deleted by status or by date: older deletions did not always set both.
   const gone = { OR: [{ status: 'deleted' }, { deletedAt: { not: null } }] };
@@ -500,14 +508,16 @@ async function relinkDeletedPeersOf(userId, { conversationId } = {}) {
   let moved = 0;
   for (const conversation of threads) {
     const old = conversation.userAId === userId ? conversation.userB : conversation.userA;
-    const successor = await successorOf(old);
+    const successor = await successorOf(old, now);
     if (!successor.user) {
       console.warn(`[relink] chat ${conversation.id}: not carried over — ${successor.reason}`);
+      report?.set(conversation.id, successor.code);
       continue;
     }
     const outcome = await relinkOne(conversation, old.id, successor.user, now);
     if (outcome === 'relinked' || outcome === 'replaced-empty-duplicate') {
       moved++;
+      report?.set(conversation.id, 'linked');
     } else {
       console.warn(
         `[relink] chat ${conversation.id}: not carried over to ${successor.user.id} — ${outcome}` +
@@ -515,34 +525,44 @@ async function relinkDeletedPeersOf(userId, { conversationId } = {}) {
             ? ' (a separate chat with the new account already holds messages; merging would lose one side)'
             : '')
       );
+      report?.set(conversation.id, outcome);
     }
   }
   return moved;
 }
 
-/** The digits of a phone number — no `+`, spaces, dashes or brackets. */
-const digits = (value) => String(value ?? '').replace(/\D/g, '');
-
 /**
- * The live account that re-registered [old]'s phone number, if any, and why
- * not when there is none.
+ * The live account that took over [old]'s phone number, if any — and, when
+ * there is none, why (`code` for the app, `reason` for the log).
  *
- * Matched on the number's digits, not its stored text: accounts from before
- * every sign-in path normalised numbers the same way can hold the same number
- * as `09876543210`, `9876543210` or with the country code inside it, and an
- * exact match missed them — the chat then stayed on the deleted account for
- * good. The last ten digits are the subscriber number in every format; the
- * country code is compared separately.
+ * Read from `AccountLineage`: the number is the one written down when [old]
+ * was deleted, not re-read from its tombstone. A lineage row missing (an
+ * account deleted by some path that did not write one) is created here from
+ * the tombstone, once. The live account is then found by that number — the
+ * newest one that has finished signing up — and the link is recorded, so a
+ * chain of deletions on the same number always ends at the account holding
+ * it now.
  */
-async function successorOf(old) {
-  // `deleteAccount` tombstones the number as `deleted_<id>_<number>`.
-  const prefix = `deleted_${old.id}_`;
-  const original = old.phone.startsWith(prefix)
-    ? old.phone.slice(prefix.length)
-    : old.phone.replace(/^deleted_[^_]*_/, '');
-  const subscriber = digits(original).slice(-10);
-  if (subscriber.length < 6) {
-    return { user: null, reason: 'the deleted account has no usable phone number on record' };
+async function successorOf(old, now = new Date()) {
+  let lineage = await prisma.accountLineage.findUnique({
+    where: { previousUserId: old.id },
+  });
+  if (!lineage) {
+    lineage = await prisma.accountLineage.create({
+      data: {
+        previousUserId: old.id,
+        numberKey: numberKeyOf(old.dialCode, old.phone),
+        deletedAt: now,
+      },
+    });
+  }
+  const national = lineage.numberKey.slice(-10);
+  if (national.length < 6) {
+    return {
+      user: null,
+      code: 'no-number',
+      reason: 'the deleted account has no usable phone number on record',
+    };
   }
 
   const candidates = await prisma.user.findMany({
@@ -550,28 +570,34 @@ async function successorOf(old) {
       id: { not: old.id },
       status: { not: 'deleted' },
       deletedAt: null,
-      phone: { endsWith: subscriber.slice(-6) },
+      phone: { endsWith: national.slice(-6) },
     },
     select: {
       id: true,
       dialCode: true,
       phone: true,
-      createdAt: true,
       profile: { select: { onboardingStatus: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
-  const sameNumber = candidates.filter(
-    (u) =>
-      digits(u.phone).slice(-10) === subscriber &&
-      (!old.dialCode || !u.dialCode || digits(u.dialCode) === digits(old.dialCode))
-  );
+  const sameNumber = candidates.filter((u) => numberKeyOf(u.dialCode, u.phone) === lineage.numberKey);
   if (sameNumber.length === 0) {
-    return { user: null, reason: 'no live account has registered this number again' };
+    return {
+      user: null,
+      code: 'no-successor',
+      reason: 'no live account has registered this number again',
+    };
   }
   const finished = sameNumber.find((u) => u.profile?.onboardingStatus === 'ONBOARDING_COMPLETED');
   if (!finished) {
-    return { user: null, reason: 'the account on this number has not finished signing up yet' };
+    return {
+      user: null,
+      code: 'successor-not-onboarded',
+      reason: 'the account on this number has not finished signing up yet',
+    };
+  }
+  if (lineage.successorUserId !== finished.id) {
+    await recordSuccession([old.id], finished.id, now);
   }
   return { user: { id: finished.id, dialCode: finished.dialCode, phone: finished.phone } };
 }

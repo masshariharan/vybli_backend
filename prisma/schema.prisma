@@ -1496,3 +1496,33 @@ model Withdrawal {
   @@index([status, createdAt])
   @@map("withdrawals")
 }
+
+/// Which account took over a phone number after the account holding it was
+/// deleted — the explicit link chats follow.
+///
+/// Deleting an account tombstones `User.phone` (`deleted_<id>_<number>`) so
+/// the number can sign up again, and a new sign-up is a new `User` with a new
+/// id. Without this table, "these two accounts are the same number" had to
+/// be guessed from the tombstone text on every read; when the guess missed,
+/// the other person's chat stayed on the deleted account for good. Here it
+/// is written down once: the real number at the moment of deletion
+/// (`numberKey`, see `utils/phoneKey`), and the account that re-registered
+/// it once one does.
+///
+/// Plain ids, no foreign keys: both accounts' rows outlive each other's
+/// lifecycle, and nothing here should ever block or cascade a deletion.
+model AccountLineage {
+  /// The deleted account.
+  previousUserId  String    @id
+  /// Country code digits + the last ten digits of the number.
+  numberKey       String
+  /// The live account that registered the same number again, once linked.
+  successorUserId String?
+  deletedAt       DateTime
+  linkedAt        DateTime?
+
+  @@index([numberKey])
+  @@index([successorUserId])
+  @@map("account_lineage")
+}
+

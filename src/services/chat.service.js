@@ -205,9 +205,13 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
   // A chat still on a deleted account whose number has been registered
   // again is carried over to the new account first, so it shows their live
   // profile — see `relinkDeletedPeersOf`. Never allowed to fail the read.
-  await relationship.relinkDeletedPeersOf(user.id, { conversationId }).catch((error) => {
-    console.error('[chat] could not carry over a re-registered chat', error);
-  });
+  const relinkReport = new Map();
+  await relationship
+    .relinkDeletedPeersOf(user.id, { conversationId, report: relinkReport })
+    .catch((error) => {
+      console.error('[chat] could not carry over a re-registered chat', error);
+      relinkReport.set(conversationId, 'error');
+    });
   const conversation = await getConversationOr404(conversationId, user.id);
   const side = sideOf(conversation, user.id);
 
@@ -247,6 +251,9 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
     // rendering.
     messages: messages.reverse(),
     hasMore: messages.length === limit,
+    // Only when the other person's account is deleted: whether the chat was
+    // carried over to the account on their number now, and if not, why.
+    relinkStatus: relinkReport.get(conversationId) ?? null,
   };
 }
 

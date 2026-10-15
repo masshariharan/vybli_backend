@@ -55,7 +55,7 @@ async function listThreads(req, res) {
 /** Opens a thread. Reading it is what marks it read. */
 async function getThread(req, res) {
   const params = q(req);
-  const { conversation, messages, hasMore } = await chatService.getThread(
+  const { conversation, messages, hasMore, relinkStatus } = await chatService.getThread(
     req.user,
     req.params.id,
     { limit: params.limit ?? 50, before: params.before }
@@ -66,6 +66,10 @@ async function getThread(req, res) {
     {
       thread: serialize.chatThread(conversation, req.userId, { messages }),
       has_more: hasMore,
+      // Diagnostic, no personal data: `linked`, `no-successor`,
+      // `successor-not-onboarded`, `kept-both`, … — or null when the other
+      // person's account is not deleted.
+      relink_status: relinkStatus,
     },
     'Conversation'
   );

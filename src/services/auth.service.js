@@ -1,5 +1,6 @@
 'use strict';
 
+const { numberKeyOf } = require('../utils/phoneKey');
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const otpService = require('./otp.service');
@@ -546,6 +547,17 @@ async function deleteAccount({ user, reason }) {
         allowVideoCalls: false,
         showOnlineStatus: false,
       },
+    }),
+    // The real number, written down before it is tombstoned below — what a
+    // later sign-up on the same number is linked by (see `AccountLineage`).
+    prisma.accountLineage.upsert({
+      where: { previousUserId: user.id },
+      create: {
+        previousUserId: user.id,
+        numberKey: numberKeyOf(user.dialCode, user.phone),
+        deletedAt: now,
+      },
+      update: {},
     }),
     prisma.user.update({
       where: { id: user.id },
