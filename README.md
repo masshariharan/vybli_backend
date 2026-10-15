@@ -299,3 +299,11 @@ and horizontally scalable as it stands.
 **Maturing earnings** are released on read rather than by a scheduler, so a
 deployment with no cron still behaves correctly. A nightly job calling
 `releaseMaturedEarnings` would only make it prompter.
+
+
+delete all data from the console:
+
+psql -U postgres -d railway
+
+TRUNCATE TABLE users, user_profiles, user_sessions, device_tokens, e2ee_devices, otp_codes, user_languages, blocks, favorites, reports, support_messages, conversations, messages, calls, earner_call_stats, earner_callers, earner_level_changes, wallets, wallet_transactions, earnings, withdrawals, privacy_settings, notification_settings, discovery_settings, notifications, user_activities, admin_audit_logs RESTART IDENTITY;
+

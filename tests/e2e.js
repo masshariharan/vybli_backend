@@ -2307,12 +2307,12 @@ async function run() {
   );
 
   // ── Re-registering the same phone number ─────────────────────────────────
-  // WhatsApp-style continuity: `caller` ("Arjun") deleted their account
-  // above. Somebody — presumably the same person — now signs up fresh on
-  // that exact number, and `earner`'s existing thread with "Arjun" is
-  // expected to pick up the new account rather than stay stuck talking to a
-  // name that can never answer again.
-  section('Re-registering a deleted account\'s phone number');
+  // `caller` ("Arjun") deleted their account above, and somebody now signs up
+  // fresh on that exact number. Deleting ends that account's side of every
+  // chat for good: the new account starts with nothing, and `earner` keeps
+  // their own history with the deleted account exactly as it was — nothing
+  // is moved from one to the other.
+  section("Re-registering a deleted account's phone number");
 
   // The OTP `caller` used to sign up in the first place is still inside its
   // own resend cooldown — this whole run so far has taken nowhere near that
@@ -2329,55 +2329,36 @@ async function run() {
     phone: caller.phone,
   });
   check(
-    'the new signup gets its own id, not the deleted account\'s',
+    "the new signup gets its own id, not the deleted account's",
     reborn.id !== caller.id,
     { rebornId: reborn.id, oldId: caller.id }
   );
 
-  const relinkedThread = await get(`/conversations/${conversationId}`, earner.token);
+  const rebornThreads = await get('/conversations?limit=100', reborn.token);
   check(
-    'the existing conversation now reads as the new account, live',
-    relinkedThread.data?.thread?.user?.id === reborn.id &&
-      relinkedThread.data?.thread?.user?.name === 'Arjun Reborn',
-    {
-      got_id: relinkedThread.data?.thread?.user?.id,
-      got_name: relinkedThread.data?.thread?.user?.name,
-    }
-  );
-  check(
-    'the history already in the thread is untouched by the relink',
-    (relinkedThread.data?.thread?.messages ?? []).some((m) => m.text === 'Good, you?'),
-    { messages: relinkedThread.data?.thread?.messages?.map((m) => m.text) }
+    "the new account inherits none of the deleted account's conversations",
+    rebornThreads.success && (rebornThreads.data?.items ?? []).length === 0,
+    { got: (rebornThreads.data?.items ?? []).map((t) => t.user?.name) }
   );
 
-  // No second, competing thread for the same pair.
-  const allThreads = await get('/conversations?limit=100', earner.token);
-  const threadsWithReborn = (allThreads.data?.items ?? []).filter(
-    (t) => t.user?.id === reborn.id
-  );
-  check('exactly one conversation exists with the reborn account, not two', threadsWithReborn.length === 1, {
-    count: threadsWithReborn.length,
-  });
-  const threadsStillOnOldId = (allThreads.data?.items ?? []).filter((t) => t.user?.id === caller.id);
-  check('nothing is left pointing at the deleted account\'s old id', threadsStillOnOldId.length === 0, {
-    count: threadsStillOnOldId.length,
-  });
+  const keptThread = await get(`/conversations/${conversationId}`, earner.token);
   check(
-    'the relinked conversation is not pinned by default',
-    threadsWithReborn[0]?.pinned === false,
-    { got: threadsWithReborn[0]?.pinned }
+    "the other side's conversation still belongs to the deleted account",
+    keptThread.data?.thread?.user?.id === caller.id,
+    { got_id: keptThread.data?.thread?.user?.id }
+  );
+  check(
+    "the other side's history in that conversation is untouched",
+    (keptThread.data?.thread?.messages ?? []).some((m) => m.text === 'Good, you?'),
+    { messages: keptThread.data?.thread?.messages?.map((m) => m.text) }
   );
 
-  // Messaging actually works again — this used to be permanently refused,
-  // "not friends", because the friendship row was deleted with the old
-  // account and nothing ever recreated it. Now there is no friendship gate at
-  // all, so this just works off the re-pointed conversation.
-  const relinkedReply = await post(`/conversations/${conversationId}/messages`, earner.token, {
-    text: 'Welcome back!',
-  });
-  check('the other side can message the reborn account', relinkedReply.success, {
-    error: relinkedReply.error,
-  });
+  const earnerThreads = await get('/conversations?limit=100', earner.token);
+  check(
+    'nothing points the other side at the new account',
+    !(earnerThreads.data?.items ?? []).some((t) => t.user?.id === reborn.id),
+    { count: (earnerThreads.data?.items ?? []).length }
+  );
 
   // ── Result ────────────────────────────────────────────────────────────────
   const removed = await removeCreatedAccounts();

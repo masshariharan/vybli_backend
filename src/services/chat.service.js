@@ -250,9 +250,9 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
  * `ChatController`).
  *
  * Decided by the unread *messages*, not only the counter: a thread whose
- * counter is already zero can still hold unread rows — a conversation
- * re-pointed after a number was reused starts this side at zero — and those
- * would otherwise never turn blue at all.
+ * counter is already zero can still hold unread rows — a counter reset or
+ * drifted out of step with the rows — and those would otherwise never turn
+ * blue at all.
  *
  * Read implies delivered, so a message read before its delivery ack ever
  * arrived gets its `deliveredAt` too.

@@ -3,7 +3,6 @@
 const prisma = require('../config/prisma');
 const { errors } = require('../utils/errors');
 const activity = require('./activity.service');
-const relationship = require('./relationship.service');
 const { emitToAdmin } = require('../sockets/bus');
 const { USER_INCLUDE } = require('./auth.service');
 
@@ -277,17 +276,13 @@ async function complete(user) {
     });
   }
 
-  // Reconnects any conversation a previous, deleted account on this same
-  // phone number left behind — see the doc comment on the function itself
-  // for why this runs here and not at the OTP-verify step that actually
-  // created the account. Not allowed to fail the completion it rides on: a
-  // finished sign-up is the more important outcome, and a fault here leaves
-  // the old threads exactly as they already were rather than half-migrated.
-  try {
-    await relationship.relinkConversationsForPhone(user);
-  } catch (error) {
-    console.error(`[onboarding] relinking previous conversations failed for ${user.id}`, error);
-  }
+  // No conversations are carried over from a deleted account that once held
+  // this phone number. Deleting an account ends that account's side of every
+  // chat for good: a new sign-up on the same number starts with an empty
+  // list, and the other person keeps their own history with the deleted
+  // account untouched. (This used to re-point the old threads at the new
+  // account — it showed up holding someone else's past conversations, its
+  // messages unreadable to a key that had never received them.)
 
   const fresh = await reload(user.id);
   return { user: fresh, status: 'ONBOARDING_COMPLETED', next_step: null };
