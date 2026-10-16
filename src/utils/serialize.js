@@ -107,10 +107,7 @@ function publicUser(
     languages,
     bio: profile.bio ?? '',
 
-    // The public ones only, even to the owner — `myProfile` adds the private
-    // ones under their own key, so "what others see" and "what I chose" are
-    // never one list the client has to split again.
-    topics: profile.publicTopics ?? [],
+    topics: profile.topics ?? [],
 
     // Presence hidden reads as offline — the honest projection of "you may
     // not know", and a state the client already renders.
@@ -198,8 +195,6 @@ function myProfile(user) {
     // Only on your own profile — the picker needs to know which catalog
     // entry is currently selected. Nobody else's business which one it is.
     avatar_id: profile.avatarId ?? null,
-    // The topics kept off the public profile — see `UserProfile.privateTopics`.
-    private_topics: profile.privateTopics ?? [],
   };
 }
 
@@ -228,7 +223,7 @@ function userSummary(user, { viewer = null } = {}) {
     city_id: showCity ? profile.cityId ?? '' : '',
     languages: languageCodes(user),
     bio: profile.bio ?? '',
-    topics: profile.publicTopics ?? [],
+    topics: profile.topics ?? [],
     avatar_url: avatarCatalog.urlFor(profile.avatarId),
     status: showPresence ? profile.presence : 'offline',
     last_seen: showPresence ? iso(profile.lastSeen) : null,

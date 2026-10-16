@@ -102,18 +102,11 @@ const profile = {
       bio: bio.optional(),
       city_id: cityId.optional(),
       language_codes: languageCodes.optional(),
-      // Every topic chosen, and which of them are private — see
-      // `UserProfile.publicTopics`. Sent together: the visibility of a topic
-      // means nothing without the list it belongs to.
+      // The full set chosen — see `UserProfile.topics`. Empty clears them.
       topics: topicIds.optional(),
-      private_topics: topicIds.optional(),
     })
     .refine((data) => Object.keys(data).length > 0, {
       message: 'Nothing to update',
-    })
-    .refine((data) => data.private_topics === undefined || data.topics !== undefined, {
-      message: 'Send the topics along with which of them are private',
-      path: ['private_topics'],
     }),
 
   /// A live fix from the phone — see `UserProfile.locationLat`.

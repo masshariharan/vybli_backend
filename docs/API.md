@@ -183,7 +183,7 @@ column, and answers `400` with `details.missing` naming the first gap.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/me` | My profile (includes phone, goal, onboarding status) |
-| PATCH | `/me` | Update name, age, bio, city, languages, topics. Topics are `{ "topics": ["work_career","stress_anxiety"], "private_topics": ["stress_anxiety"] }` — every topic chosen, and which of those only the owner sees; profiles carry the public ones as `topics`, and `/me` adds `private_topics`. No `gender` — fixed once set at onboarding, since it decides caller/earner status. No `avatar_url` or `avatar_id` either — see `/me/avatar` below. |
+| PATCH | `/me` | Update name, age, bio, city, languages, topics. Topics are `{ "topics": ["work_career","stress_anxiety"] }` — the full set chosen, shown on the profile as `topics`; `[]` clears them. No `gender` — fixed once set at onboarding, since it decides caller/earner status. No `avatar_url` or `avatar_id` either — see `/me/avatar` below. |
 | PUT | `/me/avatar` | `{ "avatar_id": "male_01" }`. The only way an avatar is set — checked against the predefined catalog (`GET /avatars`), never a file upload. |
 | PUT | `/me/presence` | `{ "status": "online" \| "offline" \| "busy" }`. An override; the normal source of presence is the socket itself — connected means online, and the last device disconnecting means offline. Idempotent: setting the status already held writes nothing and notifies nobody. |
 | GET / PUT | `/me/languages` | Read / replace my language **codes**. Codes both ways — the catalogue that turns `ta` into "Tamil" ships inside the app, not here. |
