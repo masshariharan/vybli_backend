@@ -110,6 +110,22 @@ const languageCodeFilter = z
   .max(20, 'That is more languages than we can match on');
 
 /**
+ * "What's on your mind?" topic slugs — `stress_anxiety`, `work_career`.
+ *
+ * Shape only, like [cityId]: the catalogue ships in the app. Empty is
+ * allowed — it clears the topics.
+ */
+const topicIds = z
+  .array(
+    z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^[a-z][a-z0-9_]{1,31}$/, 'That is not a topic')
+  )
+  .max(24, 'That is more topics than we can keep');
+
+/**
  * Standard pagination.
  *
  * `limit` is capped at 100 in the schema, not merely defaulted — a client
@@ -142,6 +158,7 @@ module.exports = {
   languageCodes,
   languageCodeFilter,
   cityId,
+  topicIds,
   pagination,
   toSkipTake,
 };

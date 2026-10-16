@@ -72,6 +72,10 @@ async function updateProfile(user, payload) {
   // is the client's, so there is nothing here to validate an id against.
   if (payload.city_id !== undefined) data.cityId = payload.city_id;
 
+  if (payload.topics !== undefined) {
+    Object.assign(data, splitTopics(payload.topics, payload.private_topics));
+  }
+
   const operations = [];
   if (Object.keys(data).length > 0) {
     operations.push(prisma.userProfile.update({ where: { userId: user.id }, data }));
@@ -127,6 +131,23 @@ async function updateProfile(user, payload) {
   }
 
   return getMyProfile(user.id);
+}
+
+/**
+ * Every topic chosen, split into the two stored lists by which ones the owner
+ * marked private.
+ *
+ * Deduplicated, and a private entry that is not among the chosen topics is
+ * dropped rather than stored: a topic is private *as one of yours*, and an
+ * orphan would be a hidden topic nobody could see or clear.
+ */
+function splitTopics(topics, privateTopics = []) {
+  const chosen = [...new Set(topics)];
+  const hidden = new Set(privateTopics);
+  return {
+    publicTopics: chosen.filter((t) => !hidden.has(t)),
+    privateTopics: chosen.filter((t) => hidden.has(t)),
+  };
 }
 
 /**
@@ -282,6 +303,7 @@ module.exports = {
   setAvatarId,
   getPublicProfile,
   updateProfile,
+  splitTopics,
   setPresence,
   resetAllPresence,
 };

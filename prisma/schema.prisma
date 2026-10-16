@@ -335,6 +335,19 @@ model UserProfile {
   /// needs to know what the city is called.
   cityId String?
 
+  /// "What's on your mind?" — the topics this person wants to talk about,
+  /// as catalogue slugs (`stress_anxiety`, `work_career`). Like [cityId],
+  /// the catalogue — names, descriptions, icons — belongs to the client;
+  /// these are stored as written.
+  ///
+  /// Two disjoint lists rather than one list and a visibility flag per entry,
+  /// because some of these are personal ("Feeling Lonely", "Breakup &
+  /// Heartbreak") and the owner decides which ones anybody else sees.
+  /// [publicTopics] is what other users are shown; [privateTopics] is never
+  /// sent to anyone but the owner.
+  publicTopics  String[] @default([])
+  privateTopics String[] @default([])
+
   goal     UserGoal @default(makeFriends)
   /// Mirrors `goal == earnMoney`, denormalised because discovery filters on it
   /// on every feed query and joining to check the goal would be wasteful.
