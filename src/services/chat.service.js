@@ -201,7 +201,7 @@ async function unreadTotalFor(userId, notBlocked) {
  * called, and the badge never cleared. Doing it here means it cannot be
  * forgotten.
  */
-async function getThread(user, conversationId, { limit = 50, before } = {}) {
+async function getThread(user, conversationId, { limit = 50, before, beforeAt } = {}) {
   // A chat still on a deleted account whose number has been registered
   // again is carried over to the new account first, so it shows their live
   // profile — see `relinkDeletedPeersOf`. Never allowed to fail the read.
@@ -233,7 +233,15 @@ async function getThread(user, conversationId, { limit = 50, before } = {}) {
       where: { id: before },
       select: { createdAt: true },
     });
+    // The anchor is the oldest message the app holds — and with disappearing
+    // messages it may be gone by the time the app scrolls up to it. Without
+    // a cursor this answered with the *newest* page again, every message on
+    // it one the app already had, and history above that point never loaded.
+    // The app sends the anchor's time alongside its id for exactly this.
+    const fallback = beforeAt ? new Date(beforeAt) : null;
     if (anchor) createdAt.lt = anchor.createdAt;
+    else if (fallback && !Number.isNaN(fallback.getTime())) createdAt.lt = fallback;
+    else return { conversation, messages: [], hasMore: false, relinkStatus: null };
   }
   if (Object.keys(createdAt).length > 0) where.createdAt = createdAt;
 

@@ -263,6 +263,9 @@ const chat = {
     // Cursor paging for a thread: messages arrive while you scroll, and
     // offsets shift under you.
     before: z.string().trim().optional(),
+    // When the `before` message was sent — the fallback when that message has
+    // disappeared since (see `getThread`).
+    before_at: z.string().trim().optional(),
   }),
 
   send: z

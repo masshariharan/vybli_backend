@@ -58,7 +58,7 @@ async function getThread(req, res) {
   const { conversation, messages, hasMore, relinkStatus } = await chatService.getThread(
     req.user,
     req.params.id,
-    { limit: params.limit ?? 50, before: params.before }
+    { limit: params.limit ?? 50, before: params.before, beforeAt: params.before_at }
   );
 
   return ok(

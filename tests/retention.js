@@ -202,6 +202,28 @@ async function run() {
   const gone = await withPrisma((prisma) => prisma.message.findUnique({ where: { id: shortId } }));
   check('and the purge deletes it', purged.messages >= 1 && gone === null, purged);
   check('while the 7-day messages stay', visible.includes(edgeId) && visible.includes(newId), visible);
+
+  // Scrolling up from a message that has since disappeared: the app's oldest
+  // bubble was the 24-hour one, and it is gone by the time the page is asked
+  // for. Its time still marks the place.
+  const beforeAt = new Date(Date.now() - 25 * 3_600_000).toISOString();
+  const older = await get(
+    `/conversations/${conversationId}?before=${shortId}&before_at=${encodeURIComponent(beforeAt)}`,
+    earner.token
+  );
+  const olderIds = older.data?.thread?.messages?.map((m) => m.id) ?? [];
+  check(
+    'paging past a disappeared message carries on from its time',
+    olderIds.includes(edgeId) && !olderIds.includes(newId),
+    olderIds
+  );
+  const blind = await get(`/conversations/${conversationId}?before=${shortId}`, earner.token);
+  const blindIds = blind.data?.thread?.messages?.map((m) => m.id) ?? [];
+  check(
+    'and without its time, an empty page — never the newest page again',
+    blind.success && blindIds.length === 0 && blind.data?.has_more === false,
+    blind.data
+  );
 }
 
 run()
