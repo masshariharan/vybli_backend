@@ -629,8 +629,10 @@ async function verifyOrReplayGooglePlayVip({ userId, productId, purchaseToken, p
  * twice, and the catch below treats that as success because the money is
  * already there.
  *
- * Earnings land in `pending` and mature after 48h, which is what the earning
- * screens promise.
+ * With `EARNING_CLEAR_HOURS` above zero, earnings land in `pending` and
+ * mature after that many hours. At zero they are withdrawable at once: the
+ * earning is written `available` and credited straight to the available
+ * balance, with no pending stop in between.
  */
 async function recordEarning({ userId, callId, amountSpent, minutes, share, tx = prisma }) {
   if (amountSpent <= 0 || minutes <= 0) return null;
@@ -641,41 +643,52 @@ async function recordEarning({ userId, callId, amountSpent, minutes, share, tx =
   const amount = Number((amountSpent * cut).toFixed(2));
   if (amount <= 0) return null;
 
+  const instant = earningsClearInstantly();
   const clearsAt = new Date(Date.now() + env.economy.earningClearHours * 3600_000);
+  const bucket = instant ? 'availableBalance' : 'pendingBalance';
 
-  try {
-    const wallet = await tx.wallet.upsert({
+  // The credit and the earning row commit together: a second attempt for the
+  // same call hits the `callId` unique constraint and rolls back its credit,
+  // rather than crediting the wallet and only then finding the duplicate.
+  // A caller passing its own `tx` gets the same guarantee from that.
+  const write = async (t) => {
+    const wallet = await t.wallet.upsert({
       where: { userId },
-      create: { userId, totalEarnings: amount, pendingBalance: amount },
+      create: { userId, totalEarnings: amount, [bucket]: amount },
       update: {
         totalEarnings: { increment: amount },
-        pendingBalance: { increment: amount },
+        [bucket]: { increment: amount },
       },
     });
 
-    const earning = await tx.earning.create({
+    const earning = await t.earning.create({
       data: {
         userId,
         callId,
         amount,
         minutes,
         ratePerMinute: Number((amount / minutes).toFixed(2)),
-        status: 'pending',
+        status: instant ? 'available' : 'pending',
         clearsAt,
       },
     });
 
-    await tx.walletTransaction.create({
+    await t.walletTransaction.create({
       data: {
         walletId: wallet.id,
         kind: 'earning',
-        status: 'pending',
+        status: instant ? 'completed' : 'pending',
         title: 'Call earnings',
-        subtitle: `${minutes} min • clears in ${env.economy.earningClearHours} hrs`,
+        subtitle: earningSubtitle(`${minutes} min`, instant),
         rupeeDelta: amount,
         referenceId: callId,
       },
     });
+    return earning;
+  };
+
+  try {
+    const earning = tx === prisma ? await prisma.$transaction(write) : await write(tx);
 
     activity.record({
       userId,
@@ -688,7 +701,7 @@ async function recordEarning({ userId, callId, amountSpent, minutes, share, tx =
         amount_spent: amountSpent,
         clears_at: clearsAt.toISOString(),
       },
-      status: 'pending',
+      status: instant ? 'completed' : 'pending',
     });
 
     return earning;
@@ -701,96 +714,13 @@ async function recordEarning({ userId, callId, amountSpent, minutes, share, tx =
 }
 
 /**
- * Credits an earner her share of one paid chat message.
- *
- * The same share as calls (admin-set in Pricing & Levels), so one setting
- * decides what she keeps of everything paid to talk to her. Kept as **one
- * earning per conversation per day** (India time), grown with each message,
- * with one ledger row to match — "Chat earnings · Rahul · 24 messages" — so a
- * busy chat reads as a line in her history, not a flood of ₹0.30 rows.
- *
- * The add-or-grow is a single `INSERT … ON CONFLICT` on that unique day key,
- * so two messages landing together both count, once each. Matures 48h after
- * the end of its day, like a call's, and from there moves exactly as call
- * earnings do (`releaseMaturedEarnings`, `withdraw`).
- */
-async function recordMessageEarning({
-  earnerId,
-  senderId,
-  senderName,
-  conversationId,
-  amountSpent,
-}) {
-  const share = require('./pricing.service').earnerShare();
-  const amount = Number((amountSpent * share).toFixed(2));
-  if (!(amount > 0)) return null;
-
-  const day = indiaDay(new Date());
-  const clearsAt = new Date(
-    endOfIndiaDay(day).getTime() + env.economy.earningClearHours * 3600_000
-  );
-  const id = `c${Date.now().toString(36)}${crypto.randomBytes(12).toString('base64url')}`;
-
-  return prisma.$transaction(async (tx) => {
-    const [row] = await tx.$queryRaw`
-      INSERT INTO "earnings" (
-        "id", "userId", "conversationId", "senderId", "day",
-        "amount", "ratePerMinute", "minutes", "messages", "status",
-        "clearsAt", "createdAt"
-      ) VALUES (
-        ${id}, ${earnerId}, ${conversationId}, ${senderId}, ${day}::date,
-        ${amount}, 0, 0, 1, 'pending'::"EarningStatus",
-        ${clearsAt}, ${new Date()}
-      )
-      ON CONFLICT ("userId", "conversationId", "day") DO UPDATE
-        SET "amount" = "earnings"."amount" + EXCLUDED."amount",
-            "messages" = "earnings"."messages" + 1
-      RETURNING "id", "amount", "messages", (xmax = 0) AS "inserted"`;
-
-    const wallet = await tx.wallet.upsert({
-      where: { userId: earnerId },
-      create: { userId: earnerId, totalEarnings: amount, pendingBalance: amount },
-      update: {
-        totalEarnings: { increment: amount },
-        pendingBalance: { increment: amount },
-      },
-    });
-
-    const total = Number(row.amount);
-    const count = Number(row.messages);
-    const subtitle =
-      `${senderName ? `${senderName} • ` : ''}` +
-      `${count} message${count === 1 ? '' : 's'} • clears in ${env.economy.earningClearHours} hrs`;
-    if (row.inserted) {
-      await tx.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          kind: 'earning',
-          status: 'pending',
-          title: 'Chat earnings',
-          subtitle,
-          rupeeDelta: total,
-          referenceId: row.id,
-        },
-      });
-    } else {
-      await tx.walletTransaction.updateMany({
-        where: { walletId: wallet.id, kind: 'earning', referenceId: row.id },
-        data: { rupeeDelta: total, subtitle },
-      });
-    }
-    return row;
-  });
-}
-
-/**
  * Records one paid chat message in the sender's history.
  *
  * The balance already moved when the message was charged; this is the line
  * that says where it went. One row per conversation per day (India time),
  * grown with each message — "Chat messages · Asha • 24 messages · −₹24" —
- * the mirror of her `recordMessageEarning`, so a busy chat is a line in his
- * history rather than a flood of −₹1 rows. Add-or-grow is one
+ * so a busy chat is a line in his history rather than a flood of −₹1 rows.
+ * The rupee is Vybli's: chat has no earner share. Add-or-grow is one
  * `INSERT … ON CONFLICT` on the day's reference, so racing sends both count.
  */
 async function recordMessageSpend({ userId, peerName, conversationId, price }) {
@@ -821,22 +751,29 @@ async function recordMessageSpend({ userId, peerName, conversationId, price }) {
 
   if (!row.inserted) {
     const count = Math.max(1, Math.round(-Number(row.rupeeDelta) / price));
-    await prisma.walletTransaction.update({
-      where: { id: row.id },
+    // Only while the total is still the one this count came from: when sends
+    // race, an older count landing last would otherwise overwrite a newer one.
+    await prisma.walletTransaction.updateMany({
+      where: { id: row.id, rupeeDelta: row.rupeeDelta },
       data: { subtitle: label(count) },
     });
   }
   return row;
 }
 
-/** Today's date in India, as `YYYY-MM-DD` — the day a chat earning belongs to. */
-function indiaDay(at) {
-  return new Date(at.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+/** True when `EARNING_CLEAR_HOURS` is zero: earnings are withdrawable at once. */
+function earningsClearInstantly() {
+  return !(env.economy.earningClearHours > 0);
 }
 
-/** Midnight at the end of an India day, as an instant. */
-function endOfIndiaDay(day) {
-  return new Date(new Date(`${day}T00:00:00+05:30`).getTime() + 24 * 3600_000);
+/** An earning's ledger subtitle: what it was, and when it clears if it waits. */
+function earningSubtitle(what, cleared) {
+  return cleared ? what : `${what} • clears in ${env.economy.earningClearHours} hrs`;
+}
+
+/** Today's date in India, as `YYYY-MM-DD` — the day a chat history row belongs to. */
+function indiaDay(at) {
+  return new Date(at.getTime() + 330 * 60_000).toISOString().slice(0, 10);
 }
 
 /**
@@ -999,7 +936,6 @@ module.exports = {
   listVipPlans,
   purchaseVip,
   recordEarning,
-  recordMessageEarning,
   recordMessageSpend,
   reverseVoidedPurchases,
   assertBuyer,

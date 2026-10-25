@@ -149,7 +149,7 @@ const env = {
     // setting, edited in the admin panel's Pricing & Levels and snapshotted on
     // each call — see `services/pricing.service.js`. `EARNER_SHARE` in an
     // existing .env is ignored.
-    earningClearHours: num('EARNING_CLEAR_HOURS', 48),
+    earningClearHours: num('EARNING_CLEAR_HOURS', 0),
     minWithdrawalInr: num('MIN_WITHDRAWAL_INR', 100),
     /// What one chat message costs a paying account, in rupees. It goes to
     /// Vybli in full — chat has no earner share. Women, earners and active

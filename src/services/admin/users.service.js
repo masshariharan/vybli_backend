@@ -743,7 +743,8 @@ async function earnings(userId, { status, skip = 0, take = 25 } = {}) {
       })
     : [];
   const callsById = new Map(callRows.map((c) => [c.id, c]));
-  // Chat earnings: the man whose paid messages they were.
+  // Chat earnings (paid before chat revenue became all Vybli's): the man
+  // whose paid messages they were.
   const senderIds = [...new Set(rows.filter((r) => !r.callId && r.senderId).map((r) => r.senderId))];
   const senders = senderIds.length
     ? await prisma.user.findMany({ where: { id: { in: senderIds } }, include: PROFILE_INCLUDE })

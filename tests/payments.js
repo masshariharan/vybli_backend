@@ -3,7 +3,7 @@
 /**
  * The money paths that move rupees without a call in between: earnings
  * maturing, withdrawals and their payouts (manual and RazorpayX), the
- * RazorpayX webhook signature, paid-message earnings and spend, and Google
+ * RazorpayX webhook signature, paid messages (all to Vybli) and call earnings, and Google
  * Play refunds being taken back.
  *
  * Runs the real services against the local database. RazorpayX and Google
@@ -23,6 +23,7 @@ const payoutService = require('../src/services/payout.service');
 const playBilling = require('../src/services/play_billing.service');
 const razorpayx = require('../src/services/payouts/razorpayx.client');
 const pricing = require('../src/services/pricing.service');
+const chatService = require('../src/services/chat.service');
 
 let passed = 0;
 let failed = 0;
@@ -343,39 +344,75 @@ function webhookSignature() {
 }
 
 async function messages() {
-  section('Paid messages — her earnings, his history');
+  section('Paid messages — all to Vybli, his history');
   const her = await makeUser();
   const him = await makeUser({ earner: false, name: 'Ravi' });
   const convo = `conv_${tag}_1`;
-  const share = pricing.earnerShare();
   const price = env.economy.messagePriceInr;
 
-  await Promise.all(
-    Array.from({ length: 5 }, () =>
-      walletService.recordMessageEarning({ earnerId: her.id, senderId: him.id, senderName: 'Ravi', conversationId: convo, amountSpent: price })
-    )
+  // The real send path: a paying man messages a woman who earns. He is
+  // charged; she is credited nothing — chat revenue is all Vybli's.
+  await prisma.wallet.update({ where: { userId: him.id }, data: { balance: 10 } });
+  const load = (id) =>
+    prisma.user.findUnique({ where: { id }, include: { profile: true, privacySettings: true } });
+  const sender = await load(him.id);
+  const conversation = await chatService.openOrCreate(sender, her.id);
+  const conversationId = conversation.id ?? conversation.conversation?.id;
+  const sent = await rejects(
+    chatService.sendMessage(sender, conversationId, { text: 'hello', clientId: `cli_${tag}_1` })
   );
-  const rows = await prisma.earning.findMany({ where: { userId: her.id } });
-  const expected = Number((5 * Number((price * share).toFixed(2))).toFixed(2));
-  check('five messages at once make one earning for the day', rows.length === 1, rows.length);
-  check('counting all five', rows[0]?.messages === 5, rows[0]?.messages);
-  check(`worth her share of each (₹${expected})`, num(rows[0]?.amount) === expected, num(rows[0]?.amount));
-  const w = await wallet(her.id);
-  check('her pending balance grows by the same', num(w.pendingBalance) === expected, num(w.pendingBalance));
-  const ledger = await prisma.walletTransaction.findMany({ where: { walletId: w.id, kind: 'earning' } });
-  check('with one ledger row, kept in step', ledger.length === 1 && num(ledger[0].rupeeDelta) === expected && ledger[0].subtitle.includes('5 messages'), ledger);
-
-  await walletService.recordMessageEarning({ earnerId: her.id, senderId: him.id, senderName: 'Ravi', conversationId: `conv_${tag}_2`, amountSpent: price });
-  check('another chat is its own row', (await prisma.earning.count({ where: { userId: her.id } })) === 2);
-  check('nothing is earned from a free message', (await walletService.recordMessageEarning({ earnerId: her.id, senderId: him.id, conversationId: convo, amountSpent: 0 })) === null);
+  if (sent && sent.code === 'E2EE_REQUIRED') {
+    console.log('  · skipped the live send: this .env requires encrypted messages');
+  } else {
+    check('the message sends', sent === null, sent?.message);
+    const hw = await wallet(him.id);
+    check(`he is charged ₹${price}`, num(hw.balance) === 10 - price, num(hw.balance));
+    // Let any fire-and-forget credit land before looking.
+    await new Promise((r) => setTimeout(r, 300));
+    const sw = await wallet(her.id);
+    check('she is credited nothing', num(sw.totalEarnings) === 0 && num(sw.availableBalance) === 0 && num(sw.pendingBalance) === 0, sw);
+    check('and no earning row is made for her', (await prisma.earning.count({ where: { userId: her.id } })) === 0);
+  }
 
   await Promise.all(
     Array.from({ length: 4 }, () => walletService.recordMessageSpend({ userId: him.id, peerName: 'Asha', conversationId: convo, price }))
   );
-  const spend = await prisma.walletTransaction.findMany({ where: { wallet: { userId: him.id }, kind: 'message' } });
+  const spend = await prisma.walletTransaction.findMany({ where: { wallet: { userId: him.id }, kind: 'message', referenceId: { contains: convo } } });
   check('his four messages are one history row', spend.length === 1, spend.length);
   check(`of −₹${4 * price}`, num(spend[0]?.rupeeDelta) === -4 * price, num(spend[0]?.rupeeDelta));
   check('reading "4 messages"', spend[0]?.subtitle.includes('4 messages'), spend[0]?.subtitle);
+}
+
+async function callEarnings() {
+  section('Call earnings — her 30%, cleared at once or after a window');
+  const share = pricing.earnerShare();
+  const hours = env.economy.earningClearHours;
+  const him = await makeUser({ earner: false, name: 'Ravi' });
+  const callWith = async (her) =>
+    (await prisma.call.create({ data: { callerId: him.id, calleeId: her.id, type: 'video' } })).id;
+  try {
+    env.economy.earningClearHours = 0;
+    const now = await makeUser();
+    const nowCall = await callWith(now);
+    await walletService.recordEarning({ userId: now.id, callId: nowCall, amountSpent: 120, minutes: 10, share });
+    const nw = await wallet(now.id);
+    const cut = Number((120 * share).toFixed(2));
+    check(`instant: her share (₹${cut}) is available at once`, num(nw.availableBalance) === cut && num(nw.pendingBalance) === 0, nw);
+    const nowLedger = await prisma.walletTransaction.findFirst({ where: { walletId: nw.id, kind: 'earning' } });
+    check('instant: ledger row is completed, no "clears in"', nowLedger?.status === 'completed' && !nowLedger.subtitle.includes('clears'), nowLedger);
+    await walletService.recordEarning({ userId: now.id, callId: nowCall, amountSpent: 120, minutes: 10, share }).catch(() => null);
+    check('the same call never pays twice', num((await wallet(now.id)).availableBalance) === cut);
+
+    env.economy.earningClearHours = 48;
+    const later = await makeUser();
+    await walletService.recordEarning({ userId: later.id, callId: await callWith(later), amountSpent: 120, minutes: 10, share });
+    const lw = await wallet(later.id);
+    check('with a window: call earnings wait in pending', num(lw.pendingBalance) === cut && num(lw.availableBalance) === 0, lw);
+    const laterLedger = await prisma.walletTransaction.findFirst({ where: { walletId: lw.id, kind: 'earning' } });
+    check('and say when they clear', laterLedger?.subtitle.includes('clears in 48 hrs'), laterLedger);
+  } finally {
+    env.economy.earningClearHours = hours;
+  }
 }
 
 async function refunds() {
@@ -444,12 +481,17 @@ function buyerTag() {
     await razorpayxWithdrawals();
     webhookSignature();
     await messages();
+    await callEarnings();
     await refunds();
     buyerTag();
   } catch (err) {
     failed += 1;
     console.error('\nCrashed:', err);
   } finally {
+    // Chats and calls between test users hold their rows; they go first.
+    const theirs = { OR: [{ userAId: { in: made } }, { userBId: { in: made } }] };
+    await prisma.conversation.deleteMany({ where: theirs }).catch((err) => console.error('cleanup failed:', err.message));
+    await prisma.call.deleteMany({ where: { OR: [{ callerId: { in: made } }, { calleeId: { in: made } }] } }).catch((err) => console.error('cleanup failed:', err.message));
     await prisma.user.deleteMany({ where: { id: { in: made } } }).catch((err) =>
       console.error('cleanup failed:', err.message)
     );

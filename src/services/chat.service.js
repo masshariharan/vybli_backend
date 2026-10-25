@@ -455,10 +455,10 @@ function isUniqueViolation(error) {
  * Charges one message to the sender, if the sender pays for messages.
  *
  * Paying accounts are men who are not earners and not active VIPs — women,
- * earners and VIPs send free. When the message goes to a woman who earns,
- * she is credited her share once it lands (see `creditMessageEarning`); the
- * rest is Vybli's. The debit is a single conditional UPDATE, so two sends
- * racing each other cannot both spend the last rupee.
+ * earners and VIPs send free. The whole price is Vybli's: chat has no earner
+ * share, and the woman a message goes to is credited nothing — women earn
+ * from voice and video calls only. The debit is a single conditional UPDATE,
+ * so two sends racing each other cannot both spend the last rupee.
  *
  * No ledger row per message — a busy chat would bury every recharge and call
  * in the wallet history. Once the message is stored it is added to one row
@@ -490,28 +490,6 @@ async function chargeForMessage(user) {
   }
   emitToUser(user.id, 'wallet:balance', { balance: Number(rows[0].balance) });
   return price;
-}
-
-/**
- * Pays the recipient her share of a paid message — when she is a woman who
- * earns, the same rule as calls: across genders, and only as an earner.
- * Fire-and-forget; tells her app its wallet moved.
- */
-function creditMessageEarning(user, side, conversationId, charged) {
-  const peer = side.peer;
-  if (peer?.profile?.gender !== 'female' || !peer.profile.isEarner) return;
-  require('./wallet.service')
-    .recordMessageEarning({
-      earnerId: side.peerId,
-      senderId: user.id,
-      senderName: user.profile?.name ?? null,
-      conversationId,
-      amountSpent: charged,
-    })
-    .then(() => emitToUser(side.peerId, 'wallet:updated', {}))
-    .catch((err) =>
-      console.error(`[chat] could not credit a message earning to ${side.peerId}`, err)
-    );
 }
 
 /** Puts a message charge back after a send that did not go through. */
@@ -641,12 +619,11 @@ async function sendMessage(user, conversationId, { text = '', attachment, client
   }
   const { _mutedByA, _mutedByB, ...message } = rows[0];
 
-  // Paid, and stored: her share, if she earns. Never holds up the send, and
-  // a failure here is logged rather than taken back from the sender — the
-  // message did go.
+  // Paid, and stored: the line in his own history that says where the rupee
+  // went. Never holds up the send, and a failure here is logged rather than
+  // taken back from the sender — the message did go. Nobody is credited:
+  // chat revenue is all Vybli's.
   if (charged > 0) {
-    creditMessageEarning(user, side, conversationId, charged);
-    // And the line in his own history that says where the rupee went.
     require('./wallet.service')
       .recordMessageSpend({
         userId: user.id,
