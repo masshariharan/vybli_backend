@@ -41,7 +41,12 @@ async function webhook(req, res) {
       // One side's media is gone. On a connected call that is the end of it —
       // a two-person call with one person left is over, whatever the reason.
       case 'participant_left':
-        await callService.onMediaDisconnect(callId, { reason: 'networkError' });
+        await callService.onMediaDisconnect(callId, {
+          reason: 'networkError',
+          // A participant's identity is their user id — see
+          // `livekit.identityFor`. It says whose side dropped.
+          userId: event.participant?.identity ?? null,
+        });
         break;
 
       // The room closed without us closing it: everyone left, or it hit the

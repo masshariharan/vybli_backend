@@ -948,6 +948,38 @@ model EarnerCaller {
   @@map("earner_callers")
 }
 
+/// A live call that the other person ended on a woman — he hung up, or his
+/// connection dropped — as opposed to one she ended herself or one that ran
+/// out of balance. What her "Disconnected calls" screen is drawn from.
+///
+/// A table of its own, with no relation to `Call`, for the same reason
+/// `Earning` is one: clearing call history hard-deletes `Call` rows, and a
+/// record of who keeps hanging up on her must not vanish because either of
+/// them tidied a call log. `callId` is unique so a duplicated end event
+/// records nothing the second time.
+model CallDisconnect {
+  id       String        @id @default(cuid())
+  callId   String        @unique
+  /// The woman the call was ended on.
+  userId   String
+  /// Who ended it.
+  byUserId String
+  type     CallType
+  /// `hungUp` or `networkError` — nothing else is a disconnect.
+  reason   CallEndReason
+
+  /// How long the call had been connected when it was ended.
+  durationSeconds Int
+
+  /// When the call ended.
+  createdAt DateTime @default(now())
+
+  // Her history, newest first; and one person's rows within it.
+  @@index([userId, createdAt])
+  @@index([userId, byUserId, createdAt])
+  @@map("call_disconnects")
+}
+
 /// Every change to a woman's level — automatic, or made by an admin.
 model EarnerLevelChange {
   id        String   @id @default(cuid())

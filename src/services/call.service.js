@@ -14,6 +14,7 @@ const connections = require('../sockets/connections');
 const serialize = require('../utils/serialize');
 const callPricing = require('../utils/callPricing');
 const pricing = require('./pricing.service');
+const disconnects = require('./disconnect.service');
 
 /**
  * Calls, and the money they move.
@@ -690,7 +691,7 @@ async function cancelUnlocked(user, callId) {
   // a caller whose screen already said it was over. Hanging up is what they
   // meant, so it ends.
   if (call.status === 'connected') {
-    return finalise(call, { status: 'ended', reason: 'hungUp' });
+    return finalise(call, { status: 'ended', reason: 'hungUp', endedBy: user.id });
   }
   if (call.status !== 'ringing') {
     throw errors.conflict('That call is no longer ringing.', 'CALL_NOT_RINGING');
@@ -698,7 +699,7 @@ async function cancelUnlocked(user, callId) {
   const result = await finalise(call, { status: 'cancelled', reason: 'cancelled' });
   // Lost the race to an answer, as above: end what is now a live call.
   if (result.status === 'connected') {
-    return finalise(result, { status: 'ended', reason: 'hungUp' });
+    return finalise(result, { status: 'ended', reason: 'hungUp', endedBy: user.id });
   }
   return result;
 }
@@ -722,6 +723,11 @@ async function endUnlocked(user, callId, { reason = 'hungUp', force = false } = 
   // already up and close that one instead.
   if (call.status !== 'ringing' && call.status !== 'connected') return call;
 
+  // Who ended it, for the disconnected-calls record. A forced end by someone
+  // who is not on the call (moderation) is nobody's hang-up.
+  const endedBy =
+    call.callerId === user.id || call.calleeId === user.id ? user.id : null;
+
   // Hanging up on a call that never connected is a cancel or a reject, not an
   // end — and it must not be billed.
   if (call.status === 'ringing') {
@@ -732,12 +738,12 @@ async function endUnlocked(user, callId, { reason = 'hungUp', force = false } = 
     });
     // Answered while this hang-up was on its way. Still a hang-up.
     if (result.status === 'connected') {
-      return finalise(result, { status: 'ended', reason });
+      return finalise(result, { status: 'ended', reason, endedBy });
     }
     return result;
   }
 
-  return finalise(call, { status: 'ended', reason });
+  return finalise(call, { status: 'ended', reason, endedBy });
 }
 
 // ── In-call chat ────────────────────────────────────────────────────────────
@@ -796,8 +802,13 @@ function recentMessages(callId) {
  *
  * The one exit for every ending — hang-up, decline, timeout, out of balance — so
  * none of the bookkeeping can be attached to one path and missed on another.
+ *
+ * [endedBy] is the participant who ended a live call, when one of them did —
+ * a hang-up, or their connection dropping. Left out by every ending nobody
+ * chose (out of balance, a ring timing out, a sweep), and used only for the
+ * disconnected-calls record.
  */
-async function finalise(call, { status, reason }) {
+async function finalise(call, { status, reason, endedBy = null }) {
   const endedAt = new Date();
   const durationSeconds = call.connectedAt
     ? Math.max(0, Math.floor((endedAt - new Date(call.connectedAt)) / 1000))
@@ -883,14 +894,18 @@ async function finalise(call, { status, reason }) {
   // A failure here is logged, not thrown: the call has already ended in the
   // database, and turning a bookkeeping error into a failed hang-up would be
   // strictly worse than a gap in the ledger.
-  finaliseBookkeeping(call, updated, { status, reason, durationSeconds }).catch(
+  finaliseBookkeeping(call, updated, { status, reason, durationSeconds, endedBy }).catch(
     (err) => console.error(`[call] background finalise failed for ${call.id}`, err)
   );
 
   return updated;
 }
 
-async function finaliseBookkeeping(call, updated, { status, reason, durationSeconds }) {
+async function finaliseBookkeeping(
+  call,
+  updated,
+  { status, reason, durationSeconds, endedBy = null }
+) {
   // Presence is already restored — `finalise` synced it up front,
   // alongside the row write, because that is the one piece of this cleanup
   // urgent enough not to be fire-and-forget. Everything below genuinely is.
@@ -951,6 +966,20 @@ async function finaliseBookkeeping(call, updated, { status, reason, durationSeco
         })
       );
     }
+  }
+
+  // Someone ending a live call on a woman goes on her disconnected-calls
+  // record — see `disconnect.service`, which decides whether this was one.
+  // Caught here rather than left to the `Promise.all` below: this is a
+  // statistic, and it failing must not cost the call its activity log.
+  if (status === 'ended' && endedBy) {
+    writes.push(
+      disconnects
+        .record({ call: updated, endedById: endedBy, reason })
+        .catch((err) =>
+          console.error(`[call] disconnect record failed for ${call.id}`, err)
+        )
+    );
   }
 
   if (status === 'missed') {
@@ -1034,15 +1063,20 @@ async function finaliseBookkeeping(call, updated, { status, reason, durationSeco
  *
  * `networkError` rather than `hungUp`, because the summary should say what
  * actually happened — and because the two want different copy on the screen.
+ *
+ * [userId] is whose media went, when LiveKit names them — the room closing
+ * on its own names nobody.
  */
-function onMediaDisconnect(callId, { reason = 'networkError' } = {}) {
+function onMediaDisconnect(callId, { reason = 'networkError', userId = null } = {}) {
   return withCallLock(callId, async () => {
     const call = await prisma.call.findUnique({
       where: { id: callId },
       include: CALL_INCLUDE,
     });
     if (!call || call.status !== 'connected') return null;
-    return finalise(call, { status: 'ended', reason });
+    const endedBy =
+      userId && (userId === call.callerId || userId === call.calleeId) ? userId : null;
+    return finalise(call, { status: 'ended', reason, endedBy });
   });
 }
 

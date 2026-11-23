@@ -495,6 +495,19 @@ calls.use(authenticate, requireOnboarded);
 calls.get('/active', h(callController.getActive));
 calls.get('/history', validate({ query: S.calls.history }), h(callController.history));
 calls.delete('/history', h(callController.clearHistory));
+// Disconnected calls — the live calls someone else ended on her. Women only
+// (checked in `disconnect.service`), and unaffected by clearing the history
+// above: these are kept in their own table.
+calls.get(
+  '/disconnects',
+  validate({ query: S.calls.disconnects }),
+  h(callController.disconnects)
+);
+calls.get(
+  '/disconnects/history',
+  validate({ query: S.calls.disconnectHistory }),
+  h(callController.disconnectHistory)
+);
 calls.post(
   '/',
   writeLimiter,
