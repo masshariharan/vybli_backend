@@ -1,7 +1,6 @@
 'use strict';
 
 const callService = require('../services/call.service');
-const disconnectService = require('../services/disconnect.service');
 const serialize = require('../utils/serialize');
 const { ok, created, paginated } = require('../utils/respond');
 const { q } = require('../middleware/validate');
@@ -121,29 +120,6 @@ async function history(req, res) {
   );
 }
 
-/**
- * Disconnected calls: the summary figures and who is behind them.
- *
- * Women only — the service refuses anyone else with `WOMEN_ONLY`.
- */
-async function disconnects(req, res) {
-  const overview = await disconnectService.overview(req.user, { range: q(req).range });
-  return ok(res, overview, 'Disconnected calls');
-}
-
-/** Every disconnected call, newest first — optionally one person's. */
-async function disconnectHistory(req, res) {
-  const params = q(req);
-  const { skip, take } = toSkipTake(params);
-  const { items, total } = await disconnectService.history(req.user, {
-    range: params.range,
-    userId: params.user_id,
-    skip,
-    take,
-  });
-  return paginated(res, items, { page: params.page, limit: params.limit, total });
-}
-
 async function remove(req, res) {
   const result = await callService.deleteFromHistory(req.user, req.params.id);
   return ok(res, result, 'Removed from your history');
@@ -170,8 +146,6 @@ async function sendMessage(req, res) {
 }
 
 module.exports = {
-  disconnects,
-  disconnectHistory,
   start,
   accept,
   reject,

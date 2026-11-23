@@ -16,6 +16,7 @@ const messages = require('../services/admin/messages.service');
 const platform = require('../services/admin/platform.service');
 const smsUsage = require('../services/admin/sms-usage.service');
 const pricingAdmin = require('../services/admin/pricing.service');
+const disconnectsAdmin = require('../services/admin/disconnects.service');
 const pricing = require('../services/pricing.service');
 
 /**
@@ -471,6 +472,59 @@ router.get(
       source: ['auto', 'admin'].includes(req.query.source) ? req.query.source : undefined,
     });
     return listed(res, result, p, 'Level history');
+  })
+);
+
+// ── Disconnected calls ──────────────────────────────────────────────────────
+//
+// Live calls that the other person ended on a woman — he hung up, or his
+// connection dropped. Shown here and nowhere else: neither app has a screen
+// or an endpoint for it. `days=0` is all time.
+
+/** `days` as sent: a positive number, or 0 for all time. Defaults to 30. */
+function disconnectDays(req) {
+  if (req.query.days === undefined || req.query.days === '') return 30;
+  const n = Number(req.query.days);
+  return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), 3650) : 30;
+}
+
+router.get(
+  '/call-disconnects',
+  h(async (req, res) =>
+    ok(res, await disconnectsAdmin.overview({ days: disconnectDays(req) }), 'Disconnected calls')
+  )
+);
+
+router.get(
+  '/call-disconnects/users',
+  h(async (req, res) => {
+    const p = page(req);
+    const result = await disconnectsAdmin.users({
+      ...p,
+      days: disconnectDays(req),
+      search: str(req.query.search),
+      frequent: req.query.frequent === '1' || req.query.frequent === 'true',
+    });
+    return listed(res, result, p, 'Who disconnected');
+  })
+);
+
+router.get(
+  '/call-disconnects/history',
+  h(async (req, res) => {
+    const p = page(req);
+    const result = await disconnectsAdmin.history({
+      ...p,
+      days: disconnectDays(req),
+      byUserId: str(req.query.by_user_id),
+      earnerId: str(req.query.earner_id),
+      type: ['voice', 'video'].includes(req.query.type) ? req.query.type : undefined,
+      reason: ['hungUp', 'networkError'].includes(req.query.reason)
+        ? req.query.reason
+        : undefined,
+      search: str(req.query.search),
+    });
+    return listed(res, result, p, 'Disconnected calls');
   })
 );
 

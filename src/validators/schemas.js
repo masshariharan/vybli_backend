@@ -342,15 +342,6 @@ const calls = {
     direction: z.enum(['all', 'incoming', 'outgoing', 'missed']).default('all'),
   }),
   message: z.object({ text: z.string().trim().min(1).max(1000) }),
-  // Disconnected calls — see `disconnect.service`.
-  disconnects: z.object({
-    range: z.enum(['7d', '30d', 'all']).default('30d'),
-  }),
-  disconnectHistory: pagination.extend({
-    range: z.enum(['7d', '30d', 'all']).default('30d'),
-    // One person's disconnects only.
-    user_id: cuid.optional(),
-  }),
 };
 
 // ── Wallet ──────────────────────────────────────────────────────────────────

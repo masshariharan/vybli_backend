@@ -950,7 +950,7 @@ model EarnerCaller {
 
 /// A live call that the other person ended on a woman — he hung up, or his
 /// connection dropped — as opposed to one she ended herself or one that ran
-/// out of balance. What her "Disconnected calls" screen is drawn from.
+/// out of balance. What the admin panel's Disconnected calls page is drawn from.
 ///
 /// A table of its own, with no relation to `Call`, for the same reason
 /// `Earning` is one: clearing call history hard-deletes `Call` rows, and a

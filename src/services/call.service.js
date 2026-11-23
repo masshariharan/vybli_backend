@@ -968,8 +968,9 @@ async function finaliseBookkeeping(
     }
   }
 
-  // Someone ending a live call on a woman goes on her disconnected-calls
-  // record — see `disconnect.service`, which decides whether this was one.
+  // Someone ending a live call on a woman goes on the admin panel's
+  // disconnected-calls record — see `disconnect.service`, which decides
+  // whether this was one. Nothing about it reaches either app.
   // Caught here rather than left to the `Promise.all` below: this is a
   // statistic, and it failing must not cost the call its activity log.
   if (status === 'ended' && endedBy) {
